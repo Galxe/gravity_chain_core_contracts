@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  test:
+    name: Foundry Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        suite: [Unit]
+    
+    steps:
+      # Check out repository with all submodules for complete codebase access.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: yarn install
+
+      # Restore Forge cache
+      - name: Cache Forge Build
+        uses: actions/cache@v3
+        with:
+          path: |
+            cache/
+            out/
+          key: ${{ runner.os }}-forge-${{ hashFiles('**/foundry.toml', '**/remappings.txt', 'src/**/*.sol', 'lib/**/*.sol') }}
+          restore-keys: |
+            ${{ runner.os }}-forge-
+
+      # Install the Foundry toolchain.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      # Show Forge version
+      - name: Show Forge version
+        run: |
+          forge --version
+
+      # Run Forge's formatting checker to ensure consistent code style.
+      - name: Run Forge fmt
+        run: |
+          forge fmt --check
+          FOUNDRY_PROFILE=test forge fmt --check
+        id: fmt
+
+      # Build the project and display contract sizes.
+      - name: Run Forge build
+        run: |
+          forge build --sizes
+        id: build
+
+      # Run the test suite excluding script directory.
+      - name: Run ${{ matrix.suite }} tests
+        run: |
+          # check if there are test files
+          if find test -name "*.sol" -type f | grep -q .; then
+            echo "Found test files, running tests..."
+            forge test --no-match-path "script/**" -vvv
+          else
+            echo "No test files found, skipping tests"
+            exit 0
+          fi
+        env:
+          FOUNDRY_PROFILE: medium

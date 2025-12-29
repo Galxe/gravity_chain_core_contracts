@@ -1,0 +1,136 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main]
+    paths: 
+      - 'src/**/*.sol'
+  pull_request:
+    paths: 
+      - 'src/**/*.sol'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  security-audit:
+    name: Security Audit - ${{ matrix.tool }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [slither, mythril, 4naly3er, aderyn]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python for security tools
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Run ${{ matrix.tool }} Analysis
+        run: make ${{ matrix.tool }}
+        continue-on-error: true
+
+      - name: Upload ${{ matrix.tool }} Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tool }}-report-${{ github.run_number }}
+          path: audit/
+          retention-days: 90
+
+  security-summary:
+    name: Generate Security Summary
+    runs-on: ubuntu-latest
+    needs: security-audit
+    if: always()
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all audit reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-report-${{ github.run_number }}'
+          path: audit/
+          merge-multiple: true
+
+      - name: Generate Security Summary
+        run: |
+          mkdir -p audit
+          echo "# Security Audit Summary" > audit/SECURITY_SUMMARY.md
+          echo "" >> audit/SECURITY_SUMMARY.md
+          echo "**Generated on:** $(date)" >> audit/SECURITY_SUMMARY.md
+          echo "**Commit:** ${{ github.sha }}" >> audit/SECURITY_SUMMARY.md
+          echo "**Branch:** ${{ github.ref_name }}" >> audit/SECURITY_SUMMARY.md
+          echo "" >> audit/SECURITY_SUMMARY.md
+          
+          # Count reports
+          SLITHER_REPORTS=$(find audit -name "slither_analysis_*.md" 2>/dev/null | wc -l)
+          MYTHRIL_REPORTS=$(find audit -name "mythril_analysis_*.md" 2>/dev/null | wc -l)
+          NALY3ER_REPORTS=$(find audit -name "4naly3er_report_*.md" 2>/dev/null | wc -l)
+          ADERYN_REPORTS=$(find audit -name "aderyn_report_*.md" 2>/dev/null | wc -l)
+          
+          echo "## Tools Executed" >> audit/SECURITY_SUMMARY.md
+          echo "- ✅ Slither: $SLITHER_REPORTS reports" >> audit/SECURITY_SUMMARY.md
+          echo "- ✅ Mythril: $MYTHRIL_REPORTS reports" >> audit/SECURITY_SUMMARY.md
+          echo "- ✅ 4naly3er: $NALY3ER_REPORTS reports" >> audit/SECURITY_SUMMARY.md
+          echo "- ✅ Aderyn: $ADERYN_REPORTS reports" >> audit/SECURITY_SUMMARY.md
+          echo "" >> audit/SECURITY_SUMMARY.md
+          echo "## Next Steps" >> audit/SECURITY_SUMMARY.md
+          echo "1. Review all generated reports in the audit/ directory" >> audit/SECURITY_SUMMARY.md
+          echo "2. Prioritize High and Medium severity issues" >> audit/SECURITY_SUMMARY.md
+          echo "3. Address findings before deployment" >> audit/SECURITY_SUMMARY.md
+          echo "4. Consider additional manual security review" >> audit/SECURITY_SUMMARY.md
+
+      - name: Upload Consolidated Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-summary-${{ github.run_number }}
+          path: audit/
+          retention-days: 90
+
+      - name: Comment PR with Security Summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'audit/SECURITY_SUMMARY.md';
+            
+            if (fs.existsSync(path)) {
+              const summary = fs.readFileSync(path, 'utf8');
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🛡️ Security Audit Results\n\n${summary}\n\n📁 **Full reports available in [GitHub Actions Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**`
+              });
+            }
+
+      - name: Check for Critical Issues
+        run: |
+          # This step can be enhanced to parse reports and fail on critical issues
+          echo "Checking for critical security issues..."
+          
+          # Example: Fail if any High severity issues found
+          if find audit -name "*.md" -exec grep -l "High\|Critical" {} \; | head -1; then
+            echo "⚠️ High/Critical severity issues detected!"
+            echo "Please review the security reports before merging."
+            # Uncomment the next line to fail the workflow on critical issues
+            # exit 1
+          else
+            echo "✅ No critical issues detected in automated scan"
+          fi 

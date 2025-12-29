@@ -1,0 +1,15 @@
+name: Update repository Template
+
+permissions:
+  contents: write
+  pull-requests: write
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1" # Every Monday at 2:00 AM UTC
+
+jobs:
+  run:
+    uses: ggsrc/public-ci/.github/workflows/cruft-update.yml@main
+    secrets:
+      CICD_DOCKER_BUILD_PAT: ${{ secrets.CICD_DOCKER_BUILD_PAT }}

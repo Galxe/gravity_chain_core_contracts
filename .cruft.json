@@ -1,0 +1,27 @@
+{
+  "template": "https://github.com/ggsrc/foundry-template",
+  "commit": "b813717d37f4a2e2cb5f7c3aea33cdcfd9d10854",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "gravity-chain-core-contracts",
+      "project_slug": "gravity_chain_core_contracts",
+      "contact_email": "security@galxe.com",
+      "license": "MIT",
+      "spdx_license_identifier": "MIT",
+      "use_openzeppelin": "y",
+      "use_openzeppelin_upgradeable": "y",
+      "use_zeus": "n",
+      "zeus_metadata_repo": "",
+      "use_tenderly": "y",
+      "cleanup_demo": "n",
+      "enable_auto_update": "y",
+      "_copy_without_render": [
+        ".github/**/*"
+      ],
+      "_template": "https://github.com/ggsrc/foundry-template",
+      "_commit": "b813717d37f4a2e2cb5f7c3aea33cdcfd9d10854"
+    }
+  },
+  "directory": null
+}

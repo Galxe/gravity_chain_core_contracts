@@ -1,0 +1,9 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+CHANGED_FILES=$(git diff --staged --name-only --diff-filter=d | grep -e "\.sol$" | xargs)
+
+if [ -n "$CHANGED_FILES" ]; then
+    forge fmt $CHANGED_FILES
+    git add $CHANGED_FILES
+fi
