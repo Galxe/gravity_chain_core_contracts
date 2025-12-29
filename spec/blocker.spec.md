@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Blocker contract is the entry point for blockchain runtime to interact with system contracts during block production. It is called once at the beginning of each block to update on-chain state based on the block's metadata.
+The Blocker contract is the entry point for blockchain runtime to interact with system contracts during block
+production. It is called once at the beginning of each block to update on-chain state based on the block's metadata.
 
 ## Design Goals
 
@@ -18,19 +19,19 @@ The Blocker contract is the entry point for blockchain runtime to interact with 
 ```solidity
 interface IBlocker {
     // ========== Block Prologue ==========
-    
+
     /// @notice Called by blockchain runtime at the start of each block
-    /// @param proposer The block proposer's public key (32 bytes)
-    /// @param failedProposerIndices Indices of validators who failed to propose
+    /// @param proposer The block proposer's public key (32 bytes, fixed size)
+    /// @param failedProposers Addresses of validators who failed to propose
     /// @param timestampMicros Block timestamp in microseconds
     function onBlockStart(
-        bytes calldata proposer,
-        uint64[] calldata failedProposerIndices,
+        bytes32 proposer,
+        address[] calldata failedProposers,
         uint64 timestampMicros
     ) external;
-    
+
     // ========== Initialization ==========
-    
+
     /// @notice Initialize the contract (genesis only)
     function initialize() external;
 }
@@ -62,9 +63,6 @@ error OnlySystemCaller();
 
 /// @notice Only genesis can initialize
 error OnlyGenesis();
-
-/// @notice Invalid proposer format
-error InvalidProposer();
 ```
 
 ## Block Prologue Flow
@@ -76,9 +74,9 @@ The `onBlockStart` function executes the following steps in order:
 │                    onBlockStart()                        │
 ├─────────────────────────────────────────────────────────┤
 │                                                          │
-│  1. Validate proposer                                    │
+│  1. Resolve proposer address                             │
 │     ├── If VM reserved (32 zeros) → SYSTEM_CALLER       │
-│     └── Else → Lookup validator address                 │
+│     └── Else → TBD (see pending items)                  │
 │                                                          │
 │  2. Update Timestamp                                     │
 │     └── timestamp.updateGlobalTime(proposer, time)      │
@@ -98,29 +96,32 @@ The `onBlockStart` function executes the following steps in order:
 
 ```solidity
 function onBlockStart(
-    bytes calldata proposer,
-    uint64[] calldata failedProposerIndices,
+    bytes32 proposer,
+    address[] calldata failedProposers,
     uint64 timestampMicros
 ) external onlySystemCaller {
-    // 1. Resolve proposer
+    // 1. Resolve proposer address
+    // TODO: Pending design decision - since addresses are passed directly,
+    // we may not need to lookup the proposer. See "Pending Items" section.
     address proposerAddr;
     if (_isVmReservedProposer(proposer)) {
         proposerAddr = SYSTEM_CALLER;
     } else {
+        // TBD: May receive address directly from runtime instead of pubkey lookup
         proposerAddr = IValidatorManager(VALIDATOR_MANAGER).getValidatorByPubkey(proposer);
     }
-    
+
     // 2. Update timestamp
     ITimestamp(TIMESTAMP).updateGlobalTime(proposerAddr, timestampMicros);
-    
+
     // 3. Record performance (optional, non-critical)
-    _safeRecordPerformance(proposerAddr, failedProposerIndices);
-    
+    _safeRecordPerformance(proposerAddr, failedProposers);
+
     // 4. Check and trigger epoch transition
     if (IEpochManager(EPOCH_MANAGER).canTriggerEpochTransition()) {
         IEpochManager(EPOCH_MANAGER).triggerEpochTransition();
     }
-    
+
     // 5. Emit event
     emit BlockStarted(
         block.number,
@@ -136,22 +137,22 @@ function onBlockStart(
 A VM reserved proposer (NIL block) is identified by 32 bytes of zeros:
 
 ```solidity
-function _isVmReservedProposer(bytes calldata proposer) internal pure returns (bool) {
-    if (proposer.length != 32) return false;
-    return keccak256(proposer) == keccak256(bytes32(0));
+function _isVmReservedProposer(bytes32 proposer) internal pure returns (bool) {
+    return proposer == bytes32(0);
 }
 ```
 
 NIL blocks are special blocks where:
+
 - No real proposer
 - Timestamp doesn't advance
 - No performance tracking
 
 ## Access Control
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis only |
+| Function         | Caller                                  |
+| ---------------- | --------------------------------------- |
+| `initialize()`   | Genesis only                            |
 | `onBlockStart()` | System Caller (blockchain runtime) only |
 
 ## Fault Handling
@@ -161,9 +162,9 @@ Non-critical operations should not fail the block:
 ```solidity
 function _safeRecordPerformance(
     address proposer,
-    uint64[] calldata failedIndices
+    address[] calldata failedProposers
 ) internal {
-    try IPerformanceTracker(TRACKER).record(proposer, failedIndices) {
+    try IPerformanceTracker(TRACKER).record(proposer, failedProposers) {
         // Success
     } catch (bytes memory reason) {
         // Log failure but don't revert
@@ -173,10 +174,12 @@ function _safeRecordPerformance(
 ```
 
 **Critical operations that MUST succeed:**
+
 - Timestamp update
 - Epoch transition (if triggered)
 
 **Non-critical operations (can fail gracefully):**
+
 - Performance tracking
 - Metrics collection
 
@@ -188,7 +191,7 @@ The first block after genesis is special:
 function initialize() external onlyGenesis {
     // Emit genesis block event
     emit BlockStarted(0, 0, SYSTEM_CALLER, 0);
-    
+
     // Initialize timestamp to 0
     ITimestamp(TIMESTAMP).updateGlobalTime(SYSTEM_CALLER, 0);
 }
@@ -213,6 +216,15 @@ function initialize() external onlyGenesis {
 - **EpochManager**: Blocker checks and triggers epoch transitions
 - **ValidatorManager**: Blocker looks up proposer info
 
+## Pending Items
+
+> **TODO**: Design decision needed with the team.
+
+1. **Proposer Resolution**: Since `failedProposers` are now passed as addresses directly from the runtime, should the `proposer` parameter also be passed as an `address` instead of `bytes32` (public key)?
+   - If yes, we can eliminate the `getValidatorByPubkey` lookup entirely
+   - The interface would become: `onBlockStart(address proposer, address[] calldata failedProposers, uint64 timestampMicros)`
+   - This simplifies the contract and reduces gas costs
+
 ## Security Considerations
 
 1. **Caller Restriction**: Only blockchain runtime can call `onBlockStart`
@@ -232,21 +244,24 @@ Block prologue is executed every block, so gas efficiency matters:
 ## Testing Requirements
 
 1. **Unit Tests**:
+
    - Normal block processing
-   - NIL block handling
-   - Invalid proposer handling
+   - NIL block handling (bytes32(0) proposer)
    - Epoch transition triggering
+   - Failed proposers recording
 
 2. **Integration Tests**:
+
    - Full block prologue flow
    - Multi-block sequences
    - Epoch boundary crossing
 
 3. **Fuzz Tests**:
-   - Random proposer data
+
+   - Random proposer data (bytes32)
+   - Random failed proposer addresses
    - Random failure scenarios
 
 4. **Gas Tests**:
    - Measure gas per block type
    - Ensure bounded gas consumption
-
