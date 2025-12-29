@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Timestamp contract provides on-chain time management with microsecond precision. It serves as the single source of truth for the current blockchain time and is updated exclusively by the block producer during block prologue.
+The Timestamp contract provides on-chain time management with microsecond precision. It serves as the single source of
+truth for the current blockchain time and is updated exclusively by the block producer during block prologue.
 
 ## Design Goals
 
@@ -28,15 +29,15 @@ uint64 public constant MICRO_CONVERSION_FACTOR = 1_000_000;
 ```solidity
 interface ITimestamp {
     // ========== Time Queries ==========
-    
+
     /// @notice Get current time in microseconds
     /// @return Current timestamp in microseconds
     function nowMicroseconds() external view returns (uint64);
-    
+
     /// @notice Get current time in seconds
     /// @return Current timestamp in seconds
     function nowSeconds() external view returns (uint64);
-    
+
     /// @notice Get detailed time information
     /// @return currentMicroseconds Current time in microseconds
     /// @return currentSeconds Current time in seconds
@@ -46,17 +47,17 @@ interface ITimestamp {
         uint64 currentSeconds,
         uint256 blockTimestamp
     );
-    
+
     /// @notice Check if a timestamp is >= current time
     /// @param timestamp Timestamp to check (in microseconds)
     /// @return True if timestamp >= current time
     function isGreaterThanOrEqualCurrentTimestamp(uint64 timestamp) external view returns (bool);
-    
+
     // ========== Protected Functions ==========
-    
+
     /// @notice Initialize the contract (genesis only)
     function initialize() external;
-    
+
     /// @notice Update the global time (Blocker only)
     /// @param proposer The block proposer address
     /// @param timestamp New timestamp in microseconds
@@ -101,6 +102,7 @@ error OnlyGenesis();
 ### Normal Blocks
 
 For normal blocks (proposer ≠ SYSTEM_CALLER):
+
 - New timestamp MUST be > current timestamp
 - Time must always advance forward
 
@@ -119,6 +121,7 @@ function updateGlobalTime(address proposer, uint64 timestamp) external onlyBlock
 ### NIL Blocks
 
 For NIL blocks (proposer == SYSTEM_CALLER):
+
 - New timestamp MUST equal current timestamp
 - No time advancement
 
@@ -134,14 +137,14 @@ if (proposer == SYSTEM_CALLER) {
 
 ## Access Control
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis only |
-| `updateGlobalTime()` | Blocker only |
-| `nowMicroseconds()` | Anyone |
-| `nowSeconds()` | Anyone |
-| `getTimeInfo()` | Anyone |
-| `isGreaterThanOrEqualCurrentTimestamp()` | Anyone |
+| Function                                 | Caller       |
+| ---------------------------------------- | ------------ |
+| `initialize()`                           | Genesis only |
+| `updateGlobalTime()`                     | Blocker only |
+| `nowMicroseconds()`                      | Anyone       |
+| `nowSeconds()`                           | Anyone       |
+| `getTimeInfo()`                          | Anyone       |
+| `isGreaterThanOrEqualCurrentTimestamp()` | Anyone       |
 
 ## Initialization
 
@@ -186,14 +189,15 @@ function hasElapsed(uint64 startTime, uint64 durationSeconds) public view return
 
 The Gravity timestamp is independent of EVM's `block.timestamp`:
 
-| Aspect | `block.timestamp` | `Timestamp.nowSeconds()` |
-|--------|-------------------|--------------------------|
-| Precision | Seconds | Microseconds (converted) |
-| Source | EVM runtime | Gravity consensus |
-| Updater | Automatic | Explicit (Blocker) |
-| Use case | EVM compatibility | Gravity-specific logic |
+| Aspect    | `block.timestamp` | `Timestamp.nowSeconds()` |
+| --------- | ----------------- | ------------------------ |
+| Precision | Seconds           | Microseconds (converted) |
+| Source    | EVM runtime       | Gravity consensus        |
+| Updater   | Automatic         | Explicit (Blocker)       |
+| Use case  | EVM compatibility | Gravity-specific logic   |
 
-**Recommendation**: Use `Timestamp.nowSeconds()` for Gravity-specific logic and `block.timestamp` only for EVM compatibility.
+**Recommendation**: Use `Timestamp.nowSeconds()` for Gravity-specific logic and `block.timestamp` only for EVM
+compatibility.
 
 ## Security Considerations
 
@@ -211,20 +215,22 @@ The Gravity timestamp is independent of EVM's `block.timestamp`:
 ## Testing Requirements
 
 1. **Unit Tests**:
+
    - Test normal block time advancement
    - Test NIL block time equality
    - Test time query functions
    - Test initialization
 
 2. **Fuzz Tests**:
+
    - Fuzz timestamp values for advancement
    - Fuzz conversion accuracy
 
 3. **Integration Tests**:
+
    - Test with Blocker contract
    - Test epoch transitions using timestamp
 
 4. **Invariant Tests**:
    - Time monotonicity
    - Conversion accuracy
-
