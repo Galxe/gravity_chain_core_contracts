@@ -38,7 +38,7 @@ The Oracle module is part of the modular Gravity system:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-> **Note**: JWK management has been moved to a separate `JWKRegistry` module. This spec focuses solely on `HashOracle`.
+> **Note**: JWK management has been moved to a separate `JWKRegistry` module. See [jwkregistry.spec.md](./jwkregistry.spec.md) for details.
 
 ## Contract: `HashOracle`
 
