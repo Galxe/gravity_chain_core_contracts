@@ -20,7 +20,7 @@ The System Registry provides system-wide addresses and configuration constants t
 ## Architecture
 
 ```
-src/system/
+src/registry/
 ├── GravityAddresses.sol       # Compile-time constants (library)
 ├── GravityAccessControl.sol   # Access control free functions
 ├── GravitySystemRegistry.sol  # Dynamic config contract
@@ -189,9 +189,6 @@ interface IGravitySystemRegistry {
     function getBytes(bytes32 key) external view returns (bytes memory);
 
     // ========== Admin Functions ==========
-
-    /// @notice Initialize the registry (genesis only)
-    function initialize() external;
 
     /// @notice Update a configuration value (governance only)
     /// @param key The config key

@@ -1,9 +1,14 @@
 ---
 status: drafting
-owner: TBD
+owner: @changliang
 ---
 
 # Randomness Specification
+
+## TODOs
+
+1. Add Aptos's Move contract github link to this spec.
+2. Governance contract should be able to manage randomness config.
 
 ## Overview
 

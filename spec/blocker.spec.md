@@ -31,7 +31,7 @@ interface IBlocker {
     /// @param timestampMicros Block timestamp in microseconds
     function onBlockStart(
         bytes32 proposer,
-        address[] calldata failedProposers,
+        bytes32[] calldata failedProposers,
         uint64 timestampMicros
     ) external;
 

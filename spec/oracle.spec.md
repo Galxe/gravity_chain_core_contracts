@@ -1,9 +1,13 @@
 ---
 status: unstarted
-owner: @yxia
+owner: @yuejing
 ---
 
 # Oracle Specification
+
+## TODOs
+
+1. simplify contract design. Only keep the "oracle" part. Fancy features like JWK can be deployed later. It doesn't need to be part of the core system contracts.
 
 ## Overview
 
