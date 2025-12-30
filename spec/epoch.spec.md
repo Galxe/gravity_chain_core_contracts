@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Epoch Manager controls the epoch lifecycle of the Gravity consensus algorithm. An epoch is a fixed time period during which the validator set remains stable. At epoch boundaries, the validator set can change and accumulated state transitions occur.
+The Epoch Manager controls the epoch lifecycle of the Gravity consensus algorithm. An epoch is a fixed time period
+during which the validator set remains stable. At epoch boundaries, the validator set can change and accumulated state
+transitions occur.
 
 ## Design Goals
 
@@ -28,21 +30,21 @@ uint256 public lastEpochTransitionTime;
 
 ### Default Configuration
 
-| Parameter | Default Value | Description |
-|-----------|---------------|-------------|
+| Parameter             | Default Value       | Description    |
+| --------------------- | ------------------- | -------------- |
 | `epochIntervalMicros` | 2 hours × 1,000,000 | Epoch duration |
-| `currentEpoch` | 0 | Starting epoch |
+| `currentEpoch`        | 0                   | Starting epoch |
 
 ### Interface
 
 ```solidity
 interface IEpochManager {
     // ========== Epoch Queries ==========
-    
+
     /// @notice Get current epoch number
     /// @return Current epoch
     function currentEpoch() external view returns (uint256);
-    
+
     /// @notice Get current epoch info
     /// @return epoch Current epoch number
     /// @return lastTransitionTime Timestamp of last transition
@@ -52,29 +54,29 @@ interface IEpochManager {
         uint256 lastTransitionTime,
         uint256 interval
     );
-    
+
     /// @notice Get remaining time until next epoch
     /// @return remainingTime Seconds until next epoch (0 if ready to transition)
     function getRemainingTime() external view returns (uint256);
-    
+
     /// @notice Check if epoch transition can be triggered
     /// @return True if current time >= next epoch boundary
     function canTriggerEpochTransition() external view returns (bool);
-    
+
     // ========== State Transitions ==========
-    
+
     /// @notice Initialize the contract (genesis only)
     function initialize() external;
-    
+
     /// @notice Trigger epoch transition (authorized callers only)
     function triggerEpochTransition() external;
-    
+
     // ========== Configuration ==========
-    
+
     /// @notice Update epoch parameters (governance only)
-    /// @param key Parameter key
+    /// @param key Parameter key (use predefined constants, e.g., PARAM_EPOCH_INTERVAL_MICROS)
     /// @param value New value
-    function updateParam(string calldata key, bytes calldata value) external;
+    function updateParam(bytes32 key, bytes calldata value) external;
 }
 ```
 
@@ -119,7 +121,7 @@ error InvalidEpochDuration();
 error NotAuthorized(address caller);
 
 /// @notice Unknown parameter
-error ParameterNotFound(string key);
+error ParameterNotFound(bytes32 key);
 ```
 
 ## Epoch Transition Logic
@@ -166,17 +168,17 @@ function triggerEpochTransition() external onlyAuthorizedCallers {
     // 1. Increment epoch
     uint256 newEpoch = currentEpoch + 1;
     currentEpoch = newEpoch;
-    
+
     // 2. Update timestamp
     lastEpochTransitionTime = ITimestamp(TIMESTAMP).nowSeconds();
-    
+
     // 3. Notify modules
     _notifyModules();
-    
+
     // 4. Get and emit new validator set
     ValidatorSet memory validators = IValidatorManager(VALIDATOR_MANAGER).getValidatorSet();
     emit ValidatorSetUpdated(newEpoch, validators);
-    
+
     // 5. Emit transition event
     emit EpochTransitioned(newEpoch, lastEpochTransitionTime);
 }
@@ -195,11 +197,13 @@ interface IReconfigurableModule {
 
 ### Notified Modules
 
-| Module | Action on New Epoch |
-|--------|---------------------|
-| ValidatorManager | Apply pending validator changes |
-| RandomnessConfig | Apply pending config changes |
-| StakeConfig | Apply pending stake parameter changes |
+| Module           | Action on New Epoch                   |
+| ---------------- | ------------------------------------- |
+| ValidatorManager | Apply pending validator changes       |
+| RandomnessConfig | Apply pending config changes          |
+| StakeConfig      | Apply pending stake parameter changes |
+
+> ⚠️ **PENDING VERIFICATION**: The reference implementation only notifies `ValidatorManager`. Need to verify if `RandomnessConfig` and `StakeConfig` are actually being notified in the implementation code. Update this table to match actual behavior.
 
 ### Safe Notification
 
@@ -217,33 +221,49 @@ function _safeNotifyModule(address module) internal {
 
 ## Access Control
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis only |
-| `currentEpoch()` | Anyone |
-| `getCurrentEpochInfo()` | Anyone |
-| `getRemainingTime()` | Anyone |
-| `canTriggerEpochTransition()` | Anyone |
-| `triggerEpochTransition()` | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
-| `updateParam()` | Governance only |
+| Function                      | Caller                                                  |
+| ----------------------------- | ------------------------------------------------------- |
+| `initialize()`                | Genesis only                                            |
+| `currentEpoch()`              | Anyone                                                  |
+| `getCurrentEpochInfo()`       | Anyone                                                  |
+| `getRemainingTime()`          | Anyone                                                  |
+| `canTriggerEpochTransition()` | Anyone                                                  |
+| `triggerEpochTransition()`    | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
+| `updateParam()`               | Governance only                                         |
+
+> ⚠️ **PENDING**: Why are there so many callers authorized to trigger epoch transition? This seems overly permissive and needs review:
+> - **System Caller**: Expected for automated transitions
+> - **Blocker**: Why? What scenario requires this?
+> - **Genesis**: Understandable for initialization
+> - **ReconfigurationWithDKG**: For DKG coordination
+>
+> **Action**: Review and justify each caller or consolidate to minimal required set.
 
 ## Configuration Parameters
 
-| Parameter | Type | Constraints | Default |
-|-----------|------|-------------|---------|
-| `epochIntervalMicros` | uint256 | > 0 | 7,200,000,000 (2 hours) |
+| Parameter             | Type    | Constraints | Default                 |
+| --------------------- | ------- | ----------- | ----------------------- |
+| `epochIntervalMicros` | uint256 | > 0         | 7,200,000,000 (2 hours) |
 
 ### Updating Parameters
 
+> ⚠️ **IMPLEMENTATION RULE**: Do NOT use string comparison like `keccak256(bytes(key)) == keccak256("epochIntervalMicros")`. Use predefined constants instead for gas efficiency and type safety:
+> ```solidity
+> bytes32 public constant PARAM_EPOCH_INTERVAL_MICROS = keccak256("epochIntervalMicros");
+> ```
+
 ```solidity
-function updateParam(string calldata key, bytes calldata value) external onlyGov {
-    if (keccak256(bytes(key)) == keccak256("epochIntervalMicros")) {
+// CORRECT implementation using constants:
+bytes32 public constant PARAM_EPOCH_INTERVAL_MICROS = keccak256("epochIntervalMicros");
+
+function updateParam(bytes32 key, bytes calldata value) external onlyGov {
+    if (key == PARAM_EPOCH_INTERVAL_MICROS) {
         uint256 newInterval = abi.decode(value, (uint256));
         if (newInterval == 0) revert InvalidEpochDuration();
-        
+
         uint256 oldInterval = epochIntervalMicros;
         epochIntervalMicros = newInterval;
-        
+
         emit EpochDurationUpdated(oldInterval, newInterval);
     } else {
         revert ParameterNotFound(key);
@@ -263,6 +283,7 @@ When DKG is enabled, epoch transitions are coordinated with DKG sessions:
 ```
 
 The `ReconfigurationWithDKG` contract coordinates:
+
 1. Start DKG when epoch transition is due
 2. Wait for DKG to complete
 3. Then trigger epoch transition
@@ -286,6 +307,27 @@ function initialize() external onlyGenesis {
 3. **Fail-safe Notifications**: Module failures don't block transitions
 4. **No Manual Override**: Cannot force epoch transition before time
 
+## Open Questions
+
+### ⚠️ PENDING: Chain Downtime Handling
+
+**Question**: What happens when the chain is down for extended periods spanning multiple epochs?
+
+Since epochs are time-based (not block-based), if the chain goes down for a long time (e.g., spanning 1, 2, or more epoch intervals), several issues arise:
+
+1. When the chain resumes, `canTriggerEpochTransition()` will return true immediately
+2. But only **one** epoch transition will occur, even if multiple epochs worth of time has passed
+3. The `lastEpochTransitionTime` will be set to the current time, effectively "skipping" the missed epochs
+4. This means `currentEpoch` may not accurately reflect the actual time passed
+
+**Potential concerns**:
+- Should we allow catching up multiple epochs?
+- Should we emit events for skipped epochs?
+- How does this affect validator rewards/slashing calculations?
+- How does this affect DKG coordination?
+
+**Status**: Needs design decision and documentation.
+
 ## Invariants
 
 1. `currentEpoch` only increases
@@ -295,20 +337,22 @@ function initialize() external onlyGenesis {
 ## Testing Requirements
 
 1. **Unit Tests**:
+
    - Epoch transition timing
    - Parameter updates
    - Module notification
 
 2. **Integration Tests**:
+
    - Full epoch lifecycle
    - Validator set changes across epochs
    - DKG coordination
 
 3. **Fuzz Tests**:
+
    - Random time advances
    - Concurrent transition attempts
 
 4. **Invariant Tests**:
    - Epoch monotonicity
    - Timing constraints
-
