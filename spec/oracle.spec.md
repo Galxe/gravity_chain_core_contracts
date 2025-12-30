@@ -5,72 +5,66 @@ owner: @yuejing
 
 # Oracle Specification
 
-## TODOs
-
-1. simplify contract design. Only keep the "oracle" part. Fancy features like JWK can be deployed later. It doesn't need to be part of the core system contracts.
-
 ## Overview
 
-The Oracle module provides native support for verifying information from outside the Gravity blockchain. This includes:
-
-1. **Hash Oracle**: Verify cross-chain events by their hash
-2. **JWK Manager**: Manage JSON Web Keys for keyless authentication
-3. **DNS Oracle** (future): Verify DNS records
-
-These oracles are powered by the Gravity validator consensus, meaning information is only accepted after validators reach consensus on its validity.
+The HashOracle module stores and verifies cross-chain hash records, enabling Gravity smart contracts to verify that specific events occurred on other blockchains. The oracle is powered by the Gravity validator consensus, meaning information is only accepted after validators reach consensus on its validity.
 
 ## Architecture
 
+The Oracle module is part of the modular Gravity system:
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                           Oracle Module                               │
+│                           Gravity Portal                              │
+│                      (Consensus Entry Point)                          │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│   External Sources          Validator Consensus         On-Chain      │
+│   Consensus Layer                                                     │
+│        │                                                              │
+│        ▼                                                              │
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │                   GravityPortal                             │   │
+│   │                  processConsensusData()                     │   │
+│   └─────────────────────────────────────────────────────────────┘   │
 │                                                                       │
-│   ┌──────────┐              ┌──────────────┐         ┌──────────┐   │
-│   │ Ethereum │─────────────▶│  Validators  │────────▶│  Hash    │   │
-│   │  Events  │              │   Observe    │         │  Oracle  │   │
-│   └──────────┘              │   & Agree    │         └──────────┘   │
-│                             └──────────────┘                         │
-│   ┌──────────┐                    │              ┌──────────────┐   │
-│   │  OIDC    │────────────────────┼─────────────▶│ JWK Manager  │   │
-│   │Providers │                    │              └──────────────┘   │
-│   └──────────┘                    │                                  │
-│                                   │              ┌──────────────┐   │
-│   ┌──────────┐                    └─────────────▶│ DNS Oracle   │   │
-│   │   DNS    │                   (future)        │  (future)    │   │
-│   │ Records  │                                   └──────────────┘   │
-│   └──────────┘                                                       │
+│        │                    │                    │                    │
+│        ▼                    ▼                    ▼                    │
+│   ┌─────────────┐    ┌──────────────┐    ┌─────────────┐            │
+│   │ JWKRegistry │    │HashOracle    │    │CrossChain   │            │
+│   │             │    │              │    │Gateway      │            │
+│   │ (JWK logic) │    │(This spec)   │    │(Bridging)   │            │
+│   └─────────────┘    └──────────────┘    └─────────────┘            │
 │                                                                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Note**: JWK management has been moved to a separate `JWKRegistry` module. See [jwkregistry.spec.md](./jwkregistry.spec.md) for details.
+
 ## Contract: `HashOracle`
 
-Stores and verifies cross-chain hash records, allowing contracts to verify that specific events occurred on other chains.
+Stores and verifies cross-chain hash records with optional data values, allowing contracts to verify that specific events occurred on other chains.
 
 ### State Variables
 
 ```solidity
-/// @notice Hash records: hash => record
-mapping(bytes32 => HashRecord) public hashRecords;
+/// @notice Hash/Data records: hash => record
+mapping(bytes32 => DataRecord) public dataRecords;
 
-/// @notice Processed sequences per source chain: chainId => sequenceNumber => processed
-mapping(uint32 => mapping(uint256 => bool)) public processedSequences;
+/// @notice Latest processed sequence number per source chain: chainId => latestSequenceNumber
+/// @dev Sequences must be processed in order. If sequence N is processed, all sequences < N are also processed.
+mapping(uint32 => uint256) public latestSequenceNumber;
 
-/// @notice Total hashes recorded
-uint256 public totalHashesRecorded;
+/// @notice Total records
+uint256 public totalRecords;
 ```
 
 ### Data Structures
 
 ```solidity
-struct HashRecord {
-    bytes32 hash;           // The hash value
+struct DataRecord {
+    bytes32 hash;           // The hash value (serves as mapping key)
     uint64 blockNumber;     // Block number on source chain
-    uint32 sourceChain;     // Source chain identifier
-    uint64 recordedAt;      // When recorded on Gravity
+    bytes value;            // Optional: Raw data or encoded value
 }
 ```
 
@@ -79,7 +73,7 @@ struct HashRecord {
 ```solidity
 interface IHashOracle {
     // ========== Recording (Consensus Only) ==========
-    
+
     /// @notice Record a hash after validator consensus
     /// @param hash The hash to record
     /// @param blockNumber Block number on source chain
@@ -91,21 +85,36 @@ interface IHashOracle {
         uint32 sourceChain,
         uint256 sequenceNumber
     ) external;
-    
+
+    /// @notice Record a hash with associated data value
+    /// @param hash The hash to record
+    /// @param blockNumber Block number on source chain
+    /// @param sourceChain Source chain identifier
+    /// @param sequenceNumber Sequence number to prevent duplicates
+    /// @param value Optional data value to store
+    function recordData(
+        bytes32 hash,
+        uint64 blockNumber,
+        uint32 sourceChain,
+        uint256 sequenceNumber,
+        bytes calldata value
+    ) external;
+
     // ========== Verification ==========
-    
+
     /// @notice Verify if a hash exists and get its record
     /// @param hash The hash to verify
     /// @return exists True if hash is recorded
-    /// @return record The hash record
-    function verifyHash(bytes32 hash) external view returns (bool exists, HashRecord memory record);
-    
-    /// @notice Check if a sequence has been processed
+    /// @return record The data record
+    function verifyHash(bytes32 hash) external view returns (bool exists, DataRecord memory record);
+
+    /// @notice Check if a sequence has been processed (or can be processed)
+    /// @dev Returns true if sequenceNumber <= latestSequenceNumber for the chain
     function isSequenceProcessed(uint32 sourceChain, uint256 sequenceNumber) external view returns (bool);
-    
+
     // ========== Statistics ==========
-    
-    function getStatistics() external view returns (uint256 totalHashes);
+
+    function getStatistics() external view returns (uint256 totalRecords);
 }
 ```
 
@@ -118,250 +127,29 @@ event HashRecorded(
     uint64 blockNumber,
     uint256 sequenceNumber
 );
+
+event DataRecorded(
+    bytes32 indexed hash,
+    uint32 indexed sourceChain,
+    uint64 blockNumber,
+    uint256 sequenceNumber,
+    uint256 valueLength
+);
 ```
 
 ### Errors
 
 ```solidity
 error HashAlreadyRecorded(bytes32 hash);
-error SequenceAlreadyProcessed(uint32 sourceChain, uint256 sequenceNumber);
+error SequenceOutOfOrder(uint32 sourceChain, uint256 sequenceNumber, uint256 expectedNext);
 error OnlySystemCaller();
 ```
 
-### Use Cases
+## Use Cases
 
-1. **Bridge Verification**: Verify Ethereum deposit events before minting on Gravity
-2. **Cross-chain Messages**: Verify message hashes for cross-chain communication
-3. **Proof Verification**: Verify Merkle root hashes for light client proofs
+### Bridge Verification
 
-## Contract: `JWKManager`
-
-Manages JSON Web Keys (JWKs) for OIDC providers, enabling keyless authentication on Gravity.
-
-### Overview
-
-JWKs are public keys used by OIDC providers (Google, Apple, etc.) to sign JWT tokens. By tracking these keys on-chain, Gravity can verify keyless account signatures.
-
-### Key Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **OIDC Provider** | Identity provider (Google, Apple, etc.) |
-| **JWK** | JSON Web Key - public key for signature verification |
-| **Observed JWKs** | Keys fetched from providers by validators |
-| **Patched JWKs** | Keys after governance patches applied |
-| **Federated JWKs** | Custom keys registered by dApps |
-
-### State Variables
-
-```solidity
-/// @notice Supported OIDC providers
-OIDCProvider[] public supportedProviders;
-
-/// @notice Validator-observed JWKs
-AllProvidersJWKs private observedJWKs;
-
-/// @notice JWKs after patches applied
-AllProvidersJWKs private patchedJWKs;
-
-/// @notice Governance patches
-Patch[] public patches;
-
-/// @notice Federated JWKs per dApp
-mapping(address => AllProvidersJWKs) private federatedJWKs;
-```
-
-### Data Structures
-
-```solidity
-struct OIDCProvider {
-    string name;              // e.g., "https://accounts.google.com"
-    string configUrl;         // OIDC config URL
-    bool active;              // Is provider active
-    uint256 lastBlockNumber;  // Last observed block
-}
-
-struct JWK {
-    uint8 variant;            // 0 = RSA, 1 = Unsupported
-    bytes data;               // Encoded key data
-}
-
-struct RSA_JWK {
-    string kid;               // Key ID
-    string kty;               // Key type ("RSA")
-    string alg;               // Algorithm ("RS256")
-    string e;                 // Exponent
-    string n;                 // Modulus
-}
-
-struct ProviderJWKs {
-    string issuer;            // Provider identifier
-    uint256 version;          // Version number
-    JWK[] jwks;               // Keys for this provider
-}
-
-struct AllProvidersJWKs {
-    ProviderJWKs[] entries;   // All provider entries
-}
-
-enum PatchType {
-    RemoveAll,
-    RemoveIssuer,
-    RemoveJWK,
-    UpsertJWK
-}
-
-struct Patch {
-    PatchType patchType;
-    string issuer;
-    bytes jwkId;
-    JWK jwk;
-}
-```
-
-### Interface
-
-```solidity
-interface IJWKManager {
-    // ========== Provider Management ==========
-    
-    /// @notice Add or update an OIDC provider
-    function upsertOIDCProvider(string calldata name, string calldata configUrl) external;
-    
-    /// @notice Remove an OIDC provider
-    function removeOIDCProvider(string calldata name) external;
-    
-    /// @notice Get active providers
-    function getActiveProviders() external view returns (OIDCProvider[] memory);
-    
-    // ========== Observed JWKs (Consensus) ==========
-    
-    /// @notice Update observed JWKs from validator consensus
-    function upsertObservedJWKs(ProviderJWKs[] calldata providerJWKs) external;
-    
-    /// @notice Remove an issuer's observed JWKs
-    function removeIssuerFromObservedJWKs(string calldata issuer) external;
-    
-    // ========== Patches (Governance) ==========
-    
-    /// @notice Set all patches
-    function setPatches(Patch[] calldata newPatches) external;
-    
-    /// @notice Add a single patch
-    function addPatch(Patch calldata patch) external;
-    
-    // ========== Federated JWKs (dApps) ==========
-    
-    /// @notice Update federated JWKs for the caller
-    function updateFederatedJWKSet(
-        string calldata issuer,
-        string[] calldata kidArray,
-        string[] calldata algArray,
-        string[] calldata eArray,
-        string[] calldata nArray
-    ) external;
-    
-    /// @notice Apply patches to caller's federated JWKs
-    function patchFederatedJWKs(Patch[] calldata patches) external;
-    
-    // ========== Queries ==========
-    
-    /// @notice Get a patched JWK by issuer and key ID
-    function getPatchedJWK(string calldata issuer, bytes calldata jwkId) external view returns (JWK memory);
-    
-    /// @notice Get a federated JWK
-    function getFederatedJWK(address dapp, string calldata issuer, bytes calldata jwkId) external view returns (JWK memory);
-    
-    /// @notice Get all observed JWKs
-    function getObservedJWKs() external view returns (AllProvidersJWKs memory);
-    
-    /// @notice Get all patched JWKs
-    function getPatchedJWKs() external view returns (AllProvidersJWKs memory);
-}
-```
-
-### JWK Update Flow
-
-```
-┌────────────────┐     ┌────────────────┐     ┌────────────────┐
-│ OIDC Providers │     │   Validators   │     │  JWKManager    │
-│ (Google, etc.) │────▶│  Fetch & Vote  │────▶│ observedJWKs   │
-└────────────────┘     └────────────────┘     └───────┬────────┘
-                                                      │
-                                               Apply patches
-                                                      │
-                                                      ▼
-                                              ┌────────────────┐
-                                              │  patchedJWKs   │
-                                              │  (final keys)  │
-                                              └────────────────┘
-```
-
-### Access Control
-
-| Function | Caller |
-|----------|--------|
-| `upsertOIDCProvider()` | Governance |
-| `removeOIDCProvider()` | Governance |
-| `upsertObservedJWKs()` | System Caller |
-| `removeIssuerFromObservedJWKs()` | Governance |
-| `setPatches()` | Governance |
-| `addPatch()` | Governance |
-| `updateFederatedJWKSet()` | Any dApp |
-| `patchFederatedJWKs()` | Any dApp |
-| Query functions | Anyone |
-
-### Events
-
-```solidity
-event OIDCProviderAdded(string indexed name, string configUrl);
-event OIDCProviderUpdated(string indexed name, string configUrl);
-event OIDCProviderRemoved(string indexed name);
-event ObservedJWKsUpdated(uint256 indexed epoch, ProviderJWKs[] entries);
-event PatchesUpdated(uint256 count);
-event PatchedJWKsRegenerated(bytes32 hash);
-event FederatedJWKsUpdated(address indexed dapp, string issuer);
-```
-
-## Future: DNS Oracle
-
-For verifying DNS records on-chain:
-
-```solidity
-interface IDNSOracle {
-    struct DNSRecord {
-        string domain;
-        string recordType;  // A, AAAA, TXT, etc.
-        bytes data;
-        uint64 ttl;
-        uint64 recordedAt;
-    }
-    
-    function recordDNS(
-        string calldata domain,
-        string calldata recordType,
-        bytes calldata data,
-        uint64 ttl
-    ) external;
-    
-    function verifyDNS(
-        string calldata domain,
-        string calldata recordType
-    ) external view returns (bool exists, DNSRecord memory record);
-}
-```
-
-## Security Considerations
-
-1. **Consensus Required**: All oracle data requires validator consensus
-2. **Sequence Deduplication**: Prevents replay of cross-chain events
-3. **Version Control**: JWK updates are versioned to prevent rollback
-4. **Governance Patches**: Allow emergency key rotation via governance
-5. **Federated Isolation**: dApp JWKs are isolated from system JWKs
-
-## Integration Examples
-
-### Verifying a Bridge Deposit
+Verify Ethereum deposit events before minting on Gravity:
 
 ```solidity
 function claimDeposit(
@@ -370,30 +158,141 @@ function claimDeposit(
     address recipient
 ) external {
     // Verify the deposit hash was recorded by oracle
-    (bool exists, IHashOracle.HashRecord memory record) = 
+    (bool exists, IHashOracle.DataRecord memory record) =
         IHashOracle(HASH_ORACLE).verifyHash(depositHash);
-    
+
     require(exists, "Deposit not verified");
-    require(record.sourceChain == ETHEREUM_CHAIN_ID, "Wrong source chain");
-    
+
     // Process deposit...
 }
 ```
 
-### Verifying a Keyless Signature
+### DNS Record Storage
+
+DNS records can be stored using the `recordData` function with standardized encoding:
 
 ```solidity
-function verifyKeylessSignature(
-    string calldata issuer,
-    bytes calldata jwkId,
-    bytes calldata signature,
-    bytes32 message
+// DNS record encoding for HashOracle
+library DNSEncoding {
+    struct DNSRecord {
+        string domain;
+        string recordType;  // "A", "AAAA", "TXT", etc.
+        bytes data;
+        uint64 ttl;
+    }
+
+    function encode(DNSRecord calldata record) external pure returns (bytes32, bytes memory) {
+        bytes32 hash = keccak256(abi.encode(record.domain, record.recordType));
+        bytes value = abi.encode(record.data, record.ttl);
+        return (hash, value);
+    }
+
+    function decode(bytes memory value) external pure returns (bytes memory data, uint64 ttl) {
+        (data, ttl) = abi.decode(value, (bytes, uint64));
+    }
+}
+```
+
+Usage example:
+```solidity
+// Record a DNS record
+(bytes32 dnsHash, bytes memory dnsValue) = DNSEncoding.encode(dnsRecord);
+hashOracle.recordData{sourceChain: DNS_CHAIN_ID}(dnsHash, blockNumber, sequenceNumber, dnsValue);
+
+// Verify and retrieve DNS record
+(bool exists, IHashOracle.DataRecord memory record) = hashOracle.verifyHash(dnsHash);
+(bytes memory data, uint64 ttl) = DNSEncoding.decode(record.value);
+```
+
+### Cross-chain Message Verification
+
+Verify message hashes for cross-chain communication:
+
+```solidity
+function verifyCrossChainMessage(bytes32 messageHash) external view returns (bool) {
+    (bool exists, ) = IHashOracle(HASH_ORACLE).verifyHash(messageHash);
+    return exists;
+}
+```
+
+### Merkle Root Verification
+
+Verify Merkle root hashes for light client proofs:
+
+```solidity
+function verifyMerkleRoot(
+    bytes32 rootHash,
+    bytes32 leafHash,
+    bytes32[] calldata proofs
 ) external view returns (bool) {
-    // Get the JWK for verification
-    IJWKManager.JWK memory jwk = IJWKManager(JWK_MANAGER).getPatchedJWK(issuer, jwkId);
-    
-    // Verify signature using the JWK
-    return _verifyRSASignature(jwk, signature, message);
+    (bool exists, ) = IHashOracle(HASH_ORACLE).verifyHash(rootHash);
+    if (!exists) return false;
+
+    // Verify Merkle proof against the root
+    return _verifyMerkleProof(rootHash, leafHash, proofs);
+}
+```
+
+## Security Considerations
+
+1. **Consensus Required**: All oracle data requires validator consensus
+2. **Sequence Deduplication**: Prevents replay of cross-chain events by enforcing sequential processing (sequences must be processed in order)
+3. **Storage Optimization**: Using `latestSequenceNumber` per chain instead of nested mappings reduces gas costs
+
+## Access Control
+
+| Function | Caller |
+|----------|--------|
+| `recordHash()` | System Caller (via GravityPortal) |
+| `recordData()` | System Caller (via GravityPortal) |
+| Query functions | Anyone |
+
+## Integration Examples
+
+### Recording via GravityPortal
+
+The GravityPortal routes consensus data to HashOracle:
+
+```solidity
+// In GravityPortal
+function processConsensusData(
+    ProviderJWKs[] calldata jwks,
+    CrossChainParams[] calldata params
+) external onlySystem {
+    // Process JWK data -> JWKRegistry
+    if (jwks.length > 0) {
+        jwkRegistry.updateObservedJWKs(jwks);
+    }
+
+    // Process cross-chain events
+    for (uint256 i = 0; i < params.length; i++) {
+        CrossChainParams calldata param = params[i];
+
+        // Check block number via JWKRegistry (de-duplication)
+        if (!jwkRegistry.updateProviderBlockNumber(param.issuer, param.blockNumber)) {
+            continue; // Skip already processed
+        }
+
+        // Route to appropriate module
+        if (param.eventType == EventType.DEPOSIT) {
+            crossChainGateway.processDeposit(param);
+        } else if (param.eventType == EventType.HASH) {
+            hashOracle.recordHash(
+                param.hash,
+                param.blockNumber,
+                param.sourceChain,
+                param.sequenceNumber
+            );
+        } else if (param.eventType == EventType.DATA) {
+            hashOracle.recordData(
+                param.hash,
+                param.blockNumber,
+                param.sourceChain,
+                param.sequenceNumber,
+                param.value
+            );
+        }
+    }
 }
 ```
 
@@ -401,22 +300,22 @@ function verifyKeylessSignature(
 
 1. **Unit Tests**:
    - Hash recording and verification
-   - JWK CRUD operations
-   - Patch application
-   - Federated JWK management
+   - Data recording with value
+   - Sequence number validation
+   - Storage optimization verification
 
 2. **Integration Tests**:
    - Full cross-chain verification flow
-   - JWK rotation scenarios
-   - Epoch boundary handling
+   - GravityPortal routing to HashOracle
+   - Sequence boundary handling
 
 3. **Fuzz Tests**:
    - Random hash values
-   - Random JWK structures
-   - Edge cases in patch application
+   - Random sequence numbers
+   - Edge cases in sequence ordering
 
 4. **Security Tests**:
-   - Replay attack prevention
+   - Replay attack prevention (sequence out of order)
    - Unauthorized access attempts
    - Invalid data rejection
 
