@@ -8,7 +8,15 @@ owner: @changliang
 ## TODOs
 
 1. Add Aptos's Move contract github link to this spec.
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/dkg.spec.move
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/reconfiguration_with_dkg.spec.move
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/configs/randomness_config.spec.move
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/dkg.move
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/reconfiguration_with_dkg.move
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/framework/aptos-framework/sources/configs/randomness_config.move
+
 2. Governance contract should be able to manage randomness config.
+- https://github.com/aptos-labs/aptos-core/blob/main/aptos-move/aptos-release-builder/data/proposals/enable_randomness.move
 
 ## Overview
 
