@@ -1,3 +1,8 @@
+---
+status: pending review 
+owner: @yxia
+---
+
 # System Registry Specification
 
 ## Overview

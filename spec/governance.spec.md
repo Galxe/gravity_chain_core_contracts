@@ -1,3 +1,8 @@
+---
+status: unstarted
+owner: TBD
+---
+
 # Governance Specification
 
 ## Overview

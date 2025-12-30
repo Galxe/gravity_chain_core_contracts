@@ -1,3 +1,8 @@
+---
+status: drafting
+owner: TBD
+---
+
 # Randomness Specification
 
 ## Overview

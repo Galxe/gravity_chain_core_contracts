@@ -1,3 +1,8 @@
+---
+status: draft
+owner: @yxia
+---
+
 # Stake Module Specification
 
 ## Overview

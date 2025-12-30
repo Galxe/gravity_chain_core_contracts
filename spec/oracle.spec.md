@@ -1,3 +1,8 @@
+---
+status: unstarted
+owner: @yxia
+---
+
 # Oracle Specification
 
 ## Overview

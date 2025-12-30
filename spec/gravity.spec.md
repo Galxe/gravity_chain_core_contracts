@@ -1,3 +1,8 @@
+---
+status: unstarted
+owner: TBD
+---
+
 # Gravity L1 Core Smart Contracts Specification
 
 ## Overview

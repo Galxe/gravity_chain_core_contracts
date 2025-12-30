@@ -1,3 +1,8 @@
+---
+status: drafting
+owner: @yxia
+---
+
 # Epoch Manager Specification
 
 ## Overview

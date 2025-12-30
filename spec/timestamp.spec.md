@@ -1,3 +1,8 @@
+---
+status: pending review
+owner: @yxia
+---
+
 # Timestamp Specification
 
 ## Overview
