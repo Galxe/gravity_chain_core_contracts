@@ -1,9 +1,14 @@
 ---
-status: pending review
+status: finalizing
 owner: @yxia
 ---
 
 # Timestamp Specification
+
+## TODOs
+
+1. If initialized to 0, and set to current time in the first block. Will it trigger any unexpected epoch behavior?
+2. Who is the "proposer"? Does it matter?
 
 ## Overview
 
@@ -43,26 +48,7 @@ interface ITimestamp {
     /// @return Current timestamp in seconds
     function nowSeconds() external view returns (uint64);
 
-    /// @notice Get detailed time information
-    /// @return currentMicroseconds Current time in microseconds
-    /// @return currentSeconds Current time in seconds
-    /// @return blockTimestamp EVM block.timestamp for reference
-    function getTimeInfo() external view returns (
-        uint64 currentMicroseconds,
-        uint64 currentSeconds,
-        uint256 blockTimestamp
-    );
-
-    /// @notice Check if a timestamp is >= current time
-    /// @param timestamp Timestamp to check (in microseconds)
-    /// @return True if timestamp >= current time
-    function isGreaterThanOrEqualCurrentTimestamp(uint64 timestamp) external view returns (bool);
-
     // ========== Protected Functions ==========
-
-    /// @notice Initialize the contract (genesis only)
-    function initialize() external;
-
     /// @notice Update the global time (Blocker only)
     /// @param proposer The block proposer address
     /// @param timestamp New timestamp in microseconds
@@ -77,12 +63,10 @@ interface ITimestamp {
 /// @param proposer Block proposer address
 /// @param oldTimestamp Previous timestamp
 /// @param newTimestamp New timestamp
-/// @param isNilBlock True if this is a NIL block (no time advance)
 event GlobalTimeUpdated(
     address indexed proposer,
     uint64 oldTimestamp,
     uint64 newTimestamp,
-    bool isNilBlock
 );
 ```
 
