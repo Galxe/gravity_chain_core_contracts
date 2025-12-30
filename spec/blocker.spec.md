@@ -1,5 +1,5 @@
 ---
-status: pending review
+status: drafting
 owner: @yxia
 ---
 
@@ -13,9 +13,11 @@ production. It is called once at the beginning of each block to update on-chain 
 ## Design Goals
 
 1. **Single Entry Point**: One function called per block by the blockchain runtime
-2. **Orchestrator Role**: Coordinates updates across multiple system contracts
-3. **Minimal Logic**: Keep logic simple, delegate to specialized contracts
-4. **Fault Tolerance**: Handle failures gracefully without breaking block production
+2. **Minimal Logic**: Keep logic simple, delegate to specialized contracts
+3. **Fault Tolerance**: Handle failures gracefully without breaking block production
+4. **Thin Orchestrator**: Pass control to EpochManager for epoch transition logic
+
+---
 
 ## Contract: `Blocker`
 
@@ -70,31 +72,34 @@ error OnlySystemCaller();
 error OnlyGenesis();
 ```
 
+---
+
 ## Block Prologue Flow
 
 The `onBlockStart` function executes the following steps in order:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    onBlockStart()                        │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  1. Resolve proposer address                             │
-│     ├── If VM reserved (32 zeros) → SYSTEM_CALLER       │
-│     └── Else → TBD (see pending items)                  │
-│                                                          │
-│  2. Update Timestamp                                     │
-│     └── timestamp.updateGlobalTime(proposer, time)      │
-│                                                          │
-│  3. Update Performance Tracker (optional)                │
-│     └── tracker.recordProposerStats(...)                │
-│                                                          │
-│  4. Check Epoch Transition                               │
-│     └── If epochManager.canTransition() → trigger        │
-│                                                          │
-│  5. Emit BlockStarted event                              │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           onBlockStart()                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. Resolve proposer                                                         │
+│     ├── If VM reserved (32 zeros) → SYSTEM_CALLER                            │
+│     └── Else → ValidatorManager.getValidatorByConsensusAddress(proposer)    │
+│                                                                              │
+│  2. Update Timestamp                                                         │
+│     └── Timestamp.updateGlobalTime(proposerAddr, timestampMicros)           │
+│                                                                              │
+│  3. Update Performance Tracker                                               │
+│     └── PerformanceTracker.updatePerformanceStatistics(...)                 │
+│                                                                              │
+│  4. Check and Start Epoch Transition (if needed)                             │
+│     └── EpochManager.checkAndStartTransition()                              │
+│         └── Returns true if DKG was started                                 │
+│                                                                              │
+│  5. Emit BlockStarted event                                                  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Implementation
@@ -102,40 +107,43 @@ The `onBlockStart` function executes the following steps in order:
 ```solidity
 function onBlockStart(
     bytes32 proposer,
-    address[] calldata failedProposers,
+    bytes32[] calldata failedProposers,
     uint64 timestampMicros
 ) external onlySystemCaller {
     // 1. Resolve proposer address
-    // TODO: Pending design decision - since addresses are passed directly,
-    // we may not need to lookup the proposer. See "Pending Items" section.
-    address proposerAddr;
+    address validatorAddress;
+
     if (_isVmReservedProposer(proposer)) {
-        proposerAddr = SYSTEM_CALLER;
+        // VM reserved address (NIL block)
+        validatorAddress = SYSTEM_CALLER;
     } else {
-        // TBD: May receive address directly from runtime instead of pubkey lookup
-        proposerAddr = IValidatorManager(VALIDATOR_MANAGER).getValidatorByPubkey(proposer);
+        // Get validator address from ValidatorManager
+        validatorAddress =
+            IValidatorManager(VALIDATOR_MANAGER_ADDR).getValidatorByConsensusAddress(proposer);
     }
 
-    // 2. Update timestamp
-    ITimestamp(TIMESTAMP).updateGlobalTime(proposerAddr, timestampMicros);
+    // 2. Update global timestamp
+    ITimestamp(TIMESTAMP_ADDR).updateGlobalTime(validatorAddress, timestampMicros);
 
-    // 3. Record performance (optional, non-critical)
-    _safeRecordPerformance(proposerAddr, failedProposers);
+    // 3. Update validator performance statistics
+    IValidatorPerformanceTracker(VALIDATOR_PERFORMANCE_TRACKER_ADDR)
+        .updatePerformanceStatistics(proposer, failedProposers);
 
-    // 4. Check and trigger epoch transition
-    if (IEpochManager(EPOCH_MANAGER).canTriggerEpochTransition()) {
-        IEpochManager(EPOCH_MANAGER).triggerEpochTransition();
-    }
+    // 4. Check and start epoch transition if needed
+    //    EpochManager handles all transition logic internally
+    IEpochManager(EPOCH_MANAGER_ADDR).checkAndStartTransition();
 
     // 5. Emit event
     emit BlockStarted(
         block.number,
-        IEpochManager(EPOCH_MANAGER).currentEpoch(),
-        proposerAddr,
+        uint64(IEpochManager(EPOCH_MANAGER_ADDR).currentEpoch()),
+        validatorAddress,
         timestampMicros
     );
 }
 ```
+
+---
 
 ## VM Reserved Proposer
 
@@ -149,9 +157,60 @@ function _isVmReservedProposer(bytes32 proposer) internal pure returns (bool) {
 
 NIL blocks are special blocks where:
 
-- No real proposer
-- Timestamp doesn't advance
-- No performance tracking
+- No real proposer (system-generated block)
+- Proposer consensus address is `bytes32(0)`
+- Performance tracking still occurs (to record failed proposers)
+
+---
+
+## Relationship with EpochManager
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BLOCKER → EPOCH MANAGER INTERACTION                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Blocker                          EpochManager                              │
+│   ───────                          ────────────                              │
+│      │                                  │                                    │
+│      │  checkAndStartTransition()       │                                    │
+│      │─────────────────────────────────►│                                    │
+│      │                                  │                                    │
+│      │                                  ├─► Check time elapsed               │
+│      │                                  ├─► Check state == Idle              │
+│      │                                  │                                    │
+│      │                                  │   [If conditions met:]             │
+│      │                                  ├─► Get validator infos              │
+│      │                                  ├─► Get randomness config            │
+│      │                                  ├─► DKG.startSession()               │
+│      │                                  ├─► transitionState = DkgInProgress  │
+│      │                                  │                                    │
+│      │◄─────────────────────────────────│  returns bool (started)            │
+│      │                                  │                                    │
+│                                                                              │
+│   Key Point: Blocker does NOT need to check canTriggerEpochTransition()     │
+│   separately. EpochManager.checkAndStartTransition() handles everything.     │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Previous Design (Deprecated)**:
+
+```solidity
+// OLD - Do not use
+if (IEpochManager(EPOCH_MANAGER).canTriggerEpochTransition()) {
+    IReconfigurationWithDKG(RECONFIG).tryStart();
+}
+```
+
+**New Design**:
+
+```solidity
+// NEW - Single call to EpochManager
+IEpochManager(EPOCH_MANAGER_ADDR).checkAndStartTransition();
+```
+
+---
 
 ## Access Control
 
@@ -160,20 +219,23 @@ NIL blocks are special blocks where:
 | `initialize()`   | Genesis only                            |
 | `onBlockStart()` | System Caller (blockchain runtime) only |
 
+---
+
 ## Fault Handling
 
 Non-critical operations should not fail the block:
 
 ```solidity
 function _safeRecordPerformance(
-    address proposer,
-    address[] calldata failedProposers
+    bytes32 proposer,
+    bytes32[] calldata failedProposers
 ) internal {
-    try IPerformanceTracker(TRACKER).record(proposer, failedProposers) {
+    try IValidatorPerformanceTracker(VALIDATOR_PERFORMANCE_TRACKER_ADDR)
+        .updatePerformanceStatistics(proposer, failedProposers) {
         // Success
     } catch (bytes memory reason) {
         // Log failure but don't revert
-        emit ComponentUpdateFailed(TRACKER, reason);
+        emit ComponentUpdateFailed(VALIDATOR_PERFORMANCE_TRACKER_ADDR, reason);
     }
 }
 ```
@@ -181,12 +243,14 @@ function _safeRecordPerformance(
 **Critical operations that MUST succeed:**
 
 - Timestamp update
-- Epoch transition (if triggered)
+- Epoch transition check (checkAndStartTransition)
 
 **Non-critical operations (can fail gracefully):**
 
 - Performance tracking
 - Metrics collection
+
+---
 
 ## Genesis Block Handling
 
@@ -198,37 +262,42 @@ function initialize() external onlyGenesis {
     emit BlockStarted(0, 0, SYSTEM_CALLER, 0);
 
     // Initialize timestamp to 0
-    ITimestamp(TIMESTAMP).updateGlobalTime(SYSTEM_CALLER, 0);
+    ITimestamp(TIMESTAMP_ADDR).updateGlobalTime(SYSTEM_CALLER, 0);
 }
 ```
 
-## Relationship with Other Contracts
+---
+
+## Contract Dependencies
 
 ```
-                    ┌─────────────┐
-                    │   Blocker   │
-                    └──────┬──────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-        ▼                  ▼                  ▼
-┌───────────────┐  ┌──────────────┐  ┌─────────────────┐
-│   Timestamp   │  │ EpochManager │  │ ValidatorManager│
-└───────────────┘  └──────────────┘  └─────────────────┘
+                         ┌─────────────────┐
+                         │     Blocker     │
+                         │  (Entry Point)  │
+                         └────────┬────────┘
+                                  │
+        ┌─────────────────────────┼─────────────────────────┐
+        │                         │                         │
+        ▼                         ▼                         ▼
+┌───────────────┐         ┌──────────────┐         ┌─────────────────────┐
+│   Timestamp   │         │ EpochManager │         │ ValidatorPerformance│
+│               │         │              │         │      Tracker        │
+│ updateGlobal  │         │ checkAnd     │         │                     │
+│   Time()      │         │ StartTrans   │         │ updatePerformance   │
+│               │         │   ition()    │         │   Statistics()      │
+└───────────────┘         └──────────────┘         └─────────────────────┘
+                                  │
+                                  │ (internally calls)
+                                  │
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+             ┌──────────┐  ┌──────────┐  ┌──────────────┐
+             │   DKG    │  │Validator │  │ Randomness   │
+             │          │  │ Manager  │  │   Config     │
+             └──────────┘  └──────────┘  └──────────────┘
 ```
 
-- **Timestamp**: Blocker updates time every block
-- **EpochManager**: Blocker checks and triggers epoch transitions
-- **ValidatorManager**: Blocker looks up proposer info
-
-## Pending Items
-
-> **TODO**: Design decision needed with the team.
-
-1. **Proposer Resolution**: Since `failedProposers` are now passed as addresses directly from the runtime, should the `proposer` parameter also be passed as an `address` instead of `bytes32` (public key)?
-   - If yes, we can eliminate the `getValidatorByPubkey` lookup entirely
-   - The interface would become: `onBlockStart(address proposer, address[] calldata failedProposers, uint64 timestampMicros)`
-   - This simplifies the contract and reduces gas costs
+---
 
 ## Security Considerations
 
@@ -236,6 +305,9 @@ function initialize() external onlyGenesis {
 2. **Atomic Execution**: All updates within a single transaction
 3. **Fail-safe**: Non-critical failures don't break block production
 4. **No External Calls to Untrusted Contracts**: Only calls system contracts
+5. **Delegate Complex Logic**: Epoch transition logic delegated to EpochManager
+
+---
 
 ## Gas Considerations
 
@@ -245,28 +317,34 @@ Block prologue is executed every block, so gas efficiency matters:
 - Use calldata for input parameters
 - Avoid loops over unbounded arrays
 - Cache frequently accessed addresses
+- Single call to EpochManager instead of multiple checks
+
+---
 
 ## Testing Requirements
 
-1. **Unit Tests**:
+### Unit Tests
 
-   - Normal block processing
-   - NIL block handling (bytes32(0) proposer)
-   - Epoch transition triggering
-   - Failed proposers recording
+- Normal block processing
+- NIL block handling (bytes32(0) proposer)
+- Epoch transition triggering via checkAndStartTransition
+- Failed proposers recording
 
-2. **Integration Tests**:
+### Integration Tests
 
-   - Full block prologue flow
-   - Multi-block sequences
-   - Epoch boundary crossing
+- Full block prologue flow
+- Multi-block sequences
+- Epoch boundary crossing
+- Transition state changes across blocks
 
-3. **Fuzz Tests**:
+### Fuzz Tests
 
-   - Random proposer data (bytes32)
-   - Random failed proposer addresses
-   - Random failure scenarios
+- Random proposer consensus address (bytes32)
+- Random failed proposer consensus addresses (bytes32[])
+- Random failure scenarios
 
-4. **Gas Tests**:
-   - Measure gas per block type
-   - Ensure bounded gas consumption
+### Gas Tests
+
+- Measure gas per block type
+- Ensure bounded gas consumption
+- Compare gas with/without epoch transition start

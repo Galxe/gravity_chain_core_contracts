@@ -7,116 +7,156 @@ owner: @yxia
 
 ## Overview
 
-The Epoch Manager controls the epoch lifecycle of the Gravity consensus algorithm. An epoch is a fixed time period
-during which the validator set remains stable. At epoch boundaries, the validator set can change and accumulated state
-transitions occur.
+The Epoch Manager is the **central orchestrator** for the epoch lifecycle of the Gravity consensus algorithm. An epoch
+is a fixed time period during which the validator set remains stable. At epoch boundaries, the validator set can change
+and accumulated state transitions occur.
+
+**Key Principle**: EpochManager owns the entire epoch transition lifecycle, coordinating DKG, configuration updates,
+and validator set changes. Other contracts (DKG, ValidatorManager, RandomnessConfig) provide supporting functions.
 
 ## Design Goals
 
-1. **Time-based Epochs**: Epochs are defined by duration, not block count
-2. **Predictable Transitions**: Clear rules for when transitions occur
-3. **Coordinated Updates**: Notify all dependent contracts on transition
-4. **Configurable Duration**: Epoch length can be adjusted via governance
-5. **DKG Synchronization**: Epoch transitions are gated by DKG completion
+1. **Single Orchestrator**: EpochManager owns all epoch transition logic
+2. **Time-based Epochs**: Epochs are defined by duration, not block count
+3. **Explicit State Machine**: Clear transition states (Idle, DkgInProgress)
+4. **DKG Synchronization**: Epoch transitions are gated by DKG completion
+5. **Configurable Duration**: Epoch length can be adjusted via governance
 
 ---
 
-## End-to-End Epoch Transition Flow
+## Architecture
 
-The epoch transition is a coordinated process spanning multiple contracts. Understanding this flow is critical
-for implementing and debugging the system.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         EPOCH MANAGER ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│                            ┌─────────────┐                                  │
+│                            │   Blocker   │                                  │
+│                            │ (Entry Point)│                                 │
+│                            └──────┬──────┘                                  │
+│                                   │                                         │
+│                                   │ checkAndStartTransition()               │
+│                                   │ (single entry point)                    │
+│                                   │                                         │
+│                                   ▼                                         │
+│           ┌────────────────────────────────────────────┐                    │
+│           │              EpochManager                   │                   │
+│           │         (Central Orchestrator)              │                   │
+│           │                                             │                   │
+│           │  State:                                     │                   │
+│           │    - currentEpoch                           │                   │
+│           │    - lastEpochTransitionTime                │                   │
+│           │    - epochIntervalMicros                    │                   │
+│           │    - transitionState                        │                   │
+│           │                                             │                   │
+│           │  Entry Points:                              │                   │
+│           │    - checkAndStartTransition() ← Blocker   │                    │
+│           │    - finishTransition()        ← Consensus │                    │
+│           └───────────────────┬────────────────────────┘                    │
+│                               │                                             │
+│          ┌────────────────────┼────────────────────┐                        │
+│          │                    │                    │                        │
+│          ▼                    ▼                    ▼                        │
+│   ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐              │
+│   │     DKG      │    │ Validator    │    │  Randomness      │              │
+│   │  (Service)   │    │   Manager    │    │    Config        │              │
+│   │              │    │  (Service)   │    │   (Service)      │              │
+│   │ startSession │    │ getConsensus │    │ getCurrentConfig │              │
+│   │ finishSession│    │   Infos()    │    │ applyPending     │              │
+│   │ isInProgress │    │ onNewEpoch() │    │   Config()       │              │
+│   └──────────────┘    └──────────────┘    └──────────────────┘              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Transition State Machine
+
+EpochManager owns an explicit transition state machine:
+
+```
+                    checkAndStartTransition()
+                    (time elapsed, state == Idle)
+┌─────────────┐ ─────────────────────────────────────▶ ┌──────────────────┐
+│             │                                         │                  │
+│    IDLE     │                                         │  DKG_IN_PROGRESS │
+│             │                                         │                  │
+│ (waiting    │ ◀───────────────────────────────────── │ (waiting for     │
+│  for time)  │       finishTransition()                │  consensus)      │
+└─────────────┘                                         └──────────────────┘
+```
+
+**States:**
+- **Idle**: No transition in progress. Waiting for epoch interval to elapse.
+- **DkgInProgress**: DKG has been started. Waiting for consensus engine to complete DKG and call `finishTransition()`.
+
+---
+
+## End-to-End Flow
 
 ### Flow Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        EPOCH TRANSITION LIFECYCLE                           │
+│                        EPOCH TRANSITION LIFECYCLE                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
+│                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 1: DETECTION (Every Block)                                    │    │
-│  │                                                                     │    │
-│  │   Blocker.onBlockStart()                                            │    │
-│  │     │                                                               │    │
-│  │     ├── 1. Update global timestamp                                  │    │
-│  │     ├── 2. Update validator performance statistics                  │    │
-│  │     └── 3. Check: EpochManager.canTriggerEpochTransition()?        │    │
-│  │              │                                                      │    │
-│  │              └── If TRUE → ReconfigurationWithDKG.tryStart()       │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                    │                                         │
-│                                    ▼                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 2: DKG INITIATION                                              │    │
+│  │ PHASE 1: DETECTION & DKG START (Single Call from Blocker)           │    │
 │  │                                                                      │    │
-│  │   ReconfigurationWithDKG.tryStart()                                 │    │
-│  │     │                                                               │    │
-│  │     ├── 1. Check for incomplete DKG session                        │    │
-│  │     │     ├── If same epoch → return (already running)             │    │
-│  │     │     └── If different epoch → clear old session               │    │
-│  │     │                                                               │    │
-│  │     ├── 2. Collect validator consensus infos                       │    │
-│  │     │     ├── Current validators (dealers)                         │    │
-│  │     │     └── Next validators (targets)                            │    │
-│  │     │                                                               │    │
-│  │     └── 3. DKG.start(epoch, config, currentVals, nextVals)        │    │
-│  │              └── Emits DKGStartEvent (signals consensus engine)    │    │
+│  │   Blocker.onBlockStart()                                             │    │
+│  │     │                                                                │    │
+│  │     ├── Update timestamp                                             │    │
+│  │     ├── Update performance                                           │    │
+│  │     │                                                                │    │
+│  │     └── EpochManager.checkAndStartTransition()                      │    │
+│  │              │                                                       │    │
+│  │              ├── Check: canTransition() && state == Idle?           │    │
+│  │              │     └── If NO → return false                         │    │
+│  │              │                                                       │    │
+│  │              ├── ValidatorManager.getCurrentConsensusInfos()        │    │
+│  │              ├── ValidatorManager.getNextConsensusInfos()           │    │
+│  │              ├── RandomnessConfig.getCurrentConfig()                 │    │
+│  │              │                                                       │    │
+│  │              ├── DKG.tryClearIncompleteSession()                    │    │
+│  │              ├── DKG.startSession(epoch, config, dealers, targets)  │    │
+│  │              │     └── Emits DKGStartEvent                          │    │
+│  │              │                                                       │    │
+│  │              ├── transitionState = DkgInProgress                    │    │
+│  │              └── Emit EpochTransitionStarted                        │    │
+│  │                                                                      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                         │
 │                         [OFF-CHAIN: Consensus Engine runs DKG]               │
 │                                    │                                         │
 │                                    ▼                                         │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 3: DKG COMPLETION                                              │    │
+│  │ PHASE 2: FINISH TRANSITION (Single Call from Consensus Engine)       │    │
 │  │                                                                      │    │
-│  │   ReconfigurationWithDKG.finish() / finishWithDkgResult()           │    │
-│  │     │                                                               │    │
-│  │     ├── 1. DKG.tryClearIncompleteSession()                         │    │
-│  │     │                                                               │    │
-│  │     ├── 2. _applyOnNewEpochConfigs()                               │    │
-│  │     │     └── Apply buffered on-chain configuration changes         │    │
-│  │     │                                                               │    │
-│  │     └── 3. EpochManager.triggerEpochTransition()                   │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                    │                                         │
-│                                    ▼                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 4: EPOCH STATE UPDATE                                          │    │
+│  │   EpochManager.finishTransition(dkgResult)                          │    │
+│  │              │                                                       │    │
+│  │              ├── Validate: state == DkgInProgress                   │    │
+│  │              │                                                       │    │
+│  │              ├── DKG.finishSession(dkgResult) (if result provided)  │    │
+│  │              ├── DKG.tryClearIncompleteSession()                    │    │
+│  │              │                                                       │    │
+│  │              ├── RandomnessConfig.applyPendingConfig()              │    │
+│  │              │                                                       │    │
+│  │              ├── ValidatorManager.onNewEpoch()                      │    │
+│  │              │     ├── Process stake transitions                    │    │
+│  │              │     ├── Activate pending validators                  │    │
+│  │              │     ├── Remove inactive validators                   │    │
+│  │              │     ├── Recalculate validator set                    │    │
+│  │              │     └── Emit ValidatorSetUpdated                     │    │
+│  │              │                                                       │    │
+│  │              ├── currentEpoch++                                     │    │
+│  │              ├── lastEpochTransitionTime = nowSeconds()             │    │
+│  │              │                                                       │    │
+│  │              ├── transitionState = Idle                             │    │
+│  │              └── Emit EpochTransitioned                             │    │
 │  │                                                                      │    │
-│  │   EpochManager.triggerEpochTransition()                             │    │
-│  │     │                                                               │    │
-│  │     ├── 1. currentEpoch++                                          │    │
-│  │     │                                                               │    │
-│  │     ├── 2. lastEpochTransitionTime = nowSeconds()                  │    │
-│  │     │                                                               │    │
-│  │     ├── 3. _notifySystemModules()                                  │    │
-│  │     │     └── ValidatorManager.onNewEpoch()                        │    │
-│  │     │                                                               │    │
-│  │     └── 4. Emit EpochTransitioned(newEpoch, transitionTime)        │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                    │                                         │
-│                                    ▼                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │ PHASE 5: VALIDATOR SET RECONFIGURATION                               │    │
-│  │                                                                      │    │
-│  │   ValidatorManager.onNewEpoch()                                     │    │
-│  │     │                                                               │    │
-│  │     ├── 1. Process all StakeCredit status transitions              │    │
-│  │     │     └── pending_active stakes → active                       │    │
-│  │     │                                                               │    │
-│  │     ├── 2. Activate pending_active validators                      │    │
-│  │     │     └── Based on updated stake data                          │    │
-│  │     │                                                               │    │
-│  │     ├── 3. Remove pending_inactive validators                      │    │
-│  │     │                                                               │    │
-│  │     ├── 4. Recalculate validator set                               │    │
-│  │     │     └── Based on latest stake data & min stake required      │    │
-│  │     │                                                               │    │
-│  │     ├── 5. ValidatorPerformanceTracker.onNewEpoch()                │    │
-│  │     │                                                               │    │
-│  │     ├── 6. Reset totalJoiningPower to 0                            │    │
-│  │     │                                                               │    │
-│  │     └── 7. Emit ValidatorSetUpdated(...)                           │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -135,58 +175,28 @@ for implementing and debugging the system.
            │ onBlockStart()                                │ onBlockStart()
            │                                               │
            ├─► Timestamp.updateGlobalTime()                ├─► Timestamp.updateGlobalTime()
+           ├─► PerformanceTracker.update()                 ├─► PerformanceTracker.update()
            │                                               │
-           ├─► ValidatorPerformanceTracker                 ├─► ValidatorPerformanceTracker
-           │   .updatePerformanceStatistics()              │   .updatePerformanceStatistics()
-           │                                               │
-           ├─► EpochManager.canTriggerEpochTransition()    ├─► EpochManager.canTriggerEpochTransition()
-           │   └─► returns TRUE (time elapsed)             │   └─► returns FALSE (recently transitioned)
-           │                                               │
-           └─► ReconfigurationWithDKG.tryStart()           └─► [no action]
-                     │
-                     ├─► DKG.start()
-                     │   └─► Emit DKGStartEvent
-                     │
-                     │   [Consensus engine receives event,
-                     │    performs DKG off-chain]
-                     │
-                     └─► [DKG completes off-chain]
-                               │
-                               ▼
-                     ReconfigurationWithDKG.finish()
-                               │
-                               ├─► _applyOnNewEpochConfigs()
-                               │
-                               └─► EpochManager.triggerEpochTransition()
-                                         │
-                                         ├─► currentEpoch = 1
-                                         ├─► lastEpochTransitionTime = now
-                                         └─► ValidatorManager.onNewEpoch()
-                                                   │
-                                                   └─► Emit ValidatorSetUpdated()
+           └─► EpochManager.checkAndStartTransition()      └─► EpochManager.checkAndStartTransition()
+                     │                                               │
+                     │ (time elapsed, starts DKG)                    │ (returns false, in progress)
+                     │                                               │
+                     ├─► DKG.startSession()                          │
+                     │   └─► Emit DKGStartEvent                      │
+                     │                                               │
+                     │   [Consensus engine runs DKG off-chain]       │
+                     │                                               │
+                     └─► [DKG completes]                             │
+                               │                                     │
+                               ▼                                     │
+                     EpochManager.finishTransition(result)           │
+                               │                                     │
+                               ├─► RandomnessConfig.applyPending()   │
+                               ├─► ValidatorManager.onNewEpoch()     │
+                               │         │                           │
+                               │         └─► Emit ValidatorSetUpdated│
+                               └─► currentEpoch++                    │
 ```
-
----
-
-## Contract Responsibilities
-
-### Responsibility Matrix
-
-| Contract                 | Detection | DKG Coord | Config Apply | State Update | Val Update |
-| ------------------------ | --------- | --------- | ------------ | ------------ | ---------- |
-| Blocker                  | ✓         |           |              |              |            |
-| ReconfigurationWithDKG   |           | ✓         | ✓            |              |            |
-| EpochManager             |           |           |              | ✓            |            |
-| ValidatorManager         |           |           |              |              | ✓          |
-
-### Key Design Decision: Config Application Location
-
-> **IMPORTANT**: Configuration changes (like RandomnessConfig updates) are applied in `ReconfigurationWithDKG._applyOnNewEpochConfigs()`, NOT by EpochManager's module notification.
-
-This design means:
-- EpochManager only notifies ValidatorManager
-- Other configs are applied BEFORE the epoch counter increments
-- This ensures new configs are active for the new epoch's first block
 
 ---
 
@@ -195,6 +205,12 @@ This design means:
 ### State Variables
 
 ```solidity
+/// @notice Transition states
+enum TransitionState {
+    Idle,           // No transition in progress, waiting for time
+    DkgInProgress   // DKG started, waiting for completion
+}
+
 /// @notice Current epoch number (starts at 0)
 uint256 public currentEpoch;
 
@@ -203,14 +219,21 @@ uint256 public epochIntervalMicros;
 
 /// @notice Timestamp of last epoch transition (in seconds)
 uint256 public lastEpochTransitionTime;
+
+/// @notice Current transition state
+TransitionState public transitionState;
+
+/// @notice Epoch when transition was started (for validation)
+uint256 public transitionStartedAtEpoch;
 ```
 
 ### Default Configuration
 
-| Parameter             | Default Value       | Description    |
-| --------------------- | ------------------- | -------------- |
-| `epochIntervalMicros` | 2 hours × 1,000,000 | Epoch duration |
-| `currentEpoch`        | 0                   | Starting epoch |
+| Parameter             | Default Value       | Description       |
+| --------------------- | ------------------- | ----------------- |
+| `epochIntervalMicros` | 2 hours × 1,000,000 | Epoch duration    |
+| `currentEpoch`        | 0                   | Starting epoch    |
+| `transitionState`     | Idle                | Initial state     |
 
 ### Interface
 
@@ -219,7 +242,6 @@ interface IEpochManager {
     // ========== Epoch Queries ==========
 
     /// @notice Get current epoch number
-    /// @return Current epoch
     function currentEpoch() external view returns (uint256);
 
     /// @notice Get current epoch info
@@ -236,23 +258,38 @@ interface IEpochManager {
     /// @return remainingTime Seconds until next epoch (0 if ready to transition)
     function getRemainingTime() external view returns (uint256);
 
-    /// @notice Check if epoch transition can be triggered
+    /// @notice Check if epoch transition can be triggered (time-based)
     /// @return True if current time >= next epoch boundary
     function canTriggerEpochTransition() external view returns (bool);
 
-    // ========== State Transitions ==========
+    /// @notice Check if transition is in progress
+    function isTransitionInProgress() external view returns (bool);
+
+    /// @notice Get current transition state
+    function getTransitionState() external view returns (TransitionState);
+
+    // ========== Transition Control ==========
+
+    /// @notice Check and start epoch transition if conditions are met
+    /// @dev Called by Blocker at each block. Starts DKG if time has elapsed.
+    /// @return started True if DKG was started
+    function checkAndStartTransition() external returns (bool started);
+
+    /// @notice Finish epoch transition after DKG completes
+    /// @dev Called by consensus engine (system caller) after DKG completes
+    /// @param dkgResult The DKG transcript (empty bytes if DKG disabled)
+    function finishTransition(bytes calldata dkgResult) external;
+
+    // ========== Initialization ==========
 
     /// @notice Initialize the contract (genesis only)
     function initialize() external;
 
-    /// @notice Trigger epoch transition (authorized callers only)
-    function triggerEpochTransition() external;
-
     // ========== Configuration ==========
 
     /// @notice Update epoch parameters (governance only)
-    /// @param key Parameter key (use predefined constants, e.g., PARAM_EPOCH_INTERVAL_MICROS)
-    /// @param value New value
+    /// @param key Parameter key (use predefined constants)
+    /// @param value New value (abi encoded)
     function updateParam(bytes32 key, bytes calldata value) external;
 }
 ```
@@ -260,7 +297,12 @@ interface IEpochManager {
 ### Events
 
 ```solidity
-/// @notice Emitted when epoch transitions
+/// @notice Emitted when epoch transition starts (DKG initiated)
+event EpochTransitionStarted(
+    uint256 indexed epoch
+);
+
+/// @notice Emitted when epoch transition completes
 event EpochTransitioned(
     uint256 indexed newEpoch,
     uint256 transitionTime
@@ -272,7 +314,7 @@ event EpochDurationUpdated(
     uint256 newDuration
 );
 
-/// @notice Emitted when a module notification fails
+/// @notice Emitted when a module notification fails (non-fatal)
 event ModuleNotificationFailed(
     address indexed module,
     bytes reason
@@ -282,13 +324,22 @@ event ModuleNotificationFailed(
 ### Errors
 
 ```solidity
-/// @notice Epoch transition not ready yet
+/// @notice Epoch transition not ready yet (time not elapsed)
 error EpochTransitionNotReady();
 
 /// @notice Invalid epoch duration (must be > 0)
 error InvalidEpochDuration();
 
-/// @notice Not authorized to trigger transition
+/// @notice Transition already in progress
+error TransitionAlreadyInProgress();
+
+/// @notice No transition in progress to finish
+error NoTransitionInProgress();
+
+/// @notice Epoch mismatch (transition started in different epoch)
+error EpochMismatch(uint256 expected, uint256 actual);
+
+/// @notice Not authorized to call this function
 error NotAuthorized(address caller);
 
 /// @notice Unknown parameter
@@ -297,47 +348,104 @@ error ParameterNotFound(bytes32 key);
 
 ---
 
-## Epoch Transition Logic
+## Implementation
 
-### Transition Condition
+### checkAndStartTransition
+
+Called by Blocker every block. Orchestrates the start of epoch transition.
 
 ```solidity
-function canTriggerEpochTransition() external view returns (bool) {
+function checkAndStartTransition() external onlyBlocker returns (bool started) {
+    // 1. Skip if already in progress
+    if (transitionState == TransitionState.DkgInProgress) {
+        return false;
+    }
+
+    // 2. Check if time has elapsed
+    if (!_canTransition()) {
+        return false;
+    }
+
+    // 3. Get validator consensus infos from ValidatorManager
+    ValidatorConsensusInfo[] memory currentVals =
+        IValidatorManager(VALIDATOR_MANAGER_ADDR).getCurrentConsensusInfos();
+    ValidatorConsensusInfo[] memory nextVals =
+        IValidatorManager(VALIDATOR_MANAGER_ADDR).getNextConsensusInfos();
+
+    // 4. Get randomness config
+    RandomnessConfigData memory config =
+        IRandomnessConfig(RANDOMNESS_CONFIG_ADDR).getCurrentConfig();
+
+    // 5. Clear any stale DKG session
+    IDKG(DKG_ADDR).tryClearIncompleteSession();
+
+    // 6. Start DKG session - emits DKGStartEvent for consensus engine
+    IDKG(DKG_ADDR).startSession(
+        uint64(currentEpoch),
+        config,
+        currentVals,
+        nextVals
+    );
+
+    // 7. Update state
+    transitionState = TransitionState.DkgInProgress;
+    transitionStartedAtEpoch = currentEpoch;
+
+    emit EpochTransitionStarted(currentEpoch);
+    return true;
+}
+```
+
+### finishTransition
+
+Called by consensus engine when DKG completes off-chain.
+
+```solidity
+function finishTransition(bytes calldata dkgResult) external onlySystemCaller {
+    // 1. Validate state
+    if (transitionState != TransitionState.DkgInProgress) {
+        revert NoTransitionInProgress();
+    }
+    if (transitionStartedAtEpoch != currentEpoch) {
+        revert EpochMismatch(currentEpoch, transitionStartedAtEpoch);
+    }
+
+    // 2. Finish DKG session if result provided
+    if (dkgResult.length > 0) {
+        IDKG(DKG_ADDR).finishSession(dkgResult);
+    }
+    IDKG(DKG_ADDR).tryClearIncompleteSession();
+
+    // 3. Apply pending configs BEFORE incrementing epoch
+    //    This ensures new configs are active for the new epoch's first block
+    IRandomnessConfig(RANDOMNESS_CONFIG_ADDR).applyPendingConfig();
+
+    // 4. Notify validator manager to apply changes BEFORE incrementing epoch
+    //    ValidatorManager needs to process based on current epoch state
+    _safeNotifyModule(VALIDATOR_MANAGER_ADDR);
+
+    // 5. Increment epoch
+    uint256 newEpoch = currentEpoch + 1;
+    currentEpoch = newEpoch;
+    lastEpochTransitionTime = ITimestamp(TIMESTAMP_ADDR).nowSeconds();
+
+    // 6. Reset state
+    transitionState = TransitionState.Idle;
+
+    // 7. Emit transition event
+    emit EpochTransitioned(newEpoch, lastEpochTransitionTime);
+}
+```
+
+### Internal Helpers
+
+```solidity
+function _canTransition() internal view returns (bool) {
     uint256 currentTime = ITimestamp(TIMESTAMP_ADDR).nowSeconds();
     uint256 epochIntervalSeconds = epochIntervalMicros / 1_000_000;
     return currentTime >= lastEpochTransitionTime + epochIntervalSeconds;
 }
-```
 
-### Implementation
-
-```solidity
-function triggerEpochTransition() external onlyAuthorizedCallers {
-    // 1. Increment epoch
-    uint256 newEpoch = currentEpoch + 1;
-    currentEpoch = newEpoch;
-
-    // 2. Update timestamp
-    lastEpochTransitionTime = ITimestamp(TIMESTAMP_ADDR).nowSeconds();
-
-    // 3. Notify system modules
-    _notifySystemModules();
-
-    // 4. Emit transition event
-    emit EpochTransitioned(newEpoch, lastEpochTransitionTime);
-}
-
-/**
- * @dev Notify all system contracts of epoch transition
- * Only notifies ValidatorManager - other configs are applied by ReconfigurationWithDKG
- */
-function _notifySystemModules() internal {
-    _safeNotifyModule(VALIDATOR_MANAGER_ADDR);
-}
-
-/**
- * @dev Safely notify a single module with error handling
- */
 function _safeNotifyModule(address moduleAddress) internal {
     if (moduleAddress != address(0)) {
         try IReconfigurableModule(moduleAddress).onNewEpoch() {
@@ -353,7 +461,59 @@ function _safeNotifyModule(address moduleAddress) internal {
 
 ---
 
-## Module Notification
+## Supporting Contract Interfaces
+
+EpochManager coordinates with these contracts, which provide pure service functions:
+
+### DKG Interface (Called by EpochManager)
+
+```solidity
+interface IDKG {
+    /// @notice Start a new DKG session
+    function startSession(
+        uint64 dealerEpoch,
+        RandomnessConfigData memory config,
+        ValidatorConsensusInfo[] memory dealers,
+        ValidatorConsensusInfo[] memory targets
+    ) external;
+
+    /// @notice Finish DKG session with transcript
+    function finishSession(bytes memory transcript) external;
+
+    /// @notice Clear any incomplete session
+    function tryClearIncompleteSession() external;
+
+    /// @notice Check if DKG is in progress
+    function isInProgress() external view returns (bool);
+}
+```
+
+### ValidatorManager Interface (Called by EpochManager)
+
+```solidity
+interface IValidatorManager {
+    /// @notice Get current validator consensus infos for DKG dealers
+    function getCurrentConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
+
+    /// @notice Get next epoch validator consensus infos for DKG targets
+    function getNextConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
+
+    /// @notice Apply epoch transition - process pending validators
+    function onNewEpoch() external;
+}
+```
+
+### RandomnessConfig Interface (Called by EpochManager)
+
+```solidity
+interface IRandomnessConfig {
+    /// @notice Get current randomness config
+    function getCurrentConfig() external view returns (RandomnessConfigData memory);
+
+    /// @notice Apply pending config for new epoch
+    function applyPendingConfig() external;
+}
+```
 
 ### IReconfigurableModule Interface
 
@@ -364,157 +524,22 @@ interface IReconfigurableModule {
 }
 ```
 
-### Notified Modules
-
-| Module              | Action on `onNewEpoch()`                            |
-| ------------------- | --------------------------------------------------- |
-| ValidatorManager    | Process stake transitions, activate/deactivate validators, recalculate set |
-
-> **CLARIFICATION**: Based on the reference implementation, only `ValidatorManager` is notified via `onNewEpoch()`. The `RandomnessConfig` is applied earlier in the flow by `ReconfigurationWithDKG._applyOnNewEpochConfigs()`.
-
-### ValidatorManager.onNewEpoch() Details
-
-```solidity
-function onNewEpoch() external onlyEpochManager {
-    uint64 currentEpoch = uint64(IEpochManager(EPOCH_MANAGER_ADDR).currentEpoch());
-    uint256 minStakeRequired = IStakeConfig(STAKE_CONFIG_ADDR).minValidatorStake();
-
-    // 1. Process all StakeCredit status transitions
-    //    - pending_active → active
-    _processAllStakeCreditsNewEpoch();
-
-    // 2. Activate pending_active validators
-    //    - Based on updated stake data after step 1
-    _activatePendingValidators(currentEpoch);
-
-    // 3. Remove pending_inactive validators
-    //    - Validators that requested to leave
-    _removePendingInactiveValidators(currentEpoch);
-
-    // 4. Recalculate validator set
-    //    - Recompute voting powers based on current stakes
-    //    - Apply minimum stake requirement
-    _recalculateValidatorSet(minStakeRequired, currentEpoch);
-
-    // 5. Notify performance tracker
-    IValidatorPerformanceTracker(VALIDATOR_PERFORMANCE_TRACKER_ADDR).onNewEpoch();
-
-    // 6. Reset joining power for new epoch
-    validatorSetData.totalJoiningPower = 0;
-
-    // 7. Emit event with new validator set info
-    emit ValidatorSetUpdated(
-        currentEpoch + 1,  // This will be effective for next epoch
-        activeValidators.length(),
-        pendingActive.length(),
-        pendingInactive.length(),
-        validatorSetData.totalVotingPower
-    );
-}
-```
-
 ---
 
 ## Access Control
 
-### Simplified Access Model
-
-| Function                      | Caller                  | Rationale                                    |
-| ----------------------------- | ----------------------- | -------------------------------------------- |
-| `initialize()`                | Genesis only            | One-time initialization                      |
-| `currentEpoch()`              | Anyone                  | Read-only                                    |
-| `getCurrentEpochInfo()`       | Anyone                  | Read-only                                    |
-| `getRemainingTime()`          | Anyone                  | Read-only                                    |
-| `canTriggerEpochTransition()` | Anyone                  | Read-only                                    |
-| `triggerEpochTransition()`    | ReconfigurationWithDKG  | Single authorized caller for DKG sync        |
-| `updateParam()`               | Governance only         | Parameter changes require governance         |
-
-> **DESIGN DECISION**: `triggerEpochTransition()` should ONLY be callable by `ReconfigurationWithDKG`. This ensures:
-> 1. DKG must complete before epoch transition
-> 2. Configs are applied in correct order
-> 3. No race conditions between callers
->
-> The original implementation allowing multiple callers (System Caller, Blocker, Genesis, ReconfigurationWithDKG) was overly permissive. The consolidated design uses `ReconfigurationWithDKG` as the single orchestrator.
-
----
-
-## DKG Coordination
-
-### Why DKG Gates Epoch Transitions
-
-Epoch transitions require new cryptographic keys for randomness:
-1. Each epoch has validators generate shared keys via DKG
-2. The new keys are needed for the new epoch's randomness
-3. Therefore, DKG MUST complete before epoch transition
-
-### Timing Diagram
-
-```
-Time:     T0          T1              T2              T3
-          │           │               │               │
-Epoch N:  ├───────────┤               │               │
-          │           │               │               │
-          │           ▼               │               │
-          │    canTransition = true   │               │
-          │           │               │               │
-DKG:      │           ├───────────────┤               │
-          │           │ DKG in progress               │
-          │           │ (off-chain)   │               │
-          │           │               ▼               │
-          │           │        DKG complete           │
-          │           │               │               │
-Epoch N+1:│           │               ├───────────────┤
-          │           │               │ New epoch     │
-          │           │               │ (new keys)    │
-```
-
-### ReconfigurationWithDKG Flow
-
-```solidity
-// Called by Blocker when canTriggerEpochTransition() returns true
-function tryStart() external onlyAuthorizedCallers {
-    uint256 currentEpoch = IEpochManager(EPOCH_MANAGER_ADDR).currentEpoch();
-
-    // Check for incomplete DKG session
-    (bool hasIncomplete, DKGSessionState memory session) = IDKG(DKG_ADDR).incompleteSession();
-
-    if (hasIncomplete) {
-        uint64 sessionDealerEpoch = IDKG(DKG_ADDR).sessionDealerEpoch(session);
-
-        // If session is for current epoch, already running - return
-        if (sessionDealerEpoch == currentEpoch) {
-            return;
-        }
-
-        // Clear old session from previous epoch
-        IDKG(DKG_ADDR).tryClearIncompleteSession();
-    }
-
-    // Gather data for DKG
-    ValidatorConsensusInfo[] memory currentValidators = _getCurrentValidatorConsensusInfos();
-    ValidatorConsensusInfo[] memory nextValidators = _getNextValidatorConsensusInfos();
-    RandomnessConfigData memory randomnessConfig = _getCurrentRandomnessConfig();
-
-    // Start DKG - this emits DKGStartEvent
-    IDKG(DKG_ADDR).start(uint64(currentEpoch), randomnessConfig, currentValidators, nextValidators);
-}
-
-// Called by consensus engine after DKG completes
-function finish() external onlyAuthorizedCallers {
-    _finishReconfiguration();
-}
-
-function _finishReconfiguration() internal {
-    // 1. Clear incomplete DKG session
-    IDKG(DKG_ADDR).tryClearIncompleteSession();
-
-    // 2. Apply buffered configs (RandomnessConfig, etc.)
-    _applyOnNewEpochConfigs();
-
-    // 3. Trigger the actual epoch transition
-    IEpochManager(EPOCH_MANAGER_ADDR).triggerEpochTransition();
-}
-```
+| Function                      | Caller        | Rationale                                    |
+| ----------------------------- | ------------- | -------------------------------------------- |
+| `initialize()`                | Genesis only  | One-time initialization                      |
+| `currentEpoch()`              | Anyone        | Read-only                                    |
+| `getCurrentEpochInfo()`       | Anyone        | Read-only                                    |
+| `getRemainingTime()`          | Anyone        | Read-only                                    |
+| `canTriggerEpochTransition()` | Anyone        | Read-only                                    |
+| `isTransitionInProgress()`    | Anyone        | Read-only                                    |
+| `getTransitionState()`        | Anyone        | Read-only                                    |
+| `checkAndStartTransition()`   | Blocker only  | Called every block, starts DKG if ready      |
+| `finishTransition()`          | System Caller | Called by consensus engine after DKG         |
+| `updateParam()`               | Governance    | Parameter changes require governance         |
 
 ---
 
@@ -524,14 +549,16 @@ function _finishReconfiguration() internal {
 | --------------------- | ------- | ----------- | ----------------------- |
 | `epochIntervalMicros` | uint256 | > 0         | 7,200,000,000 (2 hours) |
 
-### Parameter Update Implementation
-
-> ⚠️ **IMPLEMENTATION RULE**: Use predefined constants for parameter keys, NOT string comparison.
+### Parameter Constants
 
 ```solidity
 bytes32 public constant PARAM_EPOCH_INTERVAL_MICROS = keccak256("epochIntervalMicros");
+```
 
-function updateParam(bytes32 key, bytes calldata value) external onlyGov {
+### Parameter Update Implementation
+
+```solidity
+function updateParam(bytes32 key, bytes calldata value) external onlyGovernance {
     if (key == PARAM_EPOCH_INTERVAL_MICROS) {
         uint256 newInterval = abi.decode(value, (uint256));
         if (newInterval == 0) revert InvalidEpochDuration();
@@ -557,6 +584,53 @@ function initialize() external onlyGenesis {
     currentEpoch = 0;
     epochIntervalMicros = 2 hours * 1_000_000;  // 7,200,000,000 microseconds
     lastEpochTransitionTime = ITimestamp(TIMESTAMP_ADDR).nowSeconds();
+    transitionState = TransitionState.Idle;
+    transitionStartedAtEpoch = 0;
+}
+```
+
+---
+
+## ValidatorManager.onNewEpoch() Details
+
+When EpochManager calls `ValidatorManager.onNewEpoch()`, the following operations occur:
+
+```solidity
+function onNewEpoch() external onlyEpochManager {
+    uint64 epoch = uint64(IEpochManager(EPOCH_MANAGER_ADDR).currentEpoch());
+    uint256 minStakeRequired = IStakeConfig(STAKE_CONFIG_ADDR).minValidatorStake();
+
+    // 1. Process all StakeCredit status transitions
+    //    - pending_active → active
+    _processAllStakeCreditsNewEpoch();
+
+    // 2. Activate pending_active validators
+    //    - Based on updated stake data after step 1
+    _activatePendingValidators(epoch);
+
+    // 3. Remove pending_inactive validators
+    //    - Validators that requested to leave
+    _removePendingInactiveValidators(epoch);
+
+    // 4. Recalculate validator set
+    //    - Recompute voting powers based on current stakes
+    //    - Apply minimum stake requirement
+    _recalculateValidatorSet(minStakeRequired, epoch);
+
+    // 5. Notify performance tracker
+    IValidatorPerformanceTracker(VALIDATOR_PERFORMANCE_TRACKER_ADDR).onNewEpoch();
+
+    // 6. Reset joining power for new epoch
+    validatorSetData.totalJoiningPower = 0;
+
+    // 7. Emit event with new validator set info
+    emit ValidatorSetUpdated(
+        epoch + 1,
+        activeValidators.length(),
+        pendingActive.length(),
+        pendingInactive.length(),
+        validatorSetData.totalVotingPower
+    );
 }
 ```
 
@@ -564,18 +638,17 @@ function initialize() external onlyGenesis {
 
 ## Security Considerations
 
-1. **Single Orchestrator**: Only `ReconfigurationWithDKG` triggers transitions, preventing race conditions
-2. **DKG-Gated**: Cannot transition without DKG completion, ensuring cryptographic integrity
-3. **Time-based**: Uses on-chain timestamp, not manipulable block numbers
-4. **Fail-safe Notifications**: Module failures don't block transitions
-5. **No Manual Override**: Cannot force epoch transition before time
-6. **Atomic State Updates**: Epoch counter and timestamp update atomically
+1. **Single Orchestrator**: Only EpochManager controls epoch transitions
+2. **Two Entry Points**: Only Blocker (start) and SystemCaller (finish) can trigger transitions
+3. **DKG-Gated**: Cannot complete transition without DKG completion
+4. **Explicit State Machine**: TransitionState prevents invalid state changes
+5. **Fail-safe Notifications**: Module failures don't block transitions
+6. **Time-based**: Uses on-chain timestamp, not manipulable block numbers
+7. **Atomic State Updates**: Epoch counter and timestamp update atomically
 
 ---
 
-## Open Questions
-
-### Chain Downtime Handling
+## Chain Downtime Handling
 
 **Question**: What happens when the chain is down for extended periods spanning multiple epochs?
 
@@ -586,14 +659,7 @@ Since epochs are time-based (not block-based), if the chain goes down for a long
 3. `lastEpochTransitionTime` is set to current time, "skipping" missed epochs
 4. `currentEpoch` may not accurately reflect actual time passed
 
-**Current Behavior**: Skip missed epochs, resume from current time.
-
-**Implications**:
-- Validator rewards/slashing may need adjustment for downtime
-- DKG keys for skipped epochs are never generated
-- This is likely acceptable since the chain was down anyway
-
-**Status**: Document as intentional behavior.
+**Behavior**: Skip missed epochs, resume from current time. This is acceptable since the chain was down anyway.
 
 ---
 
@@ -602,8 +668,21 @@ Since epochs are time-based (not block-based), if the chain goes down for a long
 1. **Monotonic Epoch**: `currentEpoch` only increases
 2. **Timestamp Update**: `lastEpochTransitionTime` updates only on transitions
 3. **Minimum Interval**: Epoch transitions occur at least `epochIntervalMicros` apart
-4. **DKG Synchronization**: Transition only occurs after DKG completes (or is explicitly skipped)
-5. **Notification Guarantee**: `ValidatorManager.onNewEpoch()` is called for every transition
+4. **State Consistency**: `transitionState` is always valid (Idle or DkgInProgress)
+5. **DKG Synchronization**: Transition only completes after DKG completes
+6. **Notification Guarantee**: `ValidatorManager.onNewEpoch()` is called for every completed transition
+
+---
+
+## Event Emission Order
+
+For a complete epoch transition, events are emitted in this order:
+
+1. `EpochTransitionStarted` (from EpochManager.checkAndStartTransition())
+2. `DKGStartEvent` (from DKG.startSession())
+3. `DKGCompleted` (from DKG.finishSession(), if transcript provided)
+4. `EpochTransitioned` (from EpochManager.finishTransition())
+5. `ValidatorSetUpdated` (from ValidatorManager.onNewEpoch())
 
 ---
 
@@ -611,69 +690,28 @@ Since epochs are time-based (not block-based), if the chain goes down for a long
 
 ### Unit Tests
 
-- Epoch transition timing (boundary conditions)
+- Transition state machine (Idle → DkgInProgress → Idle)
+- Time-based transition condition
 - Parameter updates (valid/invalid values)
-- Module notification (success/failure handling)
 - Access control (unauthorized callers)
+- Error conditions (NoTransitionInProgress, TransitionAlreadyInProgress)
 
 ### Integration Tests
 
 - Full epoch lifecycle (detection → DKG → transition → validator update)
 - Validator set changes across epochs
-- DKG coordination timing
-- Config application order
+- Config application timing (before epoch increment)
+- Multiple consecutive epoch transitions
 
 ### Fuzz Tests
 
 - Random time advances
-- Concurrent transition attempts (should be blocked by design)
 - Random epoch intervals
+- Concurrent calls (should be handled by state machine)
 
 ### Invariant Tests
 
 - Epoch monotonicity
 - Timing constraints (interval enforcement)
+- State consistency
 - Notification guarantee
-
----
-
-## Contract Dependencies
-
-```
-                        ┌─────────────────┐
-                        │    Blocker      │
-                        │ (Entry Point)   │
-                        └────────┬────────┘
-                                 │
-                                 │ 1. Checks canTriggerEpochTransition()
-                                 │ 2. Calls tryStart() if true
-                                 │
-              ┌──────────────────┴───────────────────┐
-              │                                      │
-              ▼                                      ▼
-     ┌────────────────┐                    ┌─────────────────────┐
-     │  EpochManager  │◄───────────────────│ ReconfigurationWithDKG │
-     │  (State)       │  triggerEpochTransition()  │ (Orchestrator)      │
-     └────────┬───────┘                    └──────────┬──────────┘
-              │                                       │
-              │ onNewEpoch()                          │ start()/finish()
-              │                                       │
-              ▼                                       ▼
-     ┌────────────────┐                    ┌─────────────────┐
-     │ ValidatorManager│                    │       DKG       │
-     │ (Validator Set) │                    │ (Key Generation)│
-     └────────────────┘                    └─────────────────┘
-```
-
----
-
-## Appendix: Event Emission Order
-
-For a complete epoch transition, events are emitted in this order:
-
-1. `DKGStartEvent` (from DKG.start())
-2. `DKGCompleted` (from DKG.finish(), if using finishWithDkgResult)
-3. `EpochTransitioned` (from EpochManager.triggerEpochTransition())
-4. `ValidatorSetUpdated` (from ValidatorManager.onNewEpoch())
-
-This order allows external systems to track the complete transition lifecycle.
