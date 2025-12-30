@@ -375,7 +375,7 @@ contract VaultInvariantTest is Test {
 3. **Deployment Script with Verification**:
 ```solidity
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
  
 import {Script, console} from "forge-std/Script.sol";
 import {MyContract} from "src/MyContract.sol";
