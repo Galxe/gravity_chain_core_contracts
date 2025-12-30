@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Governance module enables on-chain governance for the Gravity blockchain, allowing validators and token holders to propose and vote on protocol changes. This includes parameter updates, contract upgrades, and other administrative actions.
+The Governance module enables on-chain governance for the Gravity blockchain, allowing validators and token holders to
+propose and vote on protocol changes. This includes parameter updates, contract upgrades, and other administrative
+actions.
 
 ## Design Goals
 
@@ -15,30 +17,30 @@ The Governance module enables on-chain governance for the Gravity blockchain, al
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                         Governance Module                             │
+│                         Governance Module                            │
 ├──────────────────────────────────────────────────────────────────────┤
-│                                                                       │
+│                                                                      │
 │   ┌────────────────┐         ┌────────────────┐                      │
 │   │   GovToken     │────────▶│   Governor     │                      │
 │   │ (voting power) │         │ (proposals)    │                      │
 │   └────────────────┘         └───────┬────────┘                      │
-│                                      │                                │
-│                              queue approved                           │
-│                                      │                                │
-│                                      ▼                                │
+│                                      │                               │
+│                              queue approved                          │
+│                                      │                               │
+│                                      ▼                               │
 │                              ┌────────────────┐                      │
 │                              │   Timelock     │                      │
 │                              │ (delay + exec) │                      │
 │                              └───────┬────────┘                      │
-│                                      │                                │
-│                               execute                                 │
-│                                      │                                │
-│                                      ▼                                │
+│                                      │                               │
+│                               execute                                │
+│                                      │                               │
+│                                      ▼                               │
 │                              ┌────────────────┐                      │
 │                              │    GovHub      │                      │
 │                              │ (param routing)│                      │
 │                              └───────┬────────┘                      │
-│                                      │                                │
+│                                      │                               │
 │              ┌───────────────┬───────┼───────┬───────────────┐       │
 │              ▼               ▼       ▼       ▼               ▼       │
 │        ┌──────────┐   ┌──────────┐       ┌──────────┐  ┌──────────┐ │
@@ -66,26 +68,26 @@ interface IGovToken {
     function totalSupply() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
-    
+
     // ========== Voting ==========
-    
+
     /// @notice Get current voting power
     function getVotes(address account) external view returns (uint256);
-    
+
     /// @notice Get voting power at a past block
     function getPastVotes(address account, uint256 blockNumber) external view returns (uint256);
-    
+
     /// @notice Delegate voting power to another address
     function delegate(address delegatee) external;
-    
+
     /// @notice Get current delegate
     function delegates(address account) external view returns (address);
-    
+
     // ========== Minting (Authorized Only) ==========
-    
+
     /// @notice Mint tokens to an address
     function mint(address to, uint256 amount) external;
-    
+
     /// @notice Burn tokens from an address
     function burn(address from, uint256 amount) external;
 }
@@ -126,33 +128,33 @@ Manages governance proposals and voting.
 
 ### Proposal States
 
-| State | Description |
-|-------|-------------|
-| Pending | Created, waiting for voting to start |
-| Active | Voting is open |
-| Canceled | Proposal was canceled |
-| Defeated | Did not reach quorum or majority against |
-| Succeeded | Passed, ready to queue |
-| Queued | In timelock, waiting for execution |
-| Expired | Timelock expired without execution |
-| Executed | Successfully executed |
+| State     | Description                              |
+| --------- | ---------------------------------------- |
+| Pending   | Created, waiting for voting to start     |
+| Active    | Voting is open                           |
+| Canceled  | Proposal was canceled                    |
+| Defeated  | Did not reach quorum or majority against |
+| Succeeded | Passed, ready to queue                   |
+| Queued    | In timelock, waiting for execution       |
+| Expired   | Timelock expired without execution       |
+| Executed  | Successfully executed                    |
 
 ### Configuration
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Voting Delay | 0 blocks | Delay before voting starts |
-| Voting Period | 7 days | Duration of voting |
-| Proposal Threshold | 2,000,000 G | Tokens needed to propose |
-| Quorum | 10% | Minimum participation |
-| Min Period After Quorum | 1 day | Extended voting after quorum |
+| Parameter               | Default     | Description                  |
+| ----------------------- | ----------- | ---------------------------- |
+| Voting Delay            | 0 blocks    | Delay before voting starts   |
+| Voting Period           | 7 days      | Duration of voting           |
+| Proposal Threshold      | 2,000,000 G | Tokens needed to propose     |
+| Quorum                  | 10%         | Minimum participation        |
+| Min Period After Quorum | 1 day       | Extended voting after quorum |
 
 ### Interface
 
 ```solidity
 interface IGravityGovernor {
     // ========== Proposals ==========
-    
+
     /// @notice Create a new proposal
     function propose(
         address[] memory targets,
@@ -160,7 +162,7 @@ interface IGravityGovernor {
         bytes[] memory calldatas,
         string memory description
     ) external returns (uint256 proposalId);
-    
+
     /// @notice Queue a succeeded proposal for execution
     function queue(
         address[] memory targets,
@@ -168,7 +170,7 @@ interface IGravityGovernor {
         bytes[] memory calldatas,
         bytes32 descriptionHash
     ) external returns (uint256 proposalId);
-    
+
     /// @notice Execute a queued proposal
     function execute(
         address[] memory targets,
@@ -176,7 +178,7 @@ interface IGravityGovernor {
         bytes[] memory calldatas,
         bytes32 descriptionHash
     ) external payable returns (uint256 proposalId);
-    
+
     /// @notice Cancel a proposal
     function cancel(
         address[] memory targets,
@@ -184,22 +186,22 @@ interface IGravityGovernor {
         bytes[] memory calldatas,
         bytes32 descriptionHash
     ) external returns (uint256 proposalId);
-    
+
     // ========== Voting ==========
-    
+
     /// @notice Cast a vote
     /// @param support 0 = Against, 1 = For, 2 = Abstain
     function castVote(uint256 proposalId, uint8 support) external returns (uint256 weight);
-    
+
     /// @notice Cast a vote with reason
     function castVoteWithReason(
         uint256 proposalId,
         uint8 support,
         string calldata reason
     ) external returns (uint256 weight);
-    
+
     // ========== Queries ==========
-    
+
     function state(uint256 proposalId) external view returns (ProposalState);
     function proposalVotes(uint256 proposalId) external view returns (
         uint256 againstVotes,
@@ -209,9 +211,9 @@ interface IGravityGovernor {
     function hasVoted(uint256 proposalId, address account) external view returns (bool);
     function proposalThreshold() external view returns (uint256);
     function quorum(uint256 blockNumber) external view returns (uint256);
-    
+
     // ========== Configuration ==========
-    
+
     function updateParam(string calldata key, bytes calldata value) external;
 }
 ```
@@ -271,16 +273,16 @@ Enforces a delay between proposal approval and execution.
 interface ITimelock {
     /// @notice Get minimum delay for operations
     function getMinDelay() external view returns (uint256);
-    
+
     /// @notice Check if operation is ready for execution
     function isOperationReady(bytes32 id) external view returns (bool);
-    
+
     /// @notice Check if operation is pending
     function isOperationPending(bytes32 id) external view returns (bool);
-    
+
     /// @notice Check if operation was executed
     function isOperationDone(bytes32 id) external view returns (bool);
-    
+
     /// @notice Schedule an operation
     function schedule(
         address target,
@@ -290,7 +292,7 @@ interface ITimelock {
         bytes32 salt,
         uint256 delay
     ) external;
-    
+
     /// @notice Execute a scheduled operation
     function execute(
         address target,
@@ -299,7 +301,7 @@ interface ITimelock {
         bytes32 predecessor,
         bytes32 salt
     ) external payable;
-    
+
     /// @notice Cancel a scheduled operation
     function cancel(bytes32 id) external;
 }
@@ -307,12 +309,12 @@ interface ITimelock {
 
 ### Default Configuration
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Min Delay | 1 day | Minimum time before execution |
-| Proposers | Governor | Who can schedule operations |
-| Executors | Anyone | Who can execute ready operations |
-| Admin | Timelock itself | Who can change config |
+| Parameter | Default         | Description                      |
+| --------- | --------------- | -------------------------------- |
+| Min Delay | 1 day           | Minimum time before execution    |
+| Proposers | Governor        | Who can schedule operations      |
+| Executors | Anyone          | Who can execute ready operations |
+| Admin     | Timelock itself | Who can change config            |
 
 ## Contract: `GovHub`
 
@@ -334,7 +336,7 @@ interface IGovHub {
         string calldata key,
         bytes calldata value
     ) external;
-    
+
     /// @notice Batch update multiple parameters
     function batchUpdateParam(
         address[] calldata targets,
@@ -359,12 +361,12 @@ interface IParamSubscriber {
 
 Only whitelisted contracts can receive updates through GovHub:
 
-| Contract | Parameters |
-|----------|------------|
-| StakeConfig | minValidatorStake, maxValidatorStake, lockAmount |
-| EpochManager | epochIntervalMicros |
-| RandomnessConfig | thresholds |
-| Governor | votingDelay, votingPeriod, proposalThreshold |
+| Contract         | Parameters                                       |
+| ---------------- | ------------------------------------------------ |
+| StakeConfig      | minValidatorStake, maxValidatorStake, lockAmount |
+| EpochManager     | epochIntervalMicros                              |
+| RandomnessConfig | thresholds                                       |
+| Governor         | votingDelay, votingPeriod, proposalThreshold     |
 
 ## Governance Flow Example
 
@@ -410,36 +412,36 @@ governor.execute(
 
 ### GovToken
 
-| Function | Caller |
-|----------|--------|
-| `transfer()` | Token holder |
-| `delegate()` | Token holder |
-| `mint()` | ValidatorManager |
-| `burn()` | ValidatorManager |
+| Function     | Caller           |
+| ------------ | ---------------- |
+| `transfer()` | Token holder     |
+| `delegate()` | Token holder     |
+| `mint()`     | ValidatorManager |
+| `burn()`     | ValidatorManager |
 
 ### Governor
 
-| Function | Caller |
-|----------|--------|
-| `propose()` | Anyone with threshold tokens |
-| `castVote()` | Token holders |
-| `queue()` | Anyone (if proposal succeeded) |
-| `execute()` | Anyone (if timelock ready) |
-| `cancel()` | Proposer or admin |
-| `updateParam()` | Governance (self) |
+| Function        | Caller                         |
+| --------------- | ------------------------------ |
+| `propose()`     | Anyone with threshold tokens   |
+| `castVote()`    | Token holders                  |
+| `queue()`       | Anyone (if proposal succeeded) |
+| `execute()`     | Anyone (if timelock ready)     |
+| `cancel()`      | Proposer or admin              |
+| `updateParam()` | Governance (self)              |
 
 ### Timelock
 
-| Function | Caller |
-|----------|--------|
+| Function     | Caller   |
+| ------------ | -------- |
 | `schedule()` | Governor |
-| `execute()` | Anyone |
-| `cancel()` | Admin |
+| `execute()`  | Anyone   |
+| `cancel()`   | Admin    |
 
 ### GovHub
 
-| Function | Caller |
-|----------|--------|
+| Function        | Caller   |
+| --------------- | -------- |
 | `updateParam()` | Timelock |
 
 ## Security Considerations
@@ -461,17 +463,20 @@ governor.execute(
 ## Testing Requirements
 
 1. **Unit Tests**:
+
    - Token minting and delegation
    - Proposal creation and voting
    - Timelock scheduling and execution
    - Parameter updates
 
 2. **Integration Tests**:
+
    - Full governance flow
    - Multi-proposal scenarios
    - Epoch transitions during governance
 
 3. **Fuzz Tests**:
+
    - Random vote distributions
    - Edge case timing
    - Malicious proposal attempts
@@ -480,4 +485,3 @@ governor.execute(
    - Token supply conservation
    - Vote weight accuracy
    - Timelock timing constraints
-

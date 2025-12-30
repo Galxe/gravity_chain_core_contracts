@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Randomness module provides secure, verifiable random number generation for the Gravity blockchain using Distributed Key Generation (DKG). This enables applications to access unpredictable, bias-resistant random values.
+The Randomness module provides secure, verifiable random number generation for the Gravity blockchain using Distributed
+Key Generation (DKG). This enables applications to access unpredictable, bias-resistant random values.
 
 ## Design Goals
 
@@ -76,49 +77,49 @@ struct RandomnessConfigData {
 
 ### Threshold Meaning
 
-| Threshold | Purpose | Typical Value |
-|-----------|---------|---------------|
-| Secrecy | Min stake to keep secret | 50% + 1 |
-| Reconstruction | Min stake to reveal | 50% + 1 |
-| Fast Path Secrecy | For optimistic execution | 66% |
+| Threshold         | Purpose                  | Typical Value |
+| ----------------- | ------------------------ | ------------- |
+| Secrecy           | Min stake to keep secret | 50% + 1       |
+| Reconstruction    | Min stake to reveal      | 50% + 1       |
+| Fast Path Secrecy | For optimistic execution | 66%           |
 
 ### Interface
 
 ```solidity
 interface IRandomnessConfig {
     // ========== Queries ==========
-    
+
     /// @notice Check if randomness is enabled
     function enabled() external view returns (bool);
-    
+
     /// @notice Get current config
     function current() external view returns (RandomnessConfigData memory);
-    
+
     /// @notice Get pending config for next epoch
     function pending() external view returns (bool hasPending, RandomnessConfigData memory config);
-    
+
     /// @notice Check if initialized
     function isInitialized() external view returns (bool);
-    
+
     // ========== Config Updates ==========
-    
+
     /// @notice Initialize with config (genesis only)
     function initialize(RandomnessConfigData memory config) external;
-    
+
     /// @notice Set config for next epoch
     function setForNextEpoch(RandomnessConfigData memory newConfig) external;
-    
+
     /// @notice Apply pending config (epoch manager only)
     function onNewEpoch() external;
-    
+
     // ========== Config Builders ==========
-    
+
     /// @notice Create a V1 config
     function newV1(
         FixedPoint64 memory secrecyThreshold,
         FixedPoint64 memory reconstructionThreshold
     ) external pure returns (RandomnessConfigData memory);
-    
+
     /// @notice Create a V2 config
     function newV2(
         FixedPoint64 memory secrecyThreshold,
@@ -203,10 +204,10 @@ struct DKGState {
 ```solidity
 interface IDKG {
     // ========== Session Management ==========
-    
+
     /// @notice Initialize the DKG contract (genesis only)
     function initialize() external;
-    
+
     /// @notice Start a new DKG session
     /// @param dealerEpoch Current epoch number
     /// @param randomnessConfig Randomness configuration
@@ -218,25 +219,25 @@ interface IDKG {
         ValidatorConsensusInfo[] memory dealerValidatorSet,
         ValidatorConsensusInfo[] memory targetValidatorSet
     ) external;
-    
+
     /// @notice Complete a DKG session with the generated transcript
     /// @param transcript The DKG transcript
     function finish(bytes memory transcript) external;
-    
+
     /// @notice Clear an incomplete session (if epoch changed)
     function tryClearIncompleteSession() external;
-    
+
     // ========== Queries ==========
-    
+
     /// @notice Check if DKG is in progress
     function isDKGInProgress() external view returns (bool);
-    
+
     /// @notice Get the incomplete session if any
     function incompleteSession() external view returns (bool hasSession, DKGSessionState memory session);
-    
+
     /// @notice Get the last completed session
     function lastCompletedSession() external view returns (bool hasSession, DKGSessionState memory session);
-    
+
     /// @notice Get dealer epoch from a session
     function sessionDealerEpoch(DKGSessionState memory session) external pure returns (uint64);
 }
@@ -305,17 +306,17 @@ Coordinates DKG with epoch transitions.
 interface IReconfigurationWithDKG {
     /// @notice Initialize (genesis only)
     function initialize() external;
-    
+
     /// @notice Try to start DKG for epoch transition
     function tryStart() external;
-    
+
     /// @notice Finish with DKG result and trigger epoch transition
     /// @param dkgResult The completed DKG transcript
     function finishWithDkgResult(bytes calldata dkgResult) external;
-    
+
     /// @notice Finish without DKG (for cases where DKG is not needed)
     function finish() external;
-    
+
     /// @notice Check if reconfiguration is in progress
     function isReconfigurationInProgress() external view returns (bool);
 }
@@ -326,27 +327,27 @@ interface IReconfigurationWithDKG {
 ```solidity
 function tryStart() external onlyAuthorizedCallers {
     uint256 currentEpoch = IEpochManager(EPOCH_MANAGER).currentEpoch();
-    
+
     // Check for incomplete session from current epoch
     (bool hasIncomplete, DKGSessionState memory session) = IDKG(DKG).incompleteSession();
-    
+
     if (hasIncomplete && session.metadata.dealerEpoch == currentEpoch) {
         // Already running for this epoch
         return;
     }
-    
+
     if (hasIncomplete) {
         // Clear old session from previous epoch
         IDKG(DKG).tryClearIncompleteSession();
     }
-    
+
     // Get validator sets
     ValidatorConsensusInfo[] memory current = _getCurrentValidators();
     ValidatorConsensusInfo[] memory next = _getNextValidators();
-    
+
     // Get config
     RandomnessConfigData memory config = IRandomnessConfig(RANDOMNESS_CONFIG).current();
-    
+
     // Start DKG
     IDKG(DKG).start(currentEpoch, config, current, next);
 }
@@ -354,10 +355,10 @@ function tryStart() external onlyAuthorizedCallers {
 function finishWithDkgResult(bytes calldata dkgResult) external onlyAuthorizedCallers {
     // Finish DKG session
     IDKG(DKG).finish(dkgResult);
-    
+
     // Apply pending configs
     IRandomnessConfig(RANDOMNESS_CONFIG).onNewEpoch();
-    
+
     // Trigger epoch transition
     IEpochManager(EPOCH_MANAGER).triggerEpochTransition();
 }
@@ -367,33 +368,33 @@ function finishWithDkgResult(bytes calldata dkgResult) external onlyAuthorizedCa
 
 ### RandomnessConfig
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis |
-| `current()` | Anyone |
-| `pending()` | Anyone |
+| Function            | Caller                                            |
+| ------------------- | ------------------------------------------------- |
+| `initialize()`      | Genesis                                           |
+| `current()`         | Anyone                                            |
+| `pending()`         | Anyone                                            |
 | `setForNextEpoch()` | System Caller, Governance, ReconfigurationWithDKG |
-| `onNewEpoch()` | ReconfigurationWithDKG |
+| `onNewEpoch()`      | ReconfigurationWithDKG                            |
 
 ### DKG
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis |
-| `start()` | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
-| `finish()` | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
+| Function                      | Caller                                                  |
+| ----------------------------- | ------------------------------------------------------- |
+| `initialize()`                | Genesis                                                 |
+| `start()`                     | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
+| `finish()`                    | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
 | `tryClearIncompleteSession()` | System Caller, Blocker, Genesis, ReconfigurationWithDKG |
-| Query functions | Anyone |
+| Query functions               | Anyone                                                  |
 
 ### ReconfigurationWithDKG
 
-| Function | Caller |
-|----------|--------|
-| `initialize()` | Genesis |
-| `tryStart()` | System Caller, Blocker, Genesis |
-| `finishWithDkgResult()` | System Caller, Blocker, Genesis |
-| `finish()` | System Caller, Blocker, Genesis |
-| `isReconfigurationInProgress()` | Anyone |
+| Function                        | Caller                          |
+| ------------------------------- | ------------------------------- |
+| `initialize()`                  | Genesis                         |
+| `tryStart()`                    | System Caller, Blocker, Genesis |
+| `finishWithDkgResult()`         | System Caller, Blocker, Genesis |
+| `finish()`                      | System Caller, Blocker, Genesis |
+| `isReconfigurationInProgress()` | Anyone                          |
 
 ## Security Considerations
 
@@ -413,16 +414,19 @@ function finishWithDkgResult(bytes calldata dkgResult) external onlyAuthorizedCa
 ## Testing Requirements
 
 1. **Unit Tests**:
+
    - Config creation and validation
    - DKG session lifecycle
    - Reconfiguration coordination
 
 2. **Integration Tests**:
+
    - Full DKG flow with epoch transitions
    - Config updates across epochs
    - Validator set changes
 
 3. **Fuzz Tests**:
+
    - Random threshold values
    - Random session timing
 
@@ -430,4 +434,3 @@ function finishWithDkgResult(bytes calldata dkgResult) external onlyAuthorizedCa
    - Session uniqueness
    - Threshold ordering
    - Epoch binding
-
