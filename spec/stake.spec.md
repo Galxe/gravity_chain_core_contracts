@@ -18,7 +18,6 @@ Ethereum's approach: validators stake their own tokens, with no protocol-level d
 - Self-staking (validators stake their own tokens)
 - Validator set lifecycle (join, leave, status transitions)
 - Stake configuration and limits
-- Reward distribution to validators
 
 ### What We Don't Do (External to System Contracts)
 
@@ -180,7 +179,6 @@ event ValidatorStatusChanged(address indexed validator, ValidatorStatus from, Va
 event Staked(address indexed validator, uint256 amount);
 event UnstakeRequested(address indexed validator, uint256 amount);
 event UnstakeClaimed(address indexed validator, uint256 amount);
-event RewardDistributed(address indexed validator, uint256 amount);
 ```
 
 ### Errors
@@ -254,85 +252,30 @@ validatorManager.claimUnstaked();
 
 ## Epoch Transition
 
-On each epoch transition, the `ValidatorManager` processes steps in a specific order. **The order is critical for
-correct reward distribution.**
-
-### Order of Operations
-
-1. **Distribute Rewards FIRST**: Pay validators who worked during the ending epoch
-2. **Activate Pending Validators**: Move PENDING_ACTIVE → ACTIVE
-3. **Deactivate Leaving Validators**: Move PENDING_INACTIVE → INACTIVE
-4. **Recalculate Total Stake**: Based on current stakes
-
-### Why Rewards Must Be Distributed Before Validator Set Changes
-
-| Validator Type            | Worked This Epoch?   | Should Get Rewards? |
-| ------------------------- | -------------------- | ------------------- |
-| ACTIVE → ACTIVE           | ✅ Yes               | ✅ Yes              |
-| PENDING_ACTIVE → ACTIVE   | ❌ No (just joining) | ❌ No               |
-| ACTIVE → PENDING_INACTIVE | ✅ Yes (leaving)     | ✅ Yes              |
-
-If we distributed rewards **after** updating the validator set:
-
-- **PENDING_INACTIVE** validators would be removed from `activeValidators` before distribution, losing their final epoch
-  rewards
-- **PENDING_ACTIVE** validators would be added to `activeValidators` before distribution, but they correctly get no
-  rewards (no performance data)
-
-By distributing rewards **before** validator set changes, we ensure validators are paid for the work they actually did.
+On each epoch transition, the `ValidatorManager` processes pending validator set changes:
 
 ```solidity
 function onNewEpoch() external onlyEpochManager {
-    // 1. Distribute rewards FIRST (to validators who worked this epoch)
-    //    This must happen before validator set changes so that:
-    //    - PENDING_INACTIVE validators receive their final epoch rewards
-    //    - PENDING_ACTIVE validators don't receive rewards they didn't earn
-    _distributeRewards();
-
-    // 2. Now update the validator set for next epoch
+    // 1. Activate pending validators
     for (address v : pendingActive) {
         validators[v].status = ACTIVE;
         activeSet.add(v);
     }
     pendingActive.clear();
 
-    // 3. Process pending inactive
+    // 2. Process pending inactive
     for (address v : pendingInactive) {
         validators[v].status = INACTIVE;
         activeSet.remove(v);
     }
     pendingInactive.clear();
 
-    // 4. Recalculate total stake for next epoch
+    // 3. Recalculate total stake for next epoch
     _recalculateTotalStake();
 }
 ```
 
-## Reward Distribution
-
-Rewards are distributed based on stake weight and performance:
-
-```solidity
-function _distributeRewards() internal {
-    if (rewardPool == 0) return;
-
-    uint256 totalWeight = 0;
-    for (address v : activeValidators) {
-        totalWeight += validators[v].stake;
-    }
-
-    for (address v : activeValidators) {
-        uint256 reward = rewardPool * validators[v].stake / totalWeight;
-        _sendReward(v, reward);
-        emit RewardDistributed(v, reward);
-    }
-
-    rewardPool = 0;
-}
-```
-
-> **Note**: Performance-based adjustments (proposal success rate, attestation rate) may be incorporated as multipliers
-> if consensus provides this data.
+> **Note**: Rewards are distributed by the consensus engine, not by this module (similar to Ethereum).
 
 ## Access Control
 
@@ -368,13 +311,11 @@ function _distributeRewards() internal {
    - Registration flow
    - Status transitions
    - Staking/unstaking
-   - Reward distribution
 
 2. **Integration Tests**:
 
    - Multi-epoch validator lifecycle
    - Epoch boundary transitions
-   - Reward calculations
 
 3. **Fuzz Tests**:
 
