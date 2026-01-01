@@ -152,5 +152,34 @@ library Errors {
     /// @param proposed Proposed timestamp (microseconds)
     /// @param current Current timestamp (microseconds)
     error TimestampMustEqual(uint64 proposed, uint64 current);
+
+    // ========================================================================
+    // CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Contract has already been initialized
+    error AlreadyInitialized();
+
+    /// @notice Lockup duration must be greater than zero
+    error InvalidLockupDuration();
+
+    /// @notice Unbonding delay must be greater than zero
+    error InvalidUnbondingDelay();
+
+    /// @notice Minimum bond must be greater than zero
+    error InvalidMinimumBond();
+
+    /// @notice Voting power increase limit out of range (1-50)
+    /// @param value The invalid value provided
+    error InvalidVotingPowerIncreaseLimit(uint64 value);
+
+    /// @notice Validator set size out of range (1-65536)
+    /// @param value The invalid value provided
+    error InvalidValidatorSetSize(uint256 value);
+
+    /// @notice Minimum bond must be less than or equal to maximum bond
+    /// @param minimum The minimum bond value
+    /// @param maximum The maximum bond value
+    error MinimumBondExceedsMaximum(uint256 minimum, uint256 maximum);
 }
 
