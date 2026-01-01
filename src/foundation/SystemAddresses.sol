@@ -24,9 +24,17 @@ library SystemAddresses {
     /// @dev Stores staking parameters (lockup duration, minimum stake, etc.)
     address internal constant STAKE_CONFIG = address(0x0000000000000000000000000001625F2011);
 
+    /// @notice Governance staking contract
+    /// @dev Anyone can stake tokens to participate in governance voting
+    address internal constant STAKING = address(0x0000000000000000000000000001625F2012);
+
     /// @notice Validator set management contract
     /// @dev Manages validator registration, bonding, and set transitions
     address internal constant VALIDATOR_MANAGER = address(0x0000000000000000000000000001625F2013);
+
+    /// @notice Governance voting engine
+    /// @dev Generic proposal/vote/resolve engine for governance
+    address internal constant VOTING = address(0x0000000000000000000000000001625F2014);
 
     /// @notice Block prologue/epilogue handler
     /// @dev Called by VM at start/end of each block
