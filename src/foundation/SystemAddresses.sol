@@ -59,5 +59,13 @@ library SystemAddresses {
     /// @notice Hash oracle contract
     /// @dev Provides hash verification services
     address internal constant HASH_ORACLE = address(0x0000000000000000000000000001625F2023);
+
+    /// @notice Randomness configuration contract
+    /// @dev Stores DKG threshold parameters for on-chain randomness
+    address internal constant RANDOMNESS_CONFIG = address(0x0000000000000000000000000001625F2024);
+
+    /// @notice DKG (Distributed Key Generation) contract
+    /// @dev Manages DKG session lifecycle for epoch transitions
+    address internal constant DKG = address(0x0000000000000000000000000001625F2025);
 }
 

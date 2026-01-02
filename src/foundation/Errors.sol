@@ -215,5 +215,35 @@ library Errors {
     /// @param minimum The minimum bond value
     /// @param maximum The maximum bond value
     error MinimumBondExceedsMaximum(uint256 minimum, uint256 maximum);
+
+    // ========================================================================
+    // RANDOMNESS CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Randomness config has not been initialized
+    error RandomnessNotInitialized();
+
+    /// @notice Randomness config has already been initialized
+    error RandomnessAlreadyInitialized();
+
+    /// @notice Invalid randomness configuration
+    /// @param reason Description of what's invalid
+    error InvalidRandomnessConfig(string reason);
+
+    /// @notice No pending randomness config to apply
+    error NoPendingRandomnessConfig();
+
+    // ========================================================================
+    // DKG ERRORS
+    // ========================================================================
+
+    /// @notice DKG session is already in progress
+    error DKGInProgress();
+
+    /// @notice No DKG session is in progress
+    error DKGNotInProgress();
+
+    /// @notice DKG contract has not been initialized
+    error DKGNotInitialized();
 }
 

@@ -35,7 +35,7 @@ They do not contain transition logic themselves - they provide functions that Ep
 
 ---
 
-## TODO: On/Off Support
+## NOTE: Randomness On/Off Support
 
 > **Note**: If we actually want to support turning DKG and randomness off, we will need a holistic design:
 >
