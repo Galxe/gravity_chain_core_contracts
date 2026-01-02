@@ -179,6 +179,35 @@ library Errors {
     /// @param actual Actual voting power
     error InsufficientVotingPower(uint256 required, uint256 actual);
 
+    /// @notice Caller is not the delegated voter for the stake pool
+    /// @param expected Expected voter address (from StakePool)
+    /// @param actual Actual caller address
+    error NotDelegatedVoter(address expected, address actual);
+
+    /// @notice Voting power usage would overflow remaining power
+    /// @param requested Voting power requested
+    /// @param remaining Remaining voting power available
+    error VotingPowerOverflow(uint128 requested, uint128 remaining);
+
+    /// @notice Proposal did not succeed (cannot execute)
+    /// @param proposalId ID of the proposal
+    error ProposalNotSucceeded(uint64 proposalId);
+
+    /// @notice Proposal has already been executed
+    /// @param proposalId ID of the proposal
+    error ProposalAlreadyExecuted(uint64 proposalId);
+
+    /// @notice Voting duration must be greater than zero
+    error InvalidVotingDuration();
+
+    /// @notice Early resolution threshold out of range (must be <= 10000 bps)
+    /// @param value The invalid value provided
+    error InvalidEarlyResolutionThreshold(uint128 value);
+
+    /// @notice Proposal execution failed
+    /// @param proposalId ID of the proposal
+    error ExecutionFailed(uint64 proposalId);
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================

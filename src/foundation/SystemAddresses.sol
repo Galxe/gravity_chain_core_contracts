@@ -67,5 +67,9 @@ library SystemAddresses {
     /// @notice DKG (Distributed Key Generation) contract
     /// @dev Manages DKG session lifecycle for epoch transitions
     address internal constant DKG = address(0x0000000000000000000000000001625F2025);
+
+    /// @notice Governance configuration contract
+    /// @dev Stores governance parameters (voting threshold, proposal stake, etc.)
+    address internal constant GOVERNANCE_CONFIG = address(0x0000000000000000000000000001625F2026);
 }
 
