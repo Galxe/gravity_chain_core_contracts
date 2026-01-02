@@ -465,38 +465,42 @@ This is acceptable behavior since the chain was down anyway.
 
 ## Testing Requirements
 
-### Unit Tests
+### Unit Tests (Implemented)
 
-1. **Reconfiguration**
-   - Initialize correctly
-   - State machine transitions (Idle → DkgInProgress → Idle)
-   - Time-based transition condition
-   - Access control (BLOCK, SYSTEM_CALLER, TIMELOCK)
-   - Parameter updates (setEpochIntervalMicros)
-   - Error conditions
+1. **Reconfiguration** (`test/unit/blocker/Reconfiguration.t.sol` - 28 tests)
+   - [x] Initialize correctly
+   - [x] State machine transitions (Idle → DkgInProgress → Idle)
+   - [x] Time-based transition condition
+   - [x] Access control (BLOCK, SYSTEM_CALLER, TIMELOCK)
+   - [x] Parameter updates (setEpochIntervalMicros)
+   - [x] Error conditions
+   - [x] Full epoch lifecycle
+   - [x] Multiple epoch transitions
 
-2. **Blocker**
-   - Initialize correctly
-   - Normal block processing
-   - NIL block handling (bytes32(0) proposer)
-   - Timestamp update
-   - Epoch transition triggering
+2. **Blocker** (`test/unit/blocker/Blocker.t.sol` - 16 tests)
+   - [x] Initialize correctly
+   - [x] Normal block processing
+   - [x] NIL block handling (bytes32(0) proposer)
+   - [x] Timestamp update
+   - [x] Epoch transition triggering
+   - [x] Proposer resolution
+   - [x] Integration with Reconfiguration
 
-### Integration Tests
+### Fuzz Tests (Implemented)
 
-- Full epoch lifecycle (detection → DKG → transition → validator update)
-- Multiple consecutive epoch transitions
-- Config application timing
+- [x] Variable epoch intervals (`testFuzz_setEpochIntervalMicros`, `testFuzz_epochTransitionWithVariableInterval`)
+- [x] Proposer conversion (`testFuzz_onBlockStart_proposerConversion`)
+- [x] Timestamp advances (`testFuzz_onBlockStart_timestampAdvances`)
+- [x] Block sequences (`testFuzz_multipleBlocksSequence`)
 
-### Fuzz Tests
+### Integration Tests (Pending)
 
-- Random time advances
-- Random epoch intervals
-- Random block sequences
+- [ ] Full epoch lifecycle with all dependent contracts
+- [ ] Config application timing
 
-### Invariant Tests
+### Invariant Tests (Pending)
 
-- Epoch monotonicity
-- Timing constraints
-- State consistency
+- [ ] Epoch monotonicity
+- [ ] Timing constraints
+- [ ] State consistency
 

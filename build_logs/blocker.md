@@ -12,6 +12,8 @@ Implementation of the Blocker layer containing `Reconfiguration.sol` and `Blocke
 | `src/blocker/Reconfiguration.sol` | Epoch lifecycle management with DKG coordination |
 | `src/blocker/Blocker.sol` | Block prologue entry point |
 | `spec_v2/blocker.spec.md` | Layer specification document |
+| `test/unit/blocker/Reconfiguration.t.sol` | Unit tests for Reconfiguration (28 tests) |
+| `test/unit/blocker/Blocker.t.sol` | Unit tests for Blocker (16 tests) |
 
 ## Files Modified
 
@@ -97,25 +99,44 @@ Consensus Engine ───► Reconfiguration.finishTransition()
 
 - [x] Contracts compile successfully
 - [x] Existing ValidatorManagement tests updated for new interface
-- [ ] Unit tests for Reconfiguration (pending)
-- [ ] Unit tests for Blocker (pending)
+- [x] Unit tests for Reconfiguration (28 tests)
+- [x] Unit tests for Blocker (16 tests)
 - [ ] Integration tests (pending)
 
-## Build Verification
+### Test Coverage
+
+**Reconfiguration.t.sol (28 tests)**:
+- Initialization tests (success, access control, double-init prevention)
+- checkAndStartTransition tests (timing, state transitions, access control)
+- finishTransition tests (DKG result handling, governance force-end, access control)
+- Governance tests (setEpochIntervalMicros, validation)
+- View function tests (canTriggerEpochTransition, getRemainingTimeSeconds, isTransitionInProgress)
+- Full epoch lifecycle tests (single transition, multiple transitions)
+- Fuzz tests (variable intervals, epoch transitions)
+
+**Blocker.t.sol (16 tests)**:
+- Initialization tests (success, access control, double-init prevention)
+- onBlockStart tests (normal blocks, NIL blocks, epoch transition triggering)
+- Proposer resolution tests (NIL vs normal blocks)
+- Integration with Reconfiguration tests
+- Fuzz tests (proposer conversion, timestamp advances, block sequences)
+
+## Build & Test Verification
 
 ```bash
 cd /home/yxia/gravity/gravity_chain_core_contracts
 forge build --force
-# Compiler run successful with warnings
+# Compiler run successful
+
+forge test --match-path "test/unit/blocker/*"
+# 44 tests passed, 0 failed
 ```
 
 ## Next Steps
 
-1. Write unit tests for Reconfiguration contract
-2. Write unit tests for Blocker contract
-3. Implement ValidatorPerformanceTracker (uses `failedProposers` parameter)
-4. Implement proper consensus key lookup in `_resolveProposer()`
-5. Integration tests for full epoch lifecycle
+1. Implement ValidatorPerformanceTracker (uses `failedProposers` parameter)
+2. Implement proper consensus key lookup in `_resolveProposer()`
+3. Integration tests for full epoch lifecycle with all dependent contracts
 
 ## Related Documents
 
