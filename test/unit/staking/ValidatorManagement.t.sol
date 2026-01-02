@@ -115,8 +115,10 @@ contract ValidatorManagementTest is Test {
 
     /// @notice Process an epoch transition
     function _processEpoch() internal {
+        // Get current epoch before pranking (view call doesn't need prank)
+        uint64 newEpoch = validatorManager.getCurrentEpoch() + 1;
         vm.prank(SystemAddresses.EPOCH_MANAGER);
-        validatorManager.onNewEpoch();
+        validatorManager.onNewEpoch(newEpoch);
     }
 
     // ========================================================================
@@ -391,13 +393,13 @@ contract ValidatorManagementTest is Test {
         vm.prank(SystemAddresses.EPOCH_MANAGER);
         vm.expectEmit(false, false, false, true);
         emit IValidatorManagement.EpochProcessed(1, 1, MIN_BOND);
-        validatorManager.onNewEpoch();
+        validatorManager.onNewEpoch(1);
     }
 
     function test_RevertWhen_onNewEpoch_notEpochManager() public {
         vm.prank(alice);
         vm.expectRevert();
-        validatorManager.onNewEpoch();
+        validatorManager.onNewEpoch(1);
     }
 
     // ========================================================================

@@ -118,12 +118,13 @@ interface IValidatorManagement {
     // ========================================================================
 
     /// @notice Process epoch transition
-    /// @dev Only callable by EPOCH_MANAGER.
+    /// @dev Only callable by EPOCH_MANAGER (Reconfiguration contract).
     ///      - Processes PENDING_INACTIVE → INACTIVE transitions
     ///      - Processes PENDING_ACTIVE → ACTIVE transitions (respecting voting power limits)
     ///      - Reassigns validator indices
     ///      - Updates total voting power
-    function onNewEpoch() external;
+    /// @param newEpoch The new epoch number to set
+    function onNewEpoch(uint64 newEpoch) external;
 
     // ========================================================================
     // VIEW FUNCTIONS

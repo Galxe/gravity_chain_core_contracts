@@ -254,7 +254,7 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function onNewEpoch() external {
+    function onNewEpoch(uint64 newEpoch) external {
         requireAllowed(SystemAddresses.EPOCH_MANAGER);
 
         // 1. Process PENDING_INACTIVE → INACTIVE (clear indices, remove from active)
@@ -272,11 +272,11 @@ contract ValidatorManagement is IValidatorManagement {
         // 5. Reassign indices for all active validators
         _reassignValidatorIndices();
 
-        // 6. Update epoch state
-        currentEpoch++;
+        // 6. Update epoch state (epoch provided by Reconfiguration contract)
+        currentEpoch = newEpoch;
         totalVotingPower = _calculateTotalVotingPower();
 
-        emit EpochProcessed(currentEpoch, _activeValidators.length, totalVotingPower);
+        emit EpochProcessed(newEpoch, _activeValidators.length, totalVotingPower);
     }
 
     /// @notice Process validators leaving the active set

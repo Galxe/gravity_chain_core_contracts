@@ -135,6 +135,12 @@ library Errors {
     /// @param currentTime Current timestamp (microseconds)
     error EpochNotYetEnded(uint64 nextEpochTime, uint64 currentTime);
 
+    /// @notice Epoch interval must be greater than zero
+    error InvalidEpochInterval();
+
+    /// @notice Reconfiguration contract has not been initialized
+    error ReconfigurationNotInitialized();
+
     // ========================================================================
     // GOVERNANCE ERRORS
     // ========================================================================
