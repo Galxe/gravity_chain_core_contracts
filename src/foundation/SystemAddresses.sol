@@ -36,6 +36,10 @@ library SystemAddresses {
     /// @dev Generic proposal/vote/resolve engine for governance
     address internal constant VOTING = address(0x0000000000000000000000000001625F2014);
 
+    /// @notice Validator configuration contract
+    /// @dev Stores validator parameters (minimum/maximum bond, unbonding delay, etc.)
+    address internal constant VALIDATOR_CONFIG = address(0x0000000000000000000000000001625F2015);
+
     /// @notice Block prologue/epilogue handler
     /// @dev Called by VM at start/end of each block
     address internal constant BLOCK = address(0x0000000000000000000000000001625F2016);

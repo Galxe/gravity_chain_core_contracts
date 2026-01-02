@@ -115,6 +115,11 @@ library Errors {
     /// @param currentTime Current timestamp (microseconds)
     error UnbondNotReady(uint64 availableAt, uint64 currentTime);
 
+    /// @notice Validator index out of bounds
+    /// @param index The requested index
+    /// @param total The total number of active validators
+    error ValidatorIndexOutOfBounds(uint64 index, uint64 total);
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================

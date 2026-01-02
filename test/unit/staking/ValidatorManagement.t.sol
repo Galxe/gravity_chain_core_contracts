@@ -1,0 +1,665 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test} from "forge-std/Test.sol";
+import {ValidatorManagement} from "../../../src/staking/ValidatorManagement.sol";
+import {IValidatorManagement} from "../../../src/staking/IValidatorManagement.sol";
+import {Staking} from "../../../src/staking/Staking.sol";
+import {IStaking} from "../../../src/staking/IStaking.sol";
+import {IStakePool} from "../../../src/staking/IStakePool.sol";
+import {StakingConfig} from "../../../src/runtime/StakingConfig.sol";
+import {ValidatorConfig} from "../../../src/runtime/ValidatorConfig.sol";
+import {Timestamp} from "../../../src/runtime/Timestamp.sol";
+import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
+import {Errors} from "../../../src/foundation/Errors.sol";
+import {ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo} from "../../../src/foundation/Types.sol";
+
+/// @title ValidatorManagementTest
+/// @notice Unit tests for ValidatorManagement contract
+contract ValidatorManagementTest is Test {
+    ValidatorManagement public validatorManager;
+    Staking public staking;
+    StakingConfig public stakingConfig;
+    ValidatorConfig public validatorConfig;
+    Timestamp public timestamp;
+
+    // Test addresses
+    address public alice = makeAddr("alice");
+    address public bob = makeAddr("bob");
+    address public charlie = makeAddr("charlie");
+    address public david = makeAddr("david");
+
+    // Test constants
+    uint256 constant MIN_STAKE = 1 ether;
+    uint64 constant LOCKUP_DURATION = 14 days * 1_000_000; // 14 days in microseconds
+    uint64 constant INITIAL_TIMESTAMP = 1_000_000_000_000_000; // Initial time in microseconds
+
+    // Validator constants
+    uint256 constant MIN_BOND = 10 ether;
+    uint256 constant MAX_BOND = 1000 ether;
+    uint64 constant UNBONDING_DELAY = 7 days * 1_000_000; // 7 days in microseconds
+    uint64 constant VOTING_POWER_INCREASE_LIMIT = 20; // 20%
+    uint256 constant MAX_VALIDATOR_SET_SIZE = 100;
+
+    // Sample consensus key data
+    bytes constant CONSENSUS_PUBKEY = hex"1234567890abcdef";
+    bytes constant CONSENSUS_POP = hex"abcdef1234567890";
+    bytes constant NETWORK_ADDRESSES = hex"0102030405060708";
+    bytes constant FULLNODE_ADDRESSES = hex"0807060504030201";
+
+    function setUp() public {
+        // Deploy contracts at system addresses
+        vm.etch(SystemAddresses.STAKE_CONFIG, address(new StakingConfig()).code);
+        stakingConfig = StakingConfig(SystemAddresses.STAKE_CONFIG);
+
+        vm.etch(SystemAddresses.VALIDATOR_CONFIG, address(new ValidatorConfig()).code);
+        validatorConfig = ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG);
+
+        vm.etch(SystemAddresses.TIMESTAMP, address(new Timestamp()).code);
+        timestamp = Timestamp(SystemAddresses.TIMESTAMP);
+
+        vm.etch(SystemAddresses.STAKING, address(new Staking()).code);
+        staking = Staking(SystemAddresses.STAKING);
+
+        vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new ValidatorManagement()).code);
+        validatorManager = ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+
+        // Initialize StakingConfig
+        vm.prank(SystemAddresses.GENESIS);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, 10 ether);
+
+        // Initialize ValidatorConfig
+        vm.prank(SystemAddresses.GENESIS);
+        validatorConfig.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE);
+
+        // Set initial timestamp
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP);
+
+        // Fund test accounts
+        vm.deal(alice, 10000 ether);
+        vm.deal(bob, 10000 ether);
+        vm.deal(charlie, 10000 ether);
+        vm.deal(david, 10000 ether);
+    }
+
+    // ========================================================================
+    // HELPER FUNCTIONS
+    // ========================================================================
+
+    /// @notice Create a stake pool with given owner and stake amount
+    function _createStakePool(address owner, uint256 stakeAmount) internal returns (address pool) {
+        vm.prank(owner);
+        pool = staking.createPool{value: stakeAmount}(owner);
+    }
+
+    /// @notice Create a stake pool and register as validator
+    function _createAndRegisterValidator(address owner, uint256 stakeAmount, string memory moniker)
+        internal
+        returns (address pool)
+    {
+        pool = _createStakePool(owner, stakeAmount);
+        vm.prank(owner); // owner is also operator by default
+        validatorManager.registerValidator(pool, moniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    /// @notice Create, register, and join validator set
+    function _createRegisterAndJoin(address owner, uint256 stakeAmount, string memory moniker)
+        internal
+        returns (address pool)
+    {
+        pool = _createAndRegisterValidator(owner, stakeAmount, moniker);
+        vm.prank(owner);
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    /// @notice Process an epoch transition
+    function _processEpoch() internal {
+        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        validatorManager.onNewEpoch();
+    }
+
+    // ========================================================================
+    // REGISTRATION TESTS
+    // ========================================================================
+
+    function test_registerValidator_success() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(alice);
+        validatorManager.registerValidator(pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+
+        assertTrue(validatorManager.isValidator(pool), "Should be a validator");
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.validator, pool, "Validator should match pool");
+        assertEq(record.moniker, "alice-validator", "Moniker should match");
+        assertEq(record.owner, alice, "Owner should be alice");
+        assertEq(record.operator, alice, "Operator should be alice");
+        assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Status should be INACTIVE");
+        assertEq(record.bond, MIN_BOND, "Bond should match");
+    }
+
+    function test_registerValidator_emitsEvent() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true);
+        emit IValidatorManagement.ValidatorRegistered(pool, "alice-validator");
+        validatorManager.registerValidator(pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    function test_RevertWhen_registerValidator_invalidPool() public {
+        address fakePool = makeAddr("fakePool");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, fakePool));
+        validatorManager.registerValidator(fakePool, "fake", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    function test_RevertWhen_registerValidator_notOperator() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(bob); // Bob is not the operator
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotOperator.selector, alice, bob));
+        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    function test_RevertWhen_registerValidator_alreadyExists() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorAlreadyExists.selector, pool));
+        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    function test_RevertWhen_registerValidator_insufficientBond() public {
+        address pool = _createStakePool(alice, MIN_BOND - 1 ether); // Below minimum
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientBond.selector, MIN_BOND, MIN_BOND - 1 ether));
+        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    function test_RevertWhen_registerValidator_monikerTooLong() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+        string memory longMoniker = "this-moniker-is-way-too-long-to-be-valid";
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.MonikerTooLong.selector, 31, bytes(longMoniker).length));
+        validatorManager.registerValidator(pool, longMoniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+    }
+
+    // ========================================================================
+    // JOIN VALIDATOR SET TESTS
+    // ========================================================================
+
+    function test_joinValidatorSet_success() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(pool);
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(uint8(record.status), uint8(ValidatorStatus.PENDING_ACTIVE), "Status should be PENDING_ACTIVE");
+
+        address[] memory pending = validatorManager.getPendingActiveValidators();
+        assertEq(pending.length, 1, "Should have one pending validator");
+        assertEq(pending[0], pool, "Pending validator should match");
+    }
+
+    function test_joinValidatorSet_emitsEvent() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, false);
+        emit IValidatorManagement.ValidatorJoinRequested(pool);
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    function test_RevertWhen_joinValidatorSet_notInactive() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidStatus.selector, uint8(ValidatorStatus.INACTIVE), uint8(ValidatorStatus.PENDING_ACTIVE)));
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    function test_RevertWhen_joinValidatorSet_validatorNotFound() public {
+        address fakePool = makeAddr("fakePool");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, fakePool));
+        validatorManager.joinValidatorSet(fakePool);
+    }
+
+    function test_RevertWhen_joinValidatorSet_notOperator() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotOperator.selector, alice, bob));
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    function test_RevertWhen_joinValidatorSet_setChangesDisabled() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Disable validator set changes
+        vm.prank(SystemAddresses.TIMELOCK);
+        validatorConfig.setAllowValidatorSetChange(false);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    // ========================================================================
+    // LEAVE VALIDATOR SET TESTS
+    // ========================================================================
+
+    function test_leaveValidatorSet_success() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch(); // Activate the validator
+
+        ValidatorRecord memory before = validatorManager.getValidator(pool);
+        assertEq(uint8(before.status), uint8(ValidatorStatus.ACTIVE), "Should be ACTIVE");
+
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool);
+
+        ValidatorRecord memory after_ = validatorManager.getValidator(pool);
+        assertEq(uint8(after_.status), uint8(ValidatorStatus.PENDING_INACTIVE), "Should be PENDING_INACTIVE");
+
+        address[] memory pending = validatorManager.getPendingInactiveValidators();
+        assertEq(pending.length, 1, "Should have one pending inactive");
+        assertEq(pending[0], pool, "Pending should match");
+    }
+
+    function test_leaveValidatorSet_emitsEvent() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, false);
+        emit IValidatorManagement.ValidatorLeaveRequested(pool);
+        validatorManager.leaveValidatorSet(pool);
+    }
+
+    function test_RevertWhen_leaveValidatorSet_notActive() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidStatus.selector, uint8(ValidatorStatus.ACTIVE), uint8(ValidatorStatus.INACTIVE)));
+        validatorManager.leaveValidatorSet(pool);
+    }
+
+    // ========================================================================
+    // EPOCH PROCESSING TESTS
+    // ========================================================================
+
+    function test_onNewEpoch_activatesPendingValidator() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+
+        assertEq(validatorManager.getActiveValidatorCount(), 0, "No active validators before epoch");
+
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Should have one active validator");
+        assertEq(validatorManager.getCurrentEpoch(), 1, "Epoch should be 1");
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(uint8(record.status), uint8(ValidatorStatus.ACTIVE), "Status should be ACTIVE");
+        assertEq(record.validatorIndex, 0, "Index should be 0");
+    }
+
+    function test_onNewEpoch_deactivatesPendingInactive() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch(); // Activate
+
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool);
+
+        _processEpoch(); // Deactivate
+
+        assertEq(validatorManager.getActiveValidatorCount(), 0, "No active validators");
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Status should be INACTIVE");
+    }
+
+    function test_onNewEpoch_assignsIndicesCorrectly() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "Should have 3 validators");
+
+        // Verify indices are 0, 1, 2
+        ValidatorConsensusInfo[] memory validators = validatorManager.getActiveValidators();
+        for (uint64 i = 0; i < validators.length; i++) {
+            ValidatorRecord memory record = validatorManager.getValidator(validators[i].validator);
+            assertEq(record.validatorIndex, i, "Index should match position");
+        }
+    }
+
+    function test_onNewEpoch_reassignsIndicesAfterLeave() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+
+        _processEpoch(); // All active with indices 0, 1, 2
+
+        // Bob leaves
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        _processEpoch(); // Bob removed, indices reassigned
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "Should have 2 validators");
+
+        // Verify indices are still 0, 1 (contiguous)
+        ValidatorConsensusInfo[] memory validators = validatorManager.getActiveValidators();
+        for (uint64 i = 0; i < validators.length; i++) {
+            ValidatorRecord memory record = validatorManager.getValidator(validators[i].validator);
+            assertEq(record.validatorIndex, i, "Index should be contiguous");
+        }
+    }
+
+    function test_onNewEpoch_updatesTotalVotingPower() public {
+        _createRegisterAndJoin(alice, 20 ether, "alice");
+        _createRegisterAndJoin(bob, 30 ether, "bob");
+
+        _processEpoch();
+
+        assertEq(validatorManager.getTotalVotingPower(), 50 ether, "Total voting power should be 50 ether");
+    }
+
+    function test_onNewEpoch_capsVotingPowerAtMaxBond() public {
+        _createRegisterAndJoin(alice, MAX_BOND + 100 ether, "alice"); // Above max
+
+        _processEpoch();
+
+        // Total voting power should be capped at MAX_BOND
+        assertEq(validatorManager.getTotalVotingPower(), MAX_BOND, "Voting power should be capped");
+    }
+
+    function test_onNewEpoch_emitsEpochProcessedEvent() public {
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+
+        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.expectEmit(false, false, false, true);
+        emit IValidatorManagement.EpochProcessed(1, 1, MIN_BOND);
+        validatorManager.onNewEpoch();
+    }
+
+    function test_RevertWhen_onNewEpoch_notEpochManager() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        validatorManager.onNewEpoch();
+    }
+
+    // ========================================================================
+    // VOTING POWER LIMIT TESTS
+    // ========================================================================
+
+    function test_onNewEpoch_respectsVotingPowerLimit() public {
+        // Set up a validator with 100 ether (will become the base)
+        address pool1 = _createRegisterAndJoin(alice, 100 ether, "alice");
+        _processEpoch();
+
+        // Try to add a validator with 30 ether (30% increase, limit is 20%)
+        address pool2 = _createRegisterAndJoin(bob, 30 ether, "bob");
+        _processEpoch();
+
+        // Bob should still be pending because 30 > 20% of 100
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Only alice should be active");
+
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.PENDING_ACTIVE), "Bob should still be pending");
+    }
+
+    function test_onNewEpoch_activatesWithinLimit() public {
+        // Set up a validator with 100 ether
+        address pool1 = _createRegisterAndJoin(alice, 100 ether, "alice");
+        _processEpoch();
+
+        // Add a validator with 15 ether (15% increase, within 20% limit)
+        address pool2 = _createRegisterAndJoin(bob, 15 ether, "bob");
+        _processEpoch();
+
+        // Bob should be activated
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "Both should be active");
+
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Bob should be active");
+    }
+
+    // ========================================================================
+    // OPERATOR FUNCTION TESTS
+    // ========================================================================
+
+    function test_rotateConsensusKey_success() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        bytes memory newPubkey = hex"deadbeef";
+        bytes memory newPop = hex"cafebabe";
+
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.consensusPubkey, newPubkey, "Pubkey should be updated");
+        assertEq(record.consensusPop, newPop, "PoP should be updated");
+    }
+
+    function test_rotateConsensusKey_emitsEvent() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        bytes memory newPubkey = hex"deadbeef";
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true);
+        emit IValidatorManagement.ConsensusKeyRotated(pool, newPubkey);
+        validatorManager.rotateConsensusKey(pool, newPubkey, hex"");
+    }
+
+    function test_setFeeRecipient_success() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        address newRecipient = makeAddr("recipient");
+
+        vm.prank(alice);
+        validatorManager.setFeeRecipient(pool, newRecipient);
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.pendingFeeRecipient, newRecipient, "Pending recipient should be set");
+        assertEq(record.feeRecipient, alice, "Current recipient unchanged until epoch");
+    }
+
+    function test_setFeeRecipient_appliedAtEpoch() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch(); // Activate
+
+        address newRecipient = makeAddr("recipient");
+        vm.prank(alice);
+        validatorManager.setFeeRecipient(pool, newRecipient);
+
+        _processEpoch(); // Apply change
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.feeRecipient, newRecipient, "Fee recipient should be updated");
+        assertEq(record.pendingFeeRecipient, address(0), "Pending should be cleared");
+    }
+
+    // ========================================================================
+    // VIEW FUNCTION TESTS
+    // ========================================================================
+
+    function test_getActiveValidatorByIndex_success() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
+        _processEpoch();
+
+        ValidatorConsensusInfo memory info0 = validatorManager.getActiveValidatorByIndex(0);
+        ValidatorConsensusInfo memory info1 = validatorManager.getActiveValidatorByIndex(1);
+
+        // One of them should be pool1, one pool2
+        assertTrue(info0.validator == pool1 || info0.validator == pool2, "Index 0 should be valid");
+        assertTrue(info1.validator == pool1 || info1.validator == pool2, "Index 1 should be valid");
+        assertTrue(info0.validator != info1.validator, "Different validators at different indices");
+    }
+
+    function test_RevertWhen_getActiveValidatorByIndex_outOfBounds() public {
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorIndexOutOfBounds.selector, 1, 1));
+        validatorManager.getActiveValidatorByIndex(1);
+    }
+
+    function test_getValidatorStatus_allStatuses() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Not registered - should revert
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, pool));
+        validatorManager.getValidatorStatus(pool);
+
+        // Register - INACTIVE
+        vm.prank(alice);
+        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+
+        // Join - PENDING_ACTIVE
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(pool);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
+
+        // Epoch - ACTIVE
+        _processEpoch();
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
+
+        // Leave - PENDING_INACTIVE
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // Epoch - INACTIVE
+        _processEpoch();
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+    }
+
+    // ========================================================================
+    // FUZZ TESTS
+    // ========================================================================
+
+    function testFuzz_registerValidator_variousBondAmounts(uint256 bondAmount) public {
+        bondAmount = bound(bondAmount, MIN_BOND, MAX_BOND);
+
+        address pool = _createStakePool(alice, bondAmount);
+        vm.prank(alice);
+        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.bond, bondAmount, "Bond should match");
+    }
+
+    function testFuzz_multipleValidators(uint8 numValidators) public {
+        numValidators = uint8(bound(numValidators, 1, 10)); // Keep small to avoid gas issues
+
+        for (uint256 i = 0; i < numValidators; i++) {
+            address user = address(uint160(0x1000 + i));
+            vm.deal(user, 1000 ether);
+            _createRegisterAndJoin(user, MIN_BOND + i * 1 ether, "validator");
+        }
+
+        _processEpoch();
+
+        // All validators should be active
+        assertEq(validatorManager.getActiveValidatorCount(), numValidators, "All validators should be active");
+
+        // Check indices are contiguous
+        for (uint64 i = 0; i < numValidators; i++) {
+            ValidatorConsensusInfo memory info = validatorManager.getActiveValidatorByIndex(i);
+            ValidatorRecord memory record = validatorManager.getValidator(info.validator);
+            assertEq(record.validatorIndex, i, "Index should be contiguous");
+        }
+    }
+
+    // ========================================================================
+    // INVARIANT TESTS
+    // ========================================================================
+
+    function test_invariant_indicesAreContiguous() public {
+        // Create several validators
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        _processEpoch();
+
+        // Have one leave
+        address pool2 = staking.getPool(1); // Bob's pool
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+        _processEpoch();
+
+        // Add a new one
+        _createRegisterAndJoin(david, MIN_BOND, "david");
+        _processEpoch();
+
+        // Verify indices are 0, 1, 2 (contiguous)
+        uint256 count = validatorManager.getActiveValidatorCount();
+        for (uint64 i = 0; i < count; i++) {
+            ValidatorConsensusInfo memory info = validatorManager.getActiveValidatorByIndex(i);
+            ValidatorRecord memory record = validatorManager.getValidator(info.validator);
+            assertEq(record.validatorIndex, i, "Index should match position");
+        }
+    }
+
+    function test_invariant_totalVotingPowerMatchesSum() public {
+        _createRegisterAndJoin(alice, 10 ether, "alice");
+        _createRegisterAndJoin(bob, 20 ether, "bob");
+        _createRegisterAndJoin(charlie, 30 ether, "charlie");
+        _processEpoch();
+
+        uint256 total = validatorManager.getTotalVotingPower();
+        uint256 sum = 0;
+
+        ValidatorConsensusInfo[] memory validators = validatorManager.getActiveValidators();
+        for (uint256 i = 0; i < validators.length; i++) {
+            sum += validators[i].votingPower;
+        }
+
+        assertEq(total, sum, "Total should match sum of individual powers");
+    }
+
+    function test_invariant_onlyActiveHasValidIndex() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+
+        // PENDING_ACTIVE - no valid index yet
+        ValidatorRecord memory pendingRecord = validatorManager.getValidator(pool);
+        assertEq(uint8(pendingRecord.status), uint8(ValidatorStatus.PENDING_ACTIVE));
+        // Index is 0 by default, but that's not "invalid" - it's just not assigned yet
+
+        _processEpoch();
+
+        // ACTIVE - has valid index
+        ValidatorRecord memory activeRecord = validatorManager.getValidator(pool);
+        assertEq(uint8(activeRecord.status), uint8(ValidatorStatus.ACTIVE));
+        assertEq(activeRecord.validatorIndex, 0, "Should have index 0");
+
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool);
+
+        // PENDING_INACTIVE - keeps index for current epoch
+        ValidatorRecord memory pendingInactiveRecord = validatorManager.getValidator(pool);
+        assertEq(uint8(pendingInactiveRecord.status), uint8(ValidatorStatus.PENDING_INACTIVE));
+        assertEq(pendingInactiveRecord.validatorIndex, 0, "Should keep index");
+
+        _processEpoch();
+
+        // INACTIVE - index cleared
+        ValidatorRecord memory inactiveRecord = validatorManager.getValidator(pool);
+        assertEq(uint8(inactiveRecord.status), uint8(ValidatorStatus.INACTIVE));
+        assertEq(inactiveRecord.validatorIndex, 0, "Index should be cleared to 0");
+    }
+}
+
