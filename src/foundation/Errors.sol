@@ -7,25 +7,54 @@ pragma solidity ^0.8.30;
 /// @dev Using custom errors instead of require strings saves gas and provides structured error data
 library Errors {
     // ========================================================================
-    // STAKING ERRORS
+    // STAKING FACTORY ERRORS
     // ========================================================================
 
-    /// @notice Staker has no stake position
-    /// @param staker Address that has no stake
-    error NoStakePosition(address staker);
-
-    /// @notice Stake amount is insufficient
+    /// @notice Insufficient stake for pool creation
+    /// @param sent Amount sent with transaction
     /// @param required Minimum required amount
-    /// @param actual Actual amount provided
-    error InsufficientStake(uint256 required, uint256 actual);
+    error InsufficientStakeForPoolCreation(uint256 sent, uint256 required);
+
+    /// @notice Pool index out of bounds
+    /// @param index Requested index
+    /// @param total Total number of pools
+    error PoolIndexOutOfBounds(uint256 index, uint256 total);
+
+    /// @notice Address is not a valid pool created by the factory
+    /// @dev SECURITY: Only pools created by the Staking factory are trusted
+    /// @param pool The invalid pool address
+    error InvalidPool(address pool);
+
+    // ========================================================================
+    // STAKE POOL ERRORS
+    // ========================================================================
+
+    /// @notice Stake amount is insufficient for withdrawal
+    /// @param requested Amount requested to withdraw
+    /// @param available Amount available in pool
+    error InsufficientStake(uint256 requested, uint256 available);
 
     /// @notice Lockup period has not expired
     /// @param lockedUntil When the lockup expires (microseconds)
     /// @param currentTime Current timestamp (microseconds)
     error LockupNotExpired(uint64 lockedUntil, uint64 currentTime);
 
+    /// @notice Lockup duration is too short
+    /// @param provided Duration provided (microseconds)
+    /// @param minimum Minimum required duration (microseconds)
+    error LockupDurationTooShort(uint64 provided, uint64 minimum);
+
+    /// @notice Lockup increase would overflow
+    /// @param current Current lockedUntil value
+    /// @param addition Duration being added
+    error LockupOverflow(uint64 current, uint64 addition);
+
     /// @notice Amount cannot be zero
     error ZeroAmount();
+
+    /// @notice Staker has no stake position (legacy, kept for compatibility)
+    /// @param staker Address that has no stake
+    error NoStakePosition(address staker);
 
     // ========================================================================
     // VALIDATOR ERRORS

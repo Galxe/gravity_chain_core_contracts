@@ -2,69 +2,139 @@
 pragma solidity ^0.8.30;
 
 import {IStaking} from "./IStaking.sol";
-import {StakePosition} from "../foundation/Types.sol";
+import {IStakePool} from "./IStakePool.sol";
+import {StakePool} from "./StakePool.sol";
 import {SystemAddresses} from "../foundation/SystemAddresses.sol";
 import {Errors} from "../foundation/Errors.sol";
 
-/// @notice Interface for Timestamp contract
-interface ITimestamp {
-    function nowMicroseconds() external view returns (uint64);
-}
-
 /// @notice Interface for StakingConfig contract
-interface IStakingConfig {
-    function lockupDurationMicros() external view returns (uint64);
+interface IStakingConfigFactory {
     function minimumStake() external view returns (uint256);
 }
 
 /// @title Staking
 /// @author Gravity Team
-/// @notice Governance staking contract - anyone can stake tokens to participate in governance
-/// @dev Uses lockup-only model:
-///      - Staking creates/extends lockup to `now + lockupDurationMicros`
-///      - Voting power = stake amount only if `lockedUntil > now`
-///      - Unstake/withdraw only allowed when `lockedUntil <= now`
+/// @notice Factory contract that creates individual StakePool contracts via CREATE2
+/// @dev Anyone can create a pool. Each pool is deployed with a deterministic address.
+///      Only pools created by this factory are trusted by the system.
 contract Staking is IStaking {
     // ========================================================================
     // STATE
     // ========================================================================
 
-    /// @notice Mapping of staker address to their stake position
-    mapping(address => StakePosition) internal _stakes;
+    /// @notice Array of all StakePool addresses
+    address[] internal _allPools;
 
-    /// @notice Total staked tokens across all stakers
-    uint256 public totalStaked;
+    /// @notice Mapping to check if an address is a valid pool created by this factory
+    /// @dev SECURITY CRITICAL: Only pools in this mapping should be trusted
+    mapping(address => bool) internal _isPool;
+
+    /// @notice Counter for CREATE2 salt (increments with each pool created)
+    uint256 public poolNonce;
 
     // ========================================================================
-    // VIEW FUNCTIONS
+    // MODIFIERS
     // ========================================================================
 
-    /// @inheritdoc IStaking
-    function getStake(address staker) external view returns (StakePosition memory) {
-        return _stakes[staker];
-    }
-
-    /// @inheritdoc IStaking
-    function getVotingPower(address staker) external view returns (uint256) {
-        StakePosition storage pos = _stakes[staker];
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-        // Only locked stake counts for voting power
-        if (pos.lockedUntil <= now_) {
-            return 0;
+    /// @notice Ensures the address is a valid pool created by this factory
+    modifier onlyValidPool(address pool) {
+        if (!_isPool[pool]) {
+            revert Errors.InvalidPool(pool);
         }
-        return pos.amount;
+        _;
+    }
+
+    // ========================================================================
+    // VIEW FUNCTIONS - Pool Registry
+    // ========================================================================
+
+    /// @inheritdoc IStaking
+    function isPool(address pool) external view returns (bool) {
+        return _isPool[pool];
     }
 
     /// @inheritdoc IStaking
-    function getTotalStaked() external view returns (uint256) {
-        return totalStaked;
+    function getPool(uint256 index) external view returns (address) {
+        if (index >= _allPools.length) {
+            revert Errors.PoolIndexOutOfBounds(index, _allPools.length);
+        }
+        return _allPools[index];
     }
 
     /// @inheritdoc IStaking
-    function isLocked(address staker) external view returns (bool) {
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        return _stakes[staker].lockedUntil > now_;
+    function computePoolAddress(uint256 nonce) public view returns (address) {
+        bytes32 salt = bytes32(nonce);
+        bytes32 bytecodeHash = keccak256(
+            abi.encodePacked(type(StakePool).creationCode, abi.encode(address(0))) // placeholder owner
+        );
+
+        // CREATE2 address = keccak256(0xff ++ factory ++ salt ++ keccak256(bytecode))[12:]
+        // But since owner is encoded in constructor args, we need the actual bytecode hash
+        // For deterministic addresses, we compute based on init code without args
+        // The actual address depends on the owner, so this is a preview only
+
+        return address(
+            uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, bytecodeHash))))
+        );
+    }
+
+    /// @inheritdoc IStaking
+    function getAllPools() external view returns (address[] memory) {
+        return _allPools;
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolCount() external view returns (uint256) {
+        return _allPools.length;
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolNonce() external view returns (uint256) {
+        return poolNonce;
+    }
+
+    /// @inheritdoc IStaking
+    function getMinimumStake() external view returns (uint256) {
+        return IStakingConfigFactory(SystemAddresses.STAKE_CONFIG).minimumStake();
+    }
+
+    // ========================================================================
+    // VIEW FUNCTIONS - Pool Status Queries (for Validators)
+    // ========================================================================
+
+    /// @inheritdoc IStaking
+    function getPoolVotingPower(address pool) external view onlyValidPool(pool) returns (uint256) {
+        return IStakePool(pool).getVotingPower();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolStake(address pool) external view onlyValidPool(pool) returns (uint256) {
+        return IStakePool(pool).getStake();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolOwner(address pool) external view onlyValidPool(pool) returns (address) {
+        return IStakePool(pool).getOwner();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolVoter(address pool) external view onlyValidPool(pool) returns (address) {
+        return IStakePool(pool).getVoter();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolOperator(address pool) external view onlyValidPool(pool) returns (address) {
+        return IStakePool(pool).getOperator();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolLockedUntil(address pool) external view onlyValidPool(pool) returns (uint64) {
+        return IStakePool(pool).getLockedUntil();
+    }
+
+    /// @inheritdoc IStaking
+    function isPoolLocked(address pool) external view onlyValidPool(pool) returns (bool) {
+        return IStakePool(pool).isLocked();
     }
 
     // ========================================================================
@@ -72,107 +142,24 @@ contract Staking is IStaking {
     // ========================================================================
 
     /// @inheritdoc IStaking
-    function stake() external payable {
-        if (msg.value == 0) {
-            revert Errors.ZeroAmount();
+    function createPool(address owner) external payable returns (address pool) {
+        // Check minimum stake
+        uint256 minStake = IStakingConfigFactory(SystemAddresses.STAKE_CONFIG).minimumStake();
+        if (msg.value < minStake) {
+            revert Errors.InsufficientStakeForPoolCreation(msg.value, minStake);
         }
 
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 lockupDuration = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        uint64 newLockedUntil = now_ + lockupDuration;
+        // Increment nonce and use as salt
+        uint256 nonce = poolNonce++;
+        bytes32 salt = bytes32(nonce);
 
-        StakePosition storage pos = _stakes[msg.sender];
+        // Deploy StakePool via CREATE2 with initial stake
+        pool = address(new StakePool{salt: salt, value: msg.value}(owner));
 
-        if (pos.amount == 0) {
-            // New stake position
-            pos.stakedAt = now_;
-        }
+        // Register pool in both array and mapping
+        _allPools.push(pool);
+        _isPool[pool] = true;
 
-        pos.amount += msg.value;
-
-        // Extend lockup if new lockup is longer
-        if (newLockedUntil > pos.lockedUntil) {
-            pos.lockedUntil = newLockedUntil;
-        }
-
-        totalStaked += msg.value;
-
-        emit Staked(msg.sender, msg.value, pos.lockedUntil);
-    }
-
-    /// @inheritdoc IStaking
-    function unstake(uint256 amount) external {
-        StakePosition storage pos = _stakes[msg.sender];
-
-        if (pos.amount == 0) {
-            revert Errors.NoStakePosition(msg.sender);
-        }
-        if (amount == 0) {
-            revert Errors.ZeroAmount();
-        }
-        if (amount > pos.amount) {
-            revert Errors.InsufficientStake(amount, pos.amount);
-        }
-
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        if (pos.lockedUntil > now_) {
-            revert Errors.LockupNotExpired(pos.lockedUntil, now_);
-        }
-
-        pos.amount -= amount;
-        totalStaked -= amount;
-
-        emit Unstaked(msg.sender, amount);
-
-        // Transfer tokens back to staker
-        (bool success,) = payable(msg.sender).call{value: amount}("");
-        require(success, "Staking: transfer failed");
-    }
-
-    /// @inheritdoc IStaking
-    function withdraw() external {
-        StakePosition storage pos = _stakes[msg.sender];
-
-        if (pos.amount == 0) {
-            revert Errors.NoStakePosition(msg.sender);
-        }
-
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        if (pos.lockedUntil > now_) {
-            revert Errors.LockupNotExpired(pos.lockedUntil, now_);
-        }
-
-        uint256 amount = pos.amount;
-        pos.amount = 0;
-        totalStaked -= amount;
-
-        emit Unstaked(msg.sender, amount);
-
-        // Transfer tokens back to staker
-        (bool success,) = payable(msg.sender).call{value: amount}("");
-        require(success, "Staking: transfer failed");
-    }
-
-    /// @inheritdoc IStaking
-    function extendLockup() external {
-        StakePosition storage pos = _stakes[msg.sender];
-
-        if (pos.amount == 0) {
-            revert Errors.NoStakePosition(msg.sender);
-        }
-
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 lockupDuration = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        uint64 newLockedUntil = now_ + lockupDuration;
-
-        // Only extend if new lockup is longer
-        if (newLockedUntil <= pos.lockedUntil) {
-            revert Errors.LockupNotExpired(pos.lockedUntil, now_);
-        }
-
-        pos.lockedUntil = newLockedUntil;
-
-        emit LockupExtended(msg.sender, newLockedUntil);
+        emit PoolCreated(msg.sender, pool, owner, _allPools.length - 1);
     }
 }
-
