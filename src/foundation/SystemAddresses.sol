@@ -56,9 +56,11 @@ library SystemAddresses {
     /// @dev Enforces time delays on governance proposals
     address internal constant TIMELOCK = address(0x0000000000000000000000000001625F201F);
 
-    /// @notice Hash oracle contract
-    /// @dev Provides hash verification services
-    address internal constant HASH_ORACLE = address(0x0000000000000000000000000001625F2023);
+    /// @notice Native Oracle contract
+    /// @dev Stores verified data from external sources (blockchains, JWK providers, DNS).
+    ///      Supports hash-only mode (storage-efficient) and data mode (direct access).
+    ///      Data is recorded by consensus engine via SYSTEM_CALLER.
+    address internal constant NATIVE_ORACLE = address(0x0000000000000000000000000001625F2023);
 
     /// @notice Randomness configuration contract
     /// @dev Stores DKG threshold parameters for on-chain randomness

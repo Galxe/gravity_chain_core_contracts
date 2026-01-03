@@ -18,7 +18,7 @@ contract SystemAddressesTest is Test {
         assertEq(SystemAddresses.TIMESTAMP, address(0x0000000000000000000000000001625F2017));
         assertEq(SystemAddresses.JWK_MANAGER, address(0x0000000000000000000000000001625F2018));
         assertEq(SystemAddresses.TIMELOCK, address(0x0000000000000000000000000001625F201F));
-        assertEq(SystemAddresses.HASH_ORACLE, address(0x0000000000000000000000000001625F2023));
+        assertEq(SystemAddresses.NATIVE_ORACLE, address(0x0000000000000000000000000001625F2023));
     }
 
     /// @notice Test that all addresses are non-zero
@@ -32,7 +32,7 @@ contract SystemAddressesTest is Test {
         assertTrue(SystemAddresses.TIMESTAMP != address(0), "TIMESTAMP should not be zero");
         assertTrue(SystemAddresses.JWK_MANAGER != address(0), "JWK_MANAGER should not be zero");
         assertTrue(SystemAddresses.TIMELOCK != address(0), "TIMELOCK should not be zero");
-        assertTrue(SystemAddresses.HASH_ORACLE != address(0), "HASH_ORACLE should not be zero");
+        assertTrue(SystemAddresses.NATIVE_ORACLE != address(0), "NATIVE_ORACLE should not be zero");
     }
 
     /// @notice Test that all addresses are unique
@@ -47,7 +47,7 @@ contract SystemAddressesTest is Test {
             SystemAddresses.TIMESTAMP,
             SystemAddresses.JWK_MANAGER,
             SystemAddresses.TIMELOCK,
-            SystemAddresses.HASH_ORACLE
+            SystemAddresses.NATIVE_ORACLE
         ];
 
         // Check each pair for uniqueness
@@ -91,8 +91,8 @@ contract SystemAddressesTest is Test {
         // Verify TIMELOCK follows pattern (ends in 01F)
         assertEq(uint160(SystemAddresses.TIMELOCK) >> shift, pattern);
 
-        // Verify HASH_ORACLE follows pattern (ends in 023)
-        assertEq(uint160(SystemAddresses.HASH_ORACLE) >> shift, pattern);
+        // Verify NATIVE_ORACLE follows pattern (ends in 023)
+        assertEq(uint160(SystemAddresses.NATIVE_ORACLE) >> shift, pattern);
     }
 }
 

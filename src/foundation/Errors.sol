@@ -280,5 +280,27 @@ library Errors {
 
     /// @notice DKG contract has not been initialized
     error DKGNotInitialized();
+
+    // ========================================================================
+    // NATIVE ORACLE ERRORS
+    // ========================================================================
+
+    /// @notice Sync ID must be strictly increasing for each source
+    /// @param sourceName The source identifier
+    /// @param currentSyncId The current sync ID for this source
+    /// @param providedSyncId The provided sync ID that is not greater
+    error SyncIdNotIncreasing(bytes32 sourceName, uint128 currentSyncId, uint128 providedSyncId);
+
+    /// @notice Batch arrays have mismatched lengths
+    /// @param hashesLength Length of dataHashes array
+    /// @param payloadsLength Length of payloads array
+    error ArrayLengthMismatch(uint256 hashesLength, uint256 payloadsLength);
+
+    /// @notice Data record not found for the given hash
+    /// @param dataHash The hash that was not found
+    error DataRecordNotFound(bytes32 dataHash);
+
+    /// @notice Oracle contract has not been initialized
+    error OracleNotInitialized();
 }
 
