@@ -31,7 +31,6 @@ enum ValidatorStatus {
     PENDING_ACTIVE, // 1: Queued to join next epoch
     ACTIVE, // 2: Currently validating
     PENDING_INACTIVE // 3: Queued to leave next epoch
-
 }
 
 /// @notice Validator consensus info (packed for consensus engine)
@@ -114,7 +113,6 @@ enum ProposalState {
     FAILED, // 2: Did not pass
     EXECUTED, // 3: Already executed
     CANCELLED // 4: Cancelled
-
 }
 
 /// @notice Governance proposal

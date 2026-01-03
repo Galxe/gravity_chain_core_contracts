@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../foundation/Types.sol";
-import {RandomnessConfig} from "./RandomnessConfig.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../foundation/Types.sol";
+import { RandomnessConfig } from "./RandomnessConfig.sol";
 
 /// @title DKG
 /// @author Gravity Team
@@ -160,7 +160,9 @@ contract DKG {
     /// @notice Complete a DKG session with the generated transcript
     /// @dev Called by EPOCH_MANAGER after DKG completes off-chain
     /// @param transcript The DKG transcript from consensus engine
-    function finish(bytes calldata transcript) external {
+    function finish(
+        bytes calldata transcript
+    ) external {
         requireAllowed(SystemAddresses.EPOCH_MANAGER);
         _requireInitialized();
 
@@ -231,7 +233,9 @@ contract DKG {
     /// @notice Get the dealer epoch from session info
     /// @param info Session info to query
     /// @return The dealer epoch
-    function sessionDealerEpoch(DKGSessionInfo calldata info) external pure returns (uint64) {
+    function sessionDealerEpoch(
+        DKGSessionInfo calldata info
+    ) external pure returns (uint64) {
         return info.dealerEpoch;
     }
 

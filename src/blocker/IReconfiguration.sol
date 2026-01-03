@@ -14,7 +14,6 @@ interface IReconfiguration {
     enum TransitionState {
         Idle, // No transition in progress, waiting for time
         DkgInProgress // DKG started, waiting for completion
-
     }
 
     // ========================================================================
@@ -54,7 +53,9 @@ interface IReconfiguration {
     /// @notice Finish epoch transition after DKG completes
     /// @dev Called by consensus engine (SYSTEM_CALLER) or governance (GOVERNANCE) after DKG completes
     /// @param dkgResult The DKG transcript (empty bytes if DKG disabled or force-ending epoch)
-    function finishTransition(bytes calldata dkgResult) external;
+    function finishTransition(
+        bytes calldata dkgResult
+    ) external;
 
     // ========================================================================
     // GOVERNANCE
@@ -63,7 +64,9 @@ interface IReconfiguration {
     /// @notice Update epoch interval
     /// @dev Only callable by GOVERNANCE
     /// @param newIntervalMicros New epoch interval in microseconds
-    function setEpochIntervalMicros(uint64 newIntervalMicros) external;
+    function setEpochIntervalMicros(
+        uint64 newIntervalMicros
+    ) external;
 
     // ========================================================================
     // VIEW FUNCTIONS

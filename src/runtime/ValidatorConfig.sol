@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title ValidatorConfig
 /// @author Gravity Team
@@ -125,7 +125,9 @@ contract ValidatorConfig {
     /// @notice Update minimum bond
     /// @dev Only callable by GOVERNANCE
     /// @param _minimumBond New minimum bond value (must be > 0 and <= maximumBond)
-    function setMinimumBond(uint256 _minimumBond) external {
+    function setMinimumBond(
+        uint256 _minimumBond
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_minimumBond == 0) {
@@ -145,7 +147,9 @@ contract ValidatorConfig {
     /// @notice Update maximum bond
     /// @dev Only callable by GOVERNANCE
     /// @param _maximumBond New maximum bond value (must be >= minimumBond)
-    function setMaximumBond(uint256 _maximumBond) external {
+    function setMaximumBond(
+        uint256 _maximumBond
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_maximumBond < minimumBond) {
@@ -161,7 +165,9 @@ contract ValidatorConfig {
     /// @notice Update unbonding delay
     /// @dev Only callable by GOVERNANCE
     /// @param _unbondingDelayMicros New unbonding delay in microseconds (must be > 0)
-    function setUnbondingDelayMicros(uint64 _unbondingDelayMicros) external {
+    function setUnbondingDelayMicros(
+        uint64 _unbondingDelayMicros
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_unbondingDelayMicros == 0) {
@@ -177,7 +183,9 @@ contract ValidatorConfig {
     /// @notice Update allow validator set change flag
     /// @dev Only callable by GOVERNANCE
     /// @param _allow New value for allowValidatorSetChange
-    function setAllowValidatorSetChange(bool _allow) external {
+    function setAllowValidatorSetChange(
+        bool _allow
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         bool oldValue = allowValidatorSetChange;
@@ -189,7 +197,9 @@ contract ValidatorConfig {
     /// @notice Update voting power increase limit
     /// @dev Only callable by GOVERNANCE
     /// @param _votingPowerIncreaseLimitPct New limit (1-50)
-    function setVotingPowerIncreaseLimitPct(uint64 _votingPowerIncreaseLimitPct) external {
+    function setVotingPowerIncreaseLimitPct(
+        uint64 _votingPowerIncreaseLimitPct
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) {
@@ -205,7 +215,9 @@ contract ValidatorConfig {
     /// @notice Update max validator set size
     /// @dev Only callable by GOVERNANCE
     /// @param _maxValidatorSetSize New max size (1-65536)
-    function setMaxValidatorSetSize(uint256 _maxValidatorSetSize) external {
+    function setMaxValidatorSetSize(
+        uint256 _maxValidatorSetSize
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_maxValidatorSetSize == 0 || _maxValidatorSetSize > MAX_VALIDATOR_SET_SIZE) {

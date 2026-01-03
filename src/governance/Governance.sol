@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IGovernance} from "./IGovernance.sol";
-import {GovernanceConfig} from "./GovernanceConfig.sol";
-import {Proposal, ProposalState} from "../foundation/Types.sol";
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { IGovernance } from "./IGovernance.sol";
+import { GovernanceConfig } from "./GovernanceConfig.sol";
+import { Proposal, ProposalState } from "../foundation/Types.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @notice Interface for Staking factory
 interface IStakingGov {
-    function isPool(address pool) external view returns (bool);
-    function getPoolVotingPower(address pool) external view returns (uint256);
-    function getPoolVoter(address pool) external view returns (address);
-    function getPoolLockedUntil(address pool) external view returns (uint64);
+    function isPool(
+        address pool
+    ) external view returns (bool);
+    function getPoolVotingPower(
+        address pool
+    ) external view returns (uint256);
+    function getPoolVoter(
+        address pool
+    ) external view returns (address);
+    function getPoolLockedUntil(
+        address pool
+    ) external view returns (uint64);
 }
 
 /// @notice Interface for Timestamp
@@ -84,12 +92,17 @@ contract Governance is IGovernance {
     }
 
     /// @notice Compute the key for usedVotingPower mapping
-    function _votingKey(address stakePool, uint64 proposalId) internal pure returns (bytes32) {
+    function _votingKey(
+        address stakePool,
+        uint64 proposalId
+    ) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(stakePool, proposalId));
     }
 
     /// @notice Verify caller is the pool's voter
-    function _requireVoter(address stakePool) internal view {
+    function _requireVoter(
+        address stakePool
+    ) internal view {
         address voter = _staking().getPoolVoter(stakePool);
         if (msg.sender != voter) {
             revert Errors.NotDelegatedVoter(voter, msg.sender);
@@ -97,7 +110,9 @@ contract Governance is IGovernance {
     }
 
     /// @notice Verify pool is valid
-    function _requireValidPool(address stakePool) internal view {
+    function _requireValidPool(
+        address stakePool
+    ) internal view {
         if (!_staking().isPool(stakePool)) {
             revert Errors.InvalidPool(stakePool);
         }
@@ -128,7 +143,9 @@ contract Governance is IGovernance {
     // ========================================================================
 
     /// @inheritdoc IGovernance
-    function getProposal(uint64 proposalId) external view returns (Proposal memory) {
+    function getProposal(
+        uint64 proposalId
+    ) external view returns (Proposal memory) {
         if (_proposals[proposalId].id == 0) {
             revert Errors.ProposalNotFound(proposalId);
         }
@@ -136,7 +153,9 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function getProposalState(uint64 proposalId) public view returns (ProposalState) {
+    function getProposalState(
+        uint64 proposalId
+    ) public view returns (ProposalState) {
         Proposal storage p = _proposals[proposalId];
         if (p.id == 0) {
             revert Errors.ProposalNotFound(proposalId);
@@ -170,7 +189,10 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function getRemainingVotingPower(address stakePool, uint64 proposalId) public view returns (uint128) {
+    function getRemainingVotingPower(
+        address stakePool,
+        uint64 proposalId
+    ) public view returns (uint128) {
         uint256 poolPower = _staking().getPoolVotingPower(stakePool);
         bytes32 key = _votingKey(stakePool, proposalId);
         uint128 used = usedVotingPower[key];
@@ -182,7 +204,9 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function canResolve(uint64 proposalId) public view returns (bool) {
+    function canResolve(
+        uint64 proposalId
+    ) public view returns (bool) {
         Proposal storage p = _proposals[proposalId];
         if (p.id == 0 || p.isResolved) {
             return false;
@@ -205,7 +229,9 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function getExecutionHash(uint64 proposalId) external view returns (bytes32) {
+    function getExecutionHash(
+        uint64 proposalId
+    ) external view returns (bytes32) {
         if (_proposals[proposalId].id == 0) {
             revert Errors.ProposalNotFound(proposalId);
         }
@@ -218,7 +244,9 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function isExecuted(uint64 proposalId) external view returns (bool) {
+    function isExecuted(
+        uint64 proposalId
+    ) external view returns (bool) {
         return executed[proposalId];
     }
 
@@ -227,10 +255,11 @@ contract Governance is IGovernance {
     // ========================================================================
 
     /// @inheritdoc IGovernance
-    function createProposal(address stakePool, bytes32 executionHash, string calldata metadataUri)
-        external
-        returns (uint64 proposalId)
-    {
+    function createProposal(
+        address stakePool,
+        bytes32 executionHash,
+        string calldata metadataUri
+    ) external returns (uint64 proposalId) {
         // Verify pool is valid
         _requireValidPool(stakePool);
 
@@ -276,7 +305,12 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function vote(address stakePool, uint64 proposalId, uint128 votingPower, bool support) external {
+    function vote(
+        address stakePool,
+        uint64 proposalId,
+        uint128 votingPower,
+        bool support
+    ) external {
         Proposal storage p = _proposals[proposalId];
 
         // Verify proposal exists
@@ -328,7 +362,9 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function resolve(uint64 proposalId) external {
+    function resolve(
+        uint64 proposalId
+    ) external {
         Proposal storage p = _proposals[proposalId];
 
         // Verify proposal exists
@@ -356,7 +392,11 @@ contract Governance is IGovernance {
     }
 
     /// @inheritdoc IGovernance
-    function execute(uint64 proposalId, address target, bytes calldata data) external {
+    function execute(
+        uint64 proposalId,
+        address target,
+        bytes calldata data
+    ) external {
         // Verify proposal exists
         if (_proposals[proposalId].id == 0) {
             revert Errors.ProposalNotFound(proposalId);

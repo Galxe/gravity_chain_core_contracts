@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Proposal, ProposalState} from "../foundation/Types.sol";
+import { Proposal, ProposalState } from "../foundation/Types.sol";
 
 /// @title IGovernance
 /// @author Gravity Team
@@ -56,28 +56,39 @@ interface IGovernance {
     /// @notice Get a proposal by ID
     /// @param proposalId ID of the proposal
     /// @return The proposal struct
-    function getProposal(uint64 proposalId) external view returns (Proposal memory);
+    function getProposal(
+        uint64 proposalId
+    ) external view returns (Proposal memory);
 
     /// @notice Get the current state of a proposal
     /// @param proposalId ID of the proposal
     /// @return Current state (PENDING, SUCCEEDED, FAILED, EXECUTED, CANCELLED)
-    function getProposalState(uint64 proposalId) external view returns (ProposalState);
+    function getProposalState(
+        uint64 proposalId
+    ) external view returns (ProposalState);
 
     /// @notice Get the remaining voting power a pool can use on a proposal
     /// @param stakePool Address of the stake pool
     /// @param proposalId ID of the proposal
     /// @return Remaining voting power available
-    function getRemainingVotingPower(address stakePool, uint64 proposalId) external view returns (uint128);
+    function getRemainingVotingPower(
+        address stakePool,
+        uint64 proposalId
+    ) external view returns (uint128);
 
     /// @notice Check if a proposal can be resolved
     /// @param proposalId ID of the proposal
     /// @return True if the proposal can be resolved
-    function canResolve(uint64 proposalId) external view returns (bool);
+    function canResolve(
+        uint64 proposalId
+    ) external view returns (bool);
 
     /// @notice Get the execution hash of a proposal
     /// @param proposalId ID of the proposal
     /// @return The stored execution hash
-    function getExecutionHash(uint64 proposalId) external view returns (bytes32);
+    function getExecutionHash(
+        uint64 proposalId
+    ) external view returns (bytes32);
 
     /// @notice Get the next proposal ID that will be assigned
     /// @return The next proposal ID
@@ -86,7 +97,9 @@ interface IGovernance {
     /// @notice Check if a proposal has been executed
     /// @param proposalId ID of the proposal
     /// @return True if executed
-    function isExecuted(uint64 proposalId) external view returns (bool);
+    function isExecuted(
+        uint64 proposalId
+    ) external view returns (bool);
 
     // ========================================================================
     // PROPOSAL MANAGEMENT
@@ -99,9 +112,11 @@ interface IGovernance {
     /// @param executionHash Hash of keccak256(abi.encodePacked(target, calldata))
     /// @param metadataUri URI pointing to proposal metadata
     /// @return proposalId The ID of the newly created proposal
-    function createProposal(address stakePool, bytes32 executionHash, string calldata metadataUri)
-        external
-        returns (uint64 proposalId);
+    function createProposal(
+        address stakePool,
+        bytes32 executionHash,
+        string calldata metadataUri
+    ) external returns (uint64 proposalId);
 
     /// @notice Vote on a proposal using a stake pool's voting power
     /// @dev Caller must be the voter address of the stake pool.
@@ -110,12 +125,19 @@ interface IGovernance {
     /// @param proposalId ID of the proposal to vote on
     /// @param votingPower Amount of voting power to use
     /// @param support True to vote yes, false to vote no
-    function vote(address stakePool, uint64 proposalId, uint128 votingPower, bool support) external;
+    function vote(
+        address stakePool,
+        uint64 proposalId,
+        uint128 votingPower,
+        bool support
+    ) external;
 
     /// @notice Resolve a proposal after voting ends or early threshold is met
     /// @dev Anyone can call this function.
     /// @param proposalId ID of the proposal to resolve
-    function resolve(uint64 proposalId) external;
+    function resolve(
+        uint64 proposalId
+    ) external;
 
     /// @notice Execute an approved proposal
     /// @dev Anyone can call this function.
@@ -123,6 +145,10 @@ interface IGovernance {
     /// @param proposalId ID of the proposal to execute
     /// @param target Contract address to call
     /// @param data Calldata to send to the target
-    function execute(uint64 proposalId, address target, bytes calldata data) external;
+    function execute(
+        uint64 proposalId,
+        address target,
+        bytes calldata data
+    ) external;
 }
 

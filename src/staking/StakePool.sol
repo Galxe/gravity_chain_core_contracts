@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IStakePool} from "./IStakePool.sol";
-import {IStakingHook} from "./IStakingHook.sol";
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { IStakePool } from "./IStakePool.sol";
+import { IStakingHook } from "./IStakingHook.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @notice Interface for Timestamp contract
 interface ITimestampPool {
@@ -70,7 +70,9 @@ contract StakePool is IStakePool {
     /// @notice Initialize the stake pool with owner and initial stake
     /// @param _owner Owner address for this pool
     /// @dev Called by factory during CREATE2 deployment
-    constructor(address _owner) payable {
+    constructor(
+        address _owner
+    ) payable {
         FACTORY = msg.sender;
         owner = _owner;
         operator = _owner; // Default: owner is also operator
@@ -175,7 +177,9 @@ contract StakePool is IStakePool {
     }
 
     /// @inheritdoc IStakePool
-    function withdraw(uint256 amount) external onlyOwner {
+    function withdraw(
+        uint256 amount
+    ) external onlyOwner {
         uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
         // Check lockup expired
@@ -201,12 +205,14 @@ contract StakePool is IStakePool {
         emit StakeWithdrawn(address(this), amount);
 
         // Transfer tokens to owner (CEI pattern - effects before interactions)
-        (bool success,) = payable(owner).call{value: amount}("");
+        (bool success,) = payable(owner).call{ value: amount }("");
         require(success, "StakePool: transfer failed");
     }
 
     /// @inheritdoc IStakePool
-    function increaseLockup(uint64 durationMicros) external onlyOwner {
+    function increaseLockup(
+        uint64 durationMicros
+    ) external onlyOwner {
         uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
 
         // Duration must be at least minLockupDuration
@@ -232,21 +238,27 @@ contract StakePool is IStakePool {
     }
 
     /// @inheritdoc IStakePool
-    function setOperator(address newOperator) external onlyOwner {
+    function setOperator(
+        address newOperator
+    ) external onlyOwner {
         address oldOperator = operator;
         operator = newOperator;
         emit OperatorChanged(address(this), oldOperator, newOperator);
     }
 
     /// @inheritdoc IStakePool
-    function setVoter(address newVoter) external onlyOwner {
+    function setVoter(
+        address newVoter
+    ) external onlyOwner {
         address oldVoter = voter;
         voter = newVoter;
         emit VoterChanged(address(this), oldVoter, newVoter);
     }
 
     /// @inheritdoc IStakePool
-    function setHook(address newHook) external onlyOwner {
+    function setHook(
+        address newHook
+    ) external onlyOwner {
         address oldHook = hook;
         hook = newHook;
         emit HookChanged(address(this), oldHook, newHook);

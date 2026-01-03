@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Governance} from "src/governance/Governance.sol";
-import {IGovernance} from "src/governance/IGovernance.sol";
-import {GovernanceConfig} from "src/governance/GovernanceConfig.sol";
-import {Staking} from "src/staking/Staking.sol";
-import {StakePool} from "src/staking/StakePool.sol";
-import {IStakePool} from "src/staking/IStakePool.sol";
-import {Timestamp} from "src/runtime/Timestamp.sol";
-import {StakingConfig} from "src/runtime/StakingConfig.sol";
-import {Proposal, ProposalState} from "src/foundation/Types.sol";
-import {SystemAddresses} from "src/foundation/SystemAddresses.sol";
-import {Errors} from "src/foundation/Errors.sol";
+import { Test } from "forge-std/Test.sol";
+import { Governance } from "src/governance/Governance.sol";
+import { IGovernance } from "src/governance/IGovernance.sol";
+import { GovernanceConfig } from "src/governance/GovernanceConfig.sol";
+import { Staking } from "src/staking/Staking.sol";
+import { StakePool } from "src/staking/StakePool.sol";
+import { IStakePool } from "src/staking/IStakePool.sol";
+import { Timestamp } from "src/runtime/Timestamp.sol";
+import { StakingConfig } from "src/runtime/StakingConfig.sol";
+import { Proposal, ProposalState } from "src/foundation/Types.sol";
+import { SystemAddresses } from "src/foundation/SystemAddresses.sol";
+import { Errors } from "src/foundation/Errors.sol";
 
 /// @title GovernanceTest
 /// @notice Unit tests for Governance contract
@@ -67,7 +67,9 @@ contract GovernanceTest is Test {
 
         // Initialize GovernanceConfig
         vm.prank(SystemAddresses.GENESIS);
-        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS);
+        govConfig.initialize(
+            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
+        );
 
         // Deploy Governance
         vm.etch(SystemAddresses.GOVERNANCE, address(new Governance()).code);
@@ -90,16 +92,24 @@ contract GovernanceTest is Test {
     // HELPER FUNCTIONS
     // ========================================================================
 
-    function _createStakePool(address owner, uint256 amount) internal returns (address) {
+    function _createStakePool(
+        address owner,
+        uint256 amount
+    ) internal returns (address) {
         vm.prank(owner);
-        return staking.createPool{value: amount}(owner);
+        return staking.createPool{ value: amount }(owner);
     }
 
-    function _computeExecutionHash(address target, bytes memory data) internal pure returns (bytes32) {
+    function _computeExecutionHash(
+        address target,
+        bytes memory data
+    ) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(target, data));
     }
 
-    function _advanceTime(uint64 micros) internal {
+    function _advanceTime(
+        uint64 micros
+    ) internal {
         uint64 current = timestamp.nowMicroseconds();
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(address(0x1), current + micros);
@@ -163,7 +173,9 @@ contract GovernanceTest is Test {
         bytes32 executionHash = keccak256("test");
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 10 ether));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 10 ether)
+        );
         governance.createProposal(pool, executionHash, "ipfs://test");
     }
 
@@ -671,7 +683,9 @@ contract GovernanceTest is Test {
 contract MockTarget {
     uint256 public value;
 
-    function setValue(uint256 _value) external {
+    function setValue(
+        uint256 _value
+    ) external {
         value = _value;
     }
 

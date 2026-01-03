@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {StakingConfig} from "../../../src/runtime/StakingConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title StakingConfigTest
 /// @notice Unit tests for StakingConfig contract
@@ -225,7 +225,9 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE));
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
+        );
         config.setMinimumStake(5 ether);
     }
 
@@ -243,7 +245,11 @@ contract StakingConfigTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_Initialize(uint256 minStake, uint64 lockupDuration, uint256 minProposalStake) public {
+    function testFuzz_Initialize(
+        uint256 minStake,
+        uint64 lockupDuration,
+        uint256 minProposalStake
+    ) public {
         vm.assume(lockupDuration > 0);
 
         vm.prank(SystemAddresses.GENESIS);
@@ -254,7 +260,9 @@ contract StakingConfigTest is Test {
         assertEq(config.minimumProposalStake(), minProposalStake);
     }
 
-    function testFuzz_SetMinimumStake(uint256 newValue) public {
+    function testFuzz_SetMinimumStake(
+        uint256 newValue
+    ) public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
@@ -263,7 +271,9 @@ contract StakingConfigTest is Test {
         assertEq(config.minimumStake(), newValue);
     }
 
-    function testFuzz_SetLockupDurationMicros(uint64 newValue) public {
+    function testFuzz_SetLockupDurationMicros(
+        uint64 newValue
+    ) public {
         vm.assume(newValue > 0);
         _initializeConfig();
 
@@ -273,7 +283,9 @@ contract StakingConfigTest is Test {
         assertEq(config.lockupDurationMicros(), newValue);
     }
 
-    function testFuzz_SetMinimumProposalStake(uint256 newValue) public {
+    function testFuzz_SetMinimumProposalStake(
+        uint256 newValue
+    ) public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IReconfiguration} from "./IReconfiguration.sol";
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../foundation/Types.sol";
-import {RandomnessConfig} from "../runtime/RandomnessConfig.sol";
+import { IReconfiguration } from "./IReconfiguration.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../foundation/Types.sol";
+import { RandomnessConfig } from "../runtime/RandomnessConfig.sol";
 
 /// @notice Interface for Timestamp contract
 interface ITimestamp {
@@ -21,7 +21,9 @@ interface IDKG {
         ValidatorConsensusInfo[] calldata dealerValidatorSet,
         ValidatorConsensusInfo[] calldata targetValidatorSet
     ) external;
-    function finish(bytes calldata transcript) external;
+    function finish(
+        bytes calldata transcript
+    ) external;
     function tryClearIncompleteSession() external;
     function isInProgress() external view returns (bool);
 }
@@ -35,7 +37,9 @@ interface IRandomnessConfig {
 /// @notice Interface for ValidatorManagement contract
 interface IValidatorManagement {
     function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
-    function onNewEpoch(uint64 newEpoch) external;
+    function onNewEpoch(
+        uint64 newEpoch
+    ) external;
 }
 
 /// @title Reconfiguration
@@ -146,7 +150,9 @@ contract Reconfiguration is IReconfiguration {
     }
 
     /// @inheritdoc IReconfiguration
-    function finishTransition(bytes calldata dkgResult) external override {
+    function finishTransition(
+        bytes calldata dkgResult
+    ) external override {
         // Allow SYSTEM_CALLER (consensus engine) or GOVERNANCE (governance force-end)
         requireAllowed(SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE);
         _requireInitialized();
@@ -186,7 +192,9 @@ contract Reconfiguration is IReconfiguration {
     // ========================================================================
 
     /// @inheritdoc IReconfiguration
-    function setEpochIntervalMicros(uint64 newIntervalMicros) external override {
+    function setEpochIntervalMicros(
+        uint64 newIntervalMicros
+    ) external override {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 

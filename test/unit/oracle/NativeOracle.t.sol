@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {NativeOracle} from "../../../src/oracle/NativeOracle.sol";
-import {INativeOracle, IOracleCallback} from "../../../src/oracle/INativeOracle.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
+import { Test } from "forge-std/Test.sol";
+import { NativeOracle } from "../../../src/oracle/NativeOracle.sol";
+import { INativeOracle, IOracleCallback } from "../../../src/oracle/INativeOracle.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
 
 /// @title MockOracleCallback
 /// @notice Mock callback handler for testing
@@ -16,13 +16,16 @@ contract MockOracleCallback is IOracleCallback {
     bool public shouldRevert;
     bool public shouldConsumeAllGas;
 
-    function onOracleEvent(bytes32 dataHash, bytes calldata payload) external override {
+    function onOracleEvent(
+        bytes32 dataHash,
+        bytes calldata payload
+    ) external override {
         if (shouldRevert) {
             revert("MockCallback: intentional revert");
         }
         if (shouldConsumeAllGas) {
             // Consume all gas by infinite loop
-            while (true) {}
+            while (true) { }
         }
 
         lastDataHash = dataHash;
@@ -30,11 +33,15 @@ contract MockOracleCallback is IOracleCallback {
         callCount++;
     }
 
-    function setRevert(bool _shouldRevert) external {
+    function setRevert(
+        bool _shouldRevert
+    ) external {
         shouldRevert = _shouldRevert;
     }
 
-    function setConsumeAllGas(bool _shouldConsumeAllGas) external {
+    function setConsumeAllGas(
+        bool _shouldConsumeAllGas
+    ) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
     }
 }
@@ -470,7 +477,10 @@ contract NativeOracleTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_RecordHash(bytes memory payload, uint128 syncId) public {
+    function testFuzz_RecordHash(
+        bytes memory payload,
+        uint128 syncId
+    ) public {
         vm.assume(syncId > 0);
         bytes32 dataHash = keccak256(payload);
 
@@ -482,7 +492,10 @@ contract NativeOracleTest is Test {
         assertEq(record.syncId, syncId);
     }
 
-    function testFuzz_RecordData(bytes memory payload, uint128 syncId) public {
+    function testFuzz_RecordData(
+        bytes memory payload,
+        uint128 syncId
+    ) public {
         vm.assume(syncId > 0);
         vm.assume(payload.length <= 10000); // Reasonable size limit
         bytes32 dataHash = keccak256(payload);
@@ -494,7 +507,10 @@ contract NativeOracleTest is Test {
         assertEq(storedData, payload);
     }
 
-    function testFuzz_SyncIdMustIncrease(uint128 syncId1, uint128 syncId2) public {
+    function testFuzz_SyncIdMustIncrease(
+        uint128 syncId1,
+        uint128 syncId2
+    ) public {
         vm.assume(syncId1 > 0);
         vm.assume(syncId2 <= syncId1);
 
@@ -509,12 +525,16 @@ contract NativeOracleTest is Test {
         bytes memory payload2 = abi.encode("second");
         bytes32 dataHash2 = keccak256(payload2);
 
-        vm.expectRevert(abi.encodeWithSelector(Errors.SyncIdNotIncreasing.selector, ethereumSourceName, syncId1, syncId2));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.SyncIdNotIncreasing.selector, ethereumSourceName, syncId1, syncId2)
+        );
         vm.prank(systemCaller);
         oracle.recordHash(dataHash2, ethereumSourceName, syncId2, payload2);
     }
 
-    function testFuzz_MultipleRecordsCount(uint8 count) public {
+    function testFuzz_MultipleRecordsCount(
+        uint8 count
+    ) public {
         vm.assume(count > 0 && count <= 50);
 
         for (uint256 i = 0; i < count; i++) {

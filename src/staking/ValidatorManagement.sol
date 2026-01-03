@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IValidatorManagement} from "./IValidatorManagement.sol";
-import {IStaking} from "./IStaking.sol";
-import {ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo} from "../foundation/Types.sol";
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { IValidatorManagement } from "./IValidatorManagement.sol";
+import { IStaking } from "./IStaking.sol";
+import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../foundation/Types.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @notice Interface for ValidatorConfig contract
 interface IValidatorConfigVM {
@@ -61,7 +61,9 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @notice Ensures the caller is the operator of the given stake pool
-    modifier onlyOperator(address stakePool) {
+    modifier onlyOperator(
+        address stakePool
+    ) {
         address operator = IStaking(SystemAddresses.STAKING).getPoolOperator(stakePool);
         if (msg.sender != operator) {
             revert Errors.NotOperator(operator, msg.sender);
@@ -70,7 +72,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Ensures the validator exists
-    modifier validatorExists(address stakePool) {
+    modifier validatorExists(
+        address stakePool
+    ) {
         if (_validators[stakePool].validator == address(0)) {
             revert Errors.ValidatorNotFound(stakePool);
         }
@@ -100,7 +104,10 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Validate registration inputs
-    function _validateRegistration(address stakePool, string calldata moniker) internal view {
+    function _validateRegistration(
+        address stakePool,
+        string calldata moniker
+    ) internal view {
         // Verify stake pool is valid (created by Staking factory)
         if (!IStaking(SystemAddresses.STAKING).isPool(stakePool)) {
             revert Errors.InvalidPool(stakePool);
@@ -167,7 +174,9 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function joinValidatorSet(address stakePool) external validatorExists(stakePool) onlyOperator(stakePool) {
+    function joinValidatorSet(
+        address stakePool
+    ) external validatorExists(stakePool) onlyOperator(stakePool) {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Verify validator set changes are allowed
@@ -201,7 +210,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function leaveValidatorSet(address stakePool) external validatorExists(stakePool) onlyOperator(stakePool) {
+    function leaveValidatorSet(
+        address stakePool
+    ) external validatorExists(stakePool) onlyOperator(stakePool) {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Verify validator is ACTIVE
@@ -221,11 +232,11 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function rotateConsensusKey(address stakePool, bytes calldata newPubkey, bytes calldata newPop)
-        external
-        validatorExists(stakePool)
-        onlyOperator(stakePool)
-    {
+    function rotateConsensusKey(
+        address stakePool,
+        bytes calldata newPubkey,
+        bytes calldata newPop
+    ) external validatorExists(stakePool) onlyOperator(stakePool) {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Update consensus key material (takes effect immediately)
@@ -236,11 +247,10 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function setFeeRecipient(address stakePool, address newRecipient)
-        external
-        validatorExists(stakePool)
-        onlyOperator(stakePool)
-    {
+    function setFeeRecipient(
+        address stakePool,
+        address newRecipient
+    ) external validatorExists(stakePool) onlyOperator(stakePool) {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Set pending fee recipient (will take effect at next epoch)
@@ -254,7 +264,9 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function onNewEpoch(uint64 newEpoch) external {
+    function onNewEpoch(
+        uint64 newEpoch
+    ) external {
         requireAllowed(SystemAddresses.EPOCH_MANAGER);
 
         // 1. Process PENDING_INACTIVE → INACTIVE (clear indices, remove from active)
@@ -402,7 +414,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Remove a validator from the active validators array
-    function _removeFromActiveValidators(address pool) internal {
+    function _removeFromActiveValidators(
+        address pool
+    ) internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
             if (_activeValidators[i] == pool) {
@@ -425,7 +439,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Get validator's voting power (capped at maximumBond)
-    function _getValidatorVotingPower(address stakePool) internal view returns (uint256) {
+    function _getValidatorVotingPower(
+        address stakePool
+    ) internal view returns (uint256) {
         uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
         uint256 maxBond = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
@@ -436,7 +452,9 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function getValidator(address stakePool) external view returns (ValidatorRecord memory) {
+    function getValidator(
+        address stakePool
+    ) external view returns (ValidatorRecord memory) {
         if (_validators[stakePool].validator == address(0)) {
             revert Errors.ValidatorNotFound(stakePool);
         }
@@ -464,7 +482,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function getActiveValidatorByIndex(uint64 index) external view returns (ValidatorConsensusInfo memory) {
+    function getActiveValidatorByIndex(
+        uint64 index
+    ) external view returns (ValidatorConsensusInfo memory) {
         if (index >= _activeValidators.length) {
             revert Errors.ValidatorIndexOutOfBounds(index, uint64(_activeValidators.length));
         }
@@ -491,12 +511,16 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function isValidator(address stakePool) external view returns (bool) {
+    function isValidator(
+        address stakePool
+    ) external view returns (bool) {
         return _validators[stakePool].validator != address(0);
     }
 
     /// @inheritdoc IValidatorManagement
-    function getValidatorStatus(address stakePool) external view returns (ValidatorStatus) {
+    function getValidatorStatus(
+        address stakePool
+    ) external view returns (ValidatorStatus) {
         if (_validators[stakePool].validator == address(0)) {
             revert Errors.ValidatorNotFound(stakePool);
         }

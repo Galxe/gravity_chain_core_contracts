@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 import {
     requireAllowed,
     requireAllowedAny,
     NotAllowed,
     NotAllowedAny
 } from "../../../src/foundation/SystemAccessControl.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 
 /// @title SystemAccessControlTest
 /// @notice Unit tests for SystemAccessControl free functions
@@ -200,7 +200,10 @@ contract SystemAccessControlTest is Test {
     // Fuzz Tests
     // ========================================================================
 
-    function testFuzz_RequireAllowed_SingleAddress(address caller, address allowed) public {
+    function testFuzz_RequireAllowed_SingleAddress(
+        address caller,
+        address allowed
+    ) public {
         vm.prank(caller);
         if (caller == allowed) {
             this.externalRequireAllowedSingle(allowed);
@@ -210,7 +213,11 @@ contract SystemAccessControlTest is Test {
         }
     }
 
-    function testFuzz_RequireAllowed_TwoAddresses(address caller, address a1, address a2) public {
+    function testFuzz_RequireAllowed_TwoAddresses(
+        address caller,
+        address a1,
+        address a2
+    ) public {
         vm.prank(caller);
         if (caller == a1 || caller == a2) {
             this.externalRequireAllowedTwo(a1, a2);
@@ -223,7 +230,11 @@ contract SystemAccessControlTest is Test {
         }
     }
 
-    function testFuzz_RequireAllowedAny_RandomArray(address caller, uint8 arraySize, uint256 seed) public {
+    function testFuzz_RequireAllowedAny_RandomArray(
+        address caller,
+        uint8 arraySize,
+        uint256 seed
+    ) public {
         // Bound array size to reasonable range
         arraySize = uint8(bound(arraySize, 1, 10));
 
@@ -284,27 +295,45 @@ contract SystemAccessControlTest is Test {
     // Helper Functions (external wrappers for testing free functions)
     // ========================================================================
 
-    function externalRequireAllowedSingle(address allowed) external view {
+    function externalRequireAllowedSingle(
+        address allowed
+    ) external view {
         requireAllowed(allowed);
     }
 
-    function externalRequireAllowedTwo(address a1, address a2) external view {
+    function externalRequireAllowedTwo(
+        address a1,
+        address a2
+    ) external view {
         requireAllowed(a1, a2);
     }
 
-    function externalRequireAllowedThree(address a1, address a2, address a3) external view {
+    function externalRequireAllowedThree(
+        address a1,
+        address a2,
+        address a3
+    ) external view {
         requireAllowed(a1, a2, a3);
     }
 
-    function externalRequireAllowedFour(address a1, address a2, address a3, address a4) external view {
+    function externalRequireAllowedFour(
+        address a1,
+        address a2,
+        address a3,
+        address a4
+    ) external view {
         requireAllowed(a1, a2, a3, a4);
     }
 
-    function externalRequireAllowedAny(address[] memory allowed) external view {
+    function externalRequireAllowedAny(
+        address[] memory allowed
+    ) external view {
         requireAllowedAny(allowed);
     }
 
-    function _removeSelector(bytes memory data) internal pure returns (bytes memory) {
+    function _removeSelector(
+        bytes memory data
+    ) internal pure returns (bytes memory) {
         bytes memory result = new bytes(data.length - 4);
         for (uint256 i = 4; i < data.length; i++) {
             result[i - 4] = data[i];

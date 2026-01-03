@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {ValidatorManagement} from "../../../src/staking/ValidatorManagement.sol";
-import {IValidatorManagement} from "../../../src/staking/IValidatorManagement.sol";
-import {Staking} from "../../../src/staking/Staking.sol";
-import {IStaking} from "../../../src/staking/IStaking.sol";
-import {IStakePool} from "../../../src/staking/IStakePool.sol";
-import {StakingConfig} from "../../../src/runtime/StakingConfig.sol";
-import {ValidatorConfig} from "../../../src/runtime/ValidatorConfig.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo} from "../../../src/foundation/Types.sol";
+import { Test } from "forge-std/Test.sol";
+import { ValidatorManagement } from "../../../src/staking/ValidatorManagement.sol";
+import { IValidatorManagement } from "../../../src/staking/IValidatorManagement.sol";
+import { Staking } from "../../../src/staking/Staking.sol";
+import { IStaking } from "../../../src/staking/IStaking.sol";
+import { IStakePool } from "../../../src/staking/IStakePool.sol";
+import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
+import { ValidatorConfig } from "../../../src/runtime/ValidatorConfig.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
 
 /// @title ValidatorManagementTest
 /// @notice Unit tests for ValidatorManagement contract
@@ -70,7 +70,9 @@ contract ValidatorManagementTest is Test {
 
         // Initialize ValidatorConfig
         vm.prank(SystemAddresses.GENESIS);
-        validatorConfig.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE);
+        validatorConfig.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+        );
 
         // Set initial timestamp
         vm.prank(SystemAddresses.BLOCK);
@@ -88,26 +90,33 @@ contract ValidatorManagementTest is Test {
     // ========================================================================
 
     /// @notice Create a stake pool with given owner and stake amount
-    function _createStakePool(address owner, uint256 stakeAmount) internal returns (address pool) {
+    function _createStakePool(
+        address owner,
+        uint256 stakeAmount
+    ) internal returns (address pool) {
         vm.prank(owner);
-        pool = staking.createPool{value: stakeAmount}(owner);
+        pool = staking.createPool{ value: stakeAmount }(owner);
     }
 
     /// @notice Create a stake pool and register as validator
-    function _createAndRegisterValidator(address owner, uint256 stakeAmount, string memory moniker)
-        internal
-        returns (address pool)
-    {
+    function _createAndRegisterValidator(
+        address owner,
+        uint256 stakeAmount,
+        string memory moniker
+    ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
         vm.prank(owner); // owner is also operator by default
-        validatorManager.registerValidator(pool, moniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, moniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     /// @notice Create, register, and join validator set
-    function _createRegisterAndJoin(address owner, uint256 stakeAmount, string memory moniker)
-        internal
-        returns (address pool)
-    {
+    function _createRegisterAndJoin(
+        address owner,
+        uint256 stakeAmount,
+        string memory moniker
+    ) internal returns (address pool) {
         pool = _createAndRegisterValidator(owner, stakeAmount, moniker);
         vm.prank(owner);
         validatorManager.joinValidatorSet(pool);
@@ -129,7 +138,9 @@ contract ValidatorManagementTest is Test {
         address pool = _createStakePool(alice, MIN_BOND);
 
         vm.prank(alice);
-        validatorManager.registerValidator(pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
 
         assertTrue(validatorManager.isValidator(pool), "Should be a validator");
 
@@ -148,7 +159,9 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
         emit IValidatorManagement.ValidatorRegistered(pool, "alice-validator");
-        validatorManager.registerValidator(pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     function test_RevertWhen_registerValidator_invalidPool() public {
@@ -156,7 +169,9 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, fakePool));
-        validatorManager.registerValidator(fakePool, "fake", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            fakePool, "fake", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     function test_RevertWhen_registerValidator_notOperator() public {
@@ -164,7 +179,9 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(bob); // Bob is not the operator
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOperator.selector, alice, bob));
-        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     function test_RevertWhen_registerValidator_alreadyExists() public {
@@ -172,7 +189,9 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorAlreadyExists.selector, pool));
-        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     function test_RevertWhen_registerValidator_insufficientBond() public {
@@ -180,7 +199,9 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientBond.selector, MIN_BOND, MIN_BOND - 1 ether));
-        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     function test_RevertWhen_registerValidator_monikerTooLong() public {
@@ -189,7 +210,9 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.MonikerTooLong.selector, 31, bytes(longMoniker).length));
-        validatorManager.registerValidator(pool, longMoniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, longMoniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
     }
 
     // ========================================================================
@@ -223,7 +246,11 @@ contract ValidatorManagementTest is Test {
         address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidStatus.selector, uint8(ValidatorStatus.INACTIVE), uint8(ValidatorStatus.PENDING_ACTIVE)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.InvalidStatus.selector, uint8(ValidatorStatus.INACTIVE), uint8(ValidatorStatus.PENDING_ACTIVE)
+            )
+        );
         validatorManager.joinValidatorSet(pool);
     }
 
@@ -291,7 +318,11 @@ contract ValidatorManagementTest is Test {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidStatus.selector, uint8(ValidatorStatus.ACTIVE), uint8(ValidatorStatus.INACTIVE)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.InvalidStatus.selector, uint8(ValidatorStatus.ACTIVE), uint8(ValidatorStatus.INACTIVE)
+            )
+        );
         validatorManager.leaveValidatorSet(pool);
     }
 
@@ -527,7 +558,9 @@ contract ValidatorManagementTest is Test {
 
         // Register - INACTIVE
         vm.prank(alice);
-        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
 
         // Join - PENDING_ACTIVE
@@ -553,18 +586,24 @@ contract ValidatorManagementTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_registerValidator_variousBondAmounts(uint256 bondAmount) public {
+    function testFuzz_registerValidator_variousBondAmounts(
+        uint256 bondAmount
+    ) public {
         bondAmount = bound(bondAmount, MIN_BOND, MAX_BOND);
 
         address pool = _createStakePool(alice, bondAmount);
         vm.prank(alice);
-        validatorManager.registerValidator(pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
 
         ValidatorRecord memory record = validatorManager.getValidator(pool);
         assertEq(record.bond, bondAmount, "Bond should match");
     }
 
-    function testFuzz_multipleValidators(uint8 numValidators) public {
+    function testFuzz_multipleValidators(
+        uint8 numValidators
+    ) public {
         numValidators = uint8(bound(numValidators, 1, 10)); // Keep small to avoid gas issues
 
         for (uint256 i = 0; i < numValidators; i++) {

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {ValidatorConfig} from "../../../src/runtime/ValidatorConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { ValidatorConfig } from "../../../src/runtime/ValidatorConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title ValidatorConfigTest
 /// @notice Unit tests for ValidatorConfig contract
@@ -500,7 +500,9 @@ contract ValidatorConfigTest is Test {
         assertEq(config.maxValidatorSetSize(), maxValidators);
     }
 
-    function testFuzz_SetMinimumBond(uint256 newMin) public {
+    function testFuzz_SetMinimumBond(
+        uint256 newMin
+    ) public {
         _initializeConfig();
 
         // Bound to valid range
@@ -512,7 +514,9 @@ contract ValidatorConfigTest is Test {
         assertEq(config.minimumBond(), newMin);
     }
 
-    function testFuzz_SetMaximumBond(uint256 newMax) public {
+    function testFuzz_SetMaximumBond(
+        uint256 newMax
+    ) public {
         _initializeConfig();
 
         // Bound to valid range
@@ -524,7 +528,9 @@ contract ValidatorConfigTest is Test {
         assertEq(config.maximumBond(), newMax);
     }
 
-    function testFuzz_SetUnbondingDelayMicros(uint64 newDelay) public {
+    function testFuzz_SetUnbondingDelayMicros(
+        uint64 newDelay
+    ) public {
         vm.assume(newDelay > 0);
         _initializeConfig();
 
@@ -534,7 +540,9 @@ contract ValidatorConfigTest is Test {
         assertEq(config.unbondingDelayMicros(), newDelay);
     }
 
-    function testFuzz_SetVotingPowerIncreaseLimitPct(uint64 newLimit) public {
+    function testFuzz_SetVotingPowerIncreaseLimitPct(
+        uint64 newLimit
+    ) public {
         newLimit = uint64(bound(newLimit, 1, 50));
         _initializeConfig();
 
@@ -544,7 +552,9 @@ contract ValidatorConfigTest is Test {
         assertEq(config.votingPowerIncreaseLimitPct(), newLimit);
     }
 
-    function testFuzz_SetMaxValidatorSetSize(uint256 newMax) public {
+    function testFuzz_SetMaxValidatorSetSize(
+        uint256 newMax
+    ) public {
         newMax = bound(newMax, 1, 65536);
         _initializeConfig();
 

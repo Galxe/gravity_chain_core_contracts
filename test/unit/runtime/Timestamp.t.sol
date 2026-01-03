@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title TimestampTest
 /// @notice Unit tests for Timestamp contract
@@ -194,7 +194,9 @@ contract TimestampTest is Test {
     function test_RevertWhen_CallerIsSystemCaller() public {
         // SYSTEM_CALLER is not allowed to call directly (only BLOCK can)
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.BLOCK));
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.BLOCK)
+        );
         timestamp.updateGlobalTime(PROPOSER, INITIAL_TIME);
     }
 
@@ -258,7 +260,10 @@ contract TimestampTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_UpdateGlobalTime_Advance(uint64 initial, uint64 advance) public {
+    function testFuzz_UpdateGlobalTime_Advance(
+        uint64 initial,
+        uint64 advance
+    ) public {
         // Bound to avoid overflow
         initial = uint64(bound(initial, 1, type(uint64).max / 2));
         advance = uint64(bound(advance, 1, type(uint64).max / 2));
@@ -275,7 +280,9 @@ contract TimestampTest is Test {
         assertEq(timestamp.microseconds(), newTime);
     }
 
-    function testFuzz_NowSecondsConversion(uint64 microTime) public {
+    function testFuzz_NowSecondsConversion(
+        uint64 microTime
+    ) public {
         // Bound to ensure we can set it
         vm.assume(microTime > 0);
 
@@ -287,7 +294,9 @@ contract TimestampTest is Test {
         assertEq(timestamp.nowSeconds(), expectedSeconds);
     }
 
-    function testFuzz_NilBlock_SameTime(uint64 time) public {
+    function testFuzz_NilBlock_SameTime(
+        uint64 time
+    ) public {
         vm.assume(time > 0);
 
         // Set initial time
@@ -302,7 +311,9 @@ contract TimestampTest is Test {
         assertEq(timestamp.microseconds(), time);
     }
 
-    function testFuzz_RevertWhen_NormalBlock_NotAdvancing(uint64 time) public {
+    function testFuzz_RevertWhen_NormalBlock_NotAdvancing(
+        uint64 time
+    ) public {
         vm.assume(time > 0);
 
         // Set initial time

@@ -95,7 +95,12 @@ interface INativeOracle {
     /// @param sourceName The source identifier (hash of eventType + sourceId)
     /// @param syncId The sync ID (block height, timestamp, etc.) - must be > current
     /// @param payload The event payload (for callback, not stored in hash mode)
-    function recordHash(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
+    function recordHash(
+        bytes32 dataHash,
+        bytes32 sourceName,
+        uint128 syncId,
+        bytes calldata payload
+    ) external;
 
     /// @notice Record data (data mode, direct access)
     /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
@@ -103,7 +108,12 @@ interface INativeOracle {
     /// @param sourceName The source identifier
     /// @param syncId The sync ID - must be > current
     /// @param payload The event payload (stored on-chain)
-    function recordData(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
+    function recordData(
+        bytes32 dataHash,
+        bytes32 sourceName,
+        uint128 syncId,
+        bytes calldata payload
+    ) external;
 
     /// @notice Batch record multiple hashes from the same source
     /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
@@ -139,12 +149,17 @@ interface INativeOracle {
     /// @dev Only callable by GOVERNANCE
     /// @param sourceName The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
-    function setCallback(bytes32 sourceName, address callback) external;
+    function setCallback(
+        bytes32 sourceName,
+        address callback
+    ) external;
 
     /// @notice Get the callback handler for a source
     /// @param sourceName The source identifier
     /// @return callback The callback contract address (address(0) if not set)
-    function getCallback(bytes32 sourceName) external view returns (address callback);
+    function getCallback(
+        bytes32 sourceName
+    ) external view returns (address callback);
 
     // ========================================================================
     // VERIFICATION FUNCTIONS
@@ -154,19 +169,25 @@ interface INativeOracle {
     /// @param dataHash The hash to verify
     /// @return exists True if the hash is recorded
     /// @return record The data record (data field empty if hash-only mode)
-    function verifyHash(bytes32 dataHash) external view returns (bool exists, DataRecord memory record);
+    function verifyHash(
+        bytes32 dataHash
+    ) external view returns (bool exists, DataRecord memory record);
 
     /// @notice Verify pre-image matches a recorded hash
     /// @dev Useful for hash-only mode where users provide original data as calldata
     /// @param preImage The original data (provided as calldata)
     /// @return exists True if hash(preImage) is recorded
     /// @return record The data record
-    function verifyPreImage(bytes calldata preImage) external view returns (bool exists, DataRecord memory record);
+    function verifyPreImage(
+        bytes calldata preImage
+    ) external view returns (bool exists, DataRecord memory record);
 
     /// @notice Get stored data directly (for data mode records)
     /// @param dataHash The hash key
     /// @return data The stored data (empty if hash-only or not found)
-    function getData(bytes32 dataHash) external view returns (bytes memory data);
+    function getData(
+        bytes32 dataHash
+    ) external view returns (bytes memory data);
 
     // ========================================================================
     // SYNC STATUS
@@ -175,13 +196,18 @@ interface INativeOracle {
     /// @notice Get sync status for a source
     /// @param sourceName The source identifier
     /// @return status The current sync status
-    function getSyncStatus(bytes32 sourceName) external view returns (SyncStatus memory status);
+    function getSyncStatus(
+        bytes32 sourceName
+    ) external view returns (SyncStatus memory status);
 
     /// @notice Check if a source has synced past a certain point
     /// @param sourceName The source identifier
     /// @param syncId The sync ID to check
     /// @return True if latestSyncId >= syncId
-    function isSyncedPast(bytes32 sourceName, uint128 syncId) external view returns (bool);
+    function isSyncedPast(
+        bytes32 sourceName,
+        uint128 syncId
+    ) external view returns (bool);
 
     // ========================================================================
     // STATISTICS
@@ -201,6 +227,9 @@ interface IOracleCallback {
     ///      Callbacks are invoked with limited gas (CALLBACK_GAS_LIMIT).
     /// @param dataHash The hash of the recorded data
     /// @param payload The event payload (encoding depends on event type)
-    function onOracleEvent(bytes32 dataHash, bytes calldata payload) external;
+    function onOracleEvent(
+        bytes32 dataHash,
+        bytes calldata payload
+    ) external;
 }
 

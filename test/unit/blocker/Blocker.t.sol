@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Blocker} from "../../../src/blocker/Blocker.sol";
-import {Reconfiguration} from "../../../src/blocker/Reconfiguration.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
-import {DKG} from "../../../src/runtime/DKG.sol";
-import {RandomnessConfig} from "../../../src/runtime/RandomnessConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../../../src/foundation/Types.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { Blocker } from "../../../src/blocker/Blocker.sol";
+import { Reconfiguration } from "../../../src/blocker/Reconfiguration.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
+import { DKG } from "../../../src/runtime/DKG.sol";
+import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @notice Mock ValidatorManagement for testing
 contract MockValidatorManagementBlocker {
     uint64 public lastEpochReceived;
     ValidatorConsensusInfo[] private _validators;
 
-    function setValidators(ValidatorConsensusInfo[] memory validators) external {
+    function setValidators(
+        ValidatorConsensusInfo[] memory validators
+    ) external {
         delete _validators;
         for (uint256 i = 0; i < validators.length; i++) {
             _validators.push(validators[i]);
@@ -28,7 +30,9 @@ contract MockValidatorManagementBlocker {
         return _validators;
     }
 
-    function onNewEpoch(uint64 newEpoch) external {
+    function onNewEpoch(
+        uint64 newEpoch
+    ) external {
         lastEpochReceived = newEpoch;
     }
 }
@@ -92,14 +96,14 @@ contract BlockerTest is Test {
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
-                secrecyThreshold: half,
-                reconstructionThreshold: twoThirds,
-                fastPathSecrecyThreshold: twoThirds
+                secrecyThreshold: half, reconstructionThreshold: twoThirds, fastPathSecrecyThreshold: twoThirds
             })
         });
     }
 
-    function _createValidators(uint256 count) internal pure returns (ValidatorConsensusInfo[] memory) {
+    function _createValidators(
+        uint256 count
+    ) internal pure returns (ValidatorConsensusInfo[] memory) {
         ValidatorConsensusInfo[] memory validators = new ValidatorConsensusInfo[](count);
         for (uint256 i = 0; i < count; i++) {
             validators[i] = ValidatorConsensusInfo({
@@ -127,7 +131,10 @@ contract BlockerTest is Test {
         _initializeReconfiguration();
     }
 
-    function _callOnBlockStart(bytes32 proposer, uint64 timestampMicros) internal {
+    function _callOnBlockStart(
+        bytes32 proposer,
+        uint64 timestampMicros
+    ) internal {
         bytes32[] memory failedProposers = new bytes32[](0);
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         Blocker(SystemAddresses.BLOCK).onBlockStart(proposer, failedProposers, timestampMicros);
@@ -341,7 +348,9 @@ contract BlockerTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_onBlockStart_proposerConversion(bytes32 proposer) public {
+    function testFuzz_onBlockStart_proposerConversion(
+        bytes32 proposer
+    ) public {
         vm.assume(proposer != bytes32(0)); // Non-NIL block
         _initializeAll();
 
@@ -358,7 +367,9 @@ contract BlockerTest is Test {
         assertEq(Timestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(), newTimestamp);
     }
 
-    function testFuzz_onBlockStart_timestampAdvances(uint64 timeDelta) public {
+    function testFuzz_onBlockStart_timestampAdvances(
+        uint64 timeDelta
+    ) public {
         // Use reasonable time delta (1 second to 1 day in microseconds)
         timeDelta = uint64(bound(timeDelta, 1_000_000, 86_400_000_000));
         _initializeAll();
@@ -371,7 +382,9 @@ contract BlockerTest is Test {
         assertEq(Timestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(), newTimestamp);
     }
 
-    function testFuzz_multipleBlocksSequence(uint8 blockCount) public {
+    function testFuzz_multipleBlocksSequence(
+        uint8 blockCount
+    ) public {
         blockCount = uint8(bound(blockCount, 1, 50));
         _initializeAll();
 

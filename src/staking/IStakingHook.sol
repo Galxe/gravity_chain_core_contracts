@@ -13,14 +13,20 @@ pragma solidity ^0.8.30;
 interface IStakingHook {
     /// @notice Called when stake is added to the pool
     /// @param amount Amount of stake added
-    function onStakeAdded(uint256 amount) external;
+    function onStakeAdded(
+        uint256 amount
+    ) external;
 
     /// @notice Called when stake is withdrawn
     /// @param amount Amount of stake withdrawn
-    function onStakeWithdrawn(uint256 amount) external;
+    function onStakeWithdrawn(
+        uint256 amount
+    ) external;
 
     /// @notice Called when lockup is increased
     /// @param newLockedUntil New lockup expiration timestamp (microseconds)
-    function onLockupIncreased(uint64 newLockedUntil) external;
+    function onLockupIncreased(
+        uint64 newLockedUntil
+    ) external;
 }
 

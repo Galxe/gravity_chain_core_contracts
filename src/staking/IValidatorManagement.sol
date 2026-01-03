@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo} from "../foundation/Types.sol";
+import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../foundation/Types.sol";
 
 /// @title IValidatorManagement
 /// @author Gravity Team
@@ -85,14 +85,18 @@ interface IValidatorManagement {
     ///      Validator must be in INACTIVE status.
     ///      Transition to ACTIVE happens at next epoch boundary via onNewEpoch().
     /// @param stakePool Address of the validator's stake pool
-    function joinValidatorSet(address stakePool) external;
+    function joinValidatorSet(
+        address stakePool
+    ) external;
 
     /// @notice Request to leave the active validator set
     /// @dev Only callable by the validator's operator.
     ///      Validator must be in ACTIVE status.
     ///      Transition to INACTIVE happens at next epoch boundary via onNewEpoch().
     /// @param stakePool Address of the validator's stake pool
-    function leaveValidatorSet(address stakePool) external;
+    function leaveValidatorSet(
+        address stakePool
+    ) external;
 
     // ========================================================================
     // OPERATOR FUNCTIONS
@@ -104,14 +108,21 @@ interface IValidatorManagement {
     /// @param stakePool Address of the validator's stake pool
     /// @param newPubkey New BLS public key
     /// @param newPop New proof of possession
-    function rotateConsensusKey(address stakePool, bytes calldata newPubkey, bytes calldata newPop) external;
+    function rotateConsensusKey(
+        address stakePool,
+        bytes calldata newPubkey,
+        bytes calldata newPop
+    ) external;
 
     /// @notice Set a new fee recipient address
     /// @dev Only callable by the validator's operator.
     ///      New recipient takes effect at next epoch.
     /// @param stakePool Address of the validator's stake pool
     /// @param newRecipient New fee recipient address
-    function setFeeRecipient(address stakePool, address newRecipient) external;
+    function setFeeRecipient(
+        address stakePool,
+        address newRecipient
+    ) external;
 
     // ========================================================================
     // EPOCH PROCESSING
@@ -124,7 +135,9 @@ interface IValidatorManagement {
     ///      - Reassigns validator indices
     ///      - Updates total voting power
     /// @param newEpoch The new epoch number to set
-    function onNewEpoch(uint64 newEpoch) external;
+    function onNewEpoch(
+        uint64 newEpoch
+    ) external;
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -133,7 +146,9 @@ interface IValidatorManagement {
     /// @notice Get the full validator record
     /// @param stakePool Address of the validator's stake pool
     /// @return The validator record
-    function getValidator(address stakePool) external view returns (ValidatorRecord memory);
+    function getValidator(
+        address stakePool
+    ) external view returns (ValidatorRecord memory);
 
     /// @notice Get all active validators with consensus info
     /// @dev Returns validators in index order (index 0 first)
@@ -143,7 +158,9 @@ interface IValidatorManagement {
     /// @notice Get a specific active validator by index
     /// @param index Validator index (0 to activeCount-1)
     /// @return ValidatorConsensusInfo for the validator at that index
-    function getActiveValidatorByIndex(uint64 index) external view returns (ValidatorConsensusInfo memory);
+    function getActiveValidatorByIndex(
+        uint64 index
+    ) external view returns (ValidatorConsensusInfo memory);
 
     /// @notice Get total voting power of active validators
     /// @return Total voting power
@@ -156,12 +173,16 @@ interface IValidatorManagement {
     /// @notice Check if an address is a registered validator
     /// @param stakePool Address to check
     /// @return True if the address is a registered validator
-    function isValidator(address stakePool) external view returns (bool);
+    function isValidator(
+        address stakePool
+    ) external view returns (bool);
 
     /// @notice Get the status of a validator
     /// @param stakePool Address of the validator's stake pool
     /// @return The validator's current status
-    function getValidatorStatus(address stakePool) external view returns (ValidatorStatus);
+    function getValidatorStatus(
+        address stakePool
+    ) external view returns (ValidatorStatus);
 
     /// @notice Get the current epoch number
     /// @return Current epoch

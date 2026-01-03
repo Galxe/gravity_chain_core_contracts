@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title GovernanceConfig
 /// @author Gravity Team
@@ -92,7 +92,9 @@ contract GovernanceConfig {
     /// @notice Update minimum voting threshold
     /// @dev Only callable by GOVERNANCE
     /// @param _minVotingThreshold New minimum voting threshold
-    function setMinVotingThreshold(uint128 _minVotingThreshold) external {
+    function setMinVotingThreshold(
+        uint128 _minVotingThreshold
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         emit ConfigUpdated(keccak256("minVotingThreshold"), minVotingThreshold, _minVotingThreshold);
@@ -102,7 +104,9 @@ contract GovernanceConfig {
     /// @notice Update required proposer stake
     /// @dev Only callable by GOVERNANCE
     /// @param _requiredProposerStake New required proposer stake
-    function setRequiredProposerStake(uint256 _requiredProposerStake) external {
+    function setRequiredProposerStake(
+        uint256 _requiredProposerStake
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         emit ConfigUpdated(keccak256("requiredProposerStake"), requiredProposerStake, _requiredProposerStake);
@@ -112,7 +116,9 @@ contract GovernanceConfig {
     /// @notice Update voting duration
     /// @dev Only callable by GOVERNANCE
     /// @param _votingDurationMicros New voting duration in microseconds
-    function setVotingDurationMicros(uint64 _votingDurationMicros) external {
+    function setVotingDurationMicros(
+        uint64 _votingDurationMicros
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_votingDurationMicros == 0) {
@@ -126,7 +132,9 @@ contract GovernanceConfig {
     /// @notice Update early resolution threshold
     /// @dev Only callable by GOVERNANCE
     /// @param _earlyResolutionThresholdBps New threshold in basis points
-    function setEarlyResolutionThresholdBps(uint128 _earlyResolutionThresholdBps) external {
+    function setEarlyResolutionThresholdBps(
+        uint128 _earlyResolutionThresholdBps
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_earlyResolutionThresholdBps > MAX_EARLY_RESOLUTION_THRESHOLD_BPS) {

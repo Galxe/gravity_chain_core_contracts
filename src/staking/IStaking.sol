@@ -27,18 +27,24 @@ interface IStaking {
     /// @dev SECURITY CRITICAL: Only pools created by this factory should be trusted
     /// @param pool Address to check
     /// @return True if the address is a valid pool created by this factory
-    function isPool(address pool) external view returns (bool);
+    function isPool(
+        address pool
+    ) external view returns (bool);
 
     /// @notice Get pool address by index
     /// @param index Pool index (0-based)
     /// @return Pool address
-    function getPool(uint256 index) external view returns (address);
+    function getPool(
+        uint256 index
+    ) external view returns (address);
 
     /// @notice Compute deterministic pool address for a given nonce
     /// @dev Uses CREATE2 address calculation
     /// @param nonce Pool nonce (salt for CREATE2)
     /// @return The address that would be deployed for that nonce
-    function computePoolAddress(uint256 nonce) external view returns (address);
+    function computePoolAddress(
+        uint256 nonce
+    ) external view returns (address);
 
     /// @notice Get all pool addresses
     /// @return Array of all pool addresses
@@ -64,43 +70,57 @@ interface IStaking {
     /// @dev Reverts if pool is not valid. Returns 0 if pool's lockup has expired.
     /// @param pool Address of the pool
     /// @return Voting power in wei (stake if locked, 0 if unlocked)
-    function getPoolVotingPower(address pool) external view returns (uint256);
+    function getPoolVotingPower(
+        address pool
+    ) external view returns (uint256);
 
     /// @notice Get stake amount of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Stake amount in wei
-    function getPoolStake(address pool) external view returns (uint256);
+    function getPoolStake(
+        address pool
+    ) external view returns (uint256);
 
     /// @notice Get owner of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Owner address
-    function getPoolOwner(address pool) external view returns (address);
+    function getPoolOwner(
+        address pool
+    ) external view returns (address);
 
     /// @notice Get delegated voter of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Voter address
-    function getPoolVoter(address pool) external view returns (address);
+    function getPoolVoter(
+        address pool
+    ) external view returns (address);
 
     /// @notice Get operator of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Operator address
-    function getPoolOperator(address pool) external view returns (address);
+    function getPoolOperator(
+        address pool
+    ) external view returns (address);
 
     /// @notice Get lockup expiration of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Lockup expiration timestamp in microseconds
-    function getPoolLockedUntil(address pool) external view returns (uint64);
+    function getPoolLockedUntil(
+        address pool
+    ) external view returns (uint64);
 
     /// @notice Check if a specific pool's stake is locked
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return True if pool's stake is locked (lockedUntil > now)
-    function isPoolLocked(address pool) external view returns (bool);
+    function isPoolLocked(
+        address pool
+    ) external view returns (bool);
 
     // ========================================================================
     // STATE-CHANGING FUNCTIONS
@@ -111,5 +131,7 @@ interface IStaking {
     ///      Reverts if msg.value < minimumStake.
     /// @param owner Address to set as pool owner
     /// @return pool Address of the newly created pool
-    function createPool(address owner) external payable returns (address pool);
+    function createPool(
+        address owner
+    ) external payable returns (address pool);
 }

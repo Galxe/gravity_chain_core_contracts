@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 
 /// @notice Interface for Timestamp contract
 interface ITimestampBlocker {
-    function updateGlobalTime(address proposer, uint64 timestamp) external;
+    function updateGlobalTime(
+        address proposer,
+        uint64 timestamp
+    ) external;
 }
 
 /// @notice Interface for Reconfiguration contract
@@ -79,7 +82,11 @@ contract Blocker {
     /// @param proposer The block proposer's consensus public key (32 bytes, bytes32(0) for NIL blocks)
     /// @param failedProposers Consensus pubkeys of validators who failed to propose (unused for now)
     /// @param timestampMicros Block timestamp in microseconds
-    function onBlockStart(bytes32 proposer, bytes32[] calldata failedProposers, uint64 timestampMicros) external {
+    function onBlockStart(
+        bytes32 proposer,
+        bytes32[] calldata failedProposers,
+        uint64 timestampMicros
+    ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
         // Silence unused variable warning - failedProposers will be used when ValidatorPerformanceTracker is implemented
@@ -115,7 +122,9 @@ contract Blocker {
     /// @dev NIL blocks have proposer == bytes32(0), which maps to SYSTEM_CALLER
     /// @param proposer The proposer's consensus public key
     /// @return The resolved address (SYSTEM_CALLER for NIL blocks)
-    function _resolveProposer(bytes32 proposer) internal pure returns (address) {
+    function _resolveProposer(
+        bytes32 proposer
+    ) internal pure returns (address) {
         if (proposer == bytes32(0)) {
             // NIL block - no real proposer
             return SystemAddresses.SYSTEM_CALLER;

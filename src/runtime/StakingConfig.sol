@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title StakingConfig
 /// @author Gravity Team
@@ -75,7 +75,9 @@ contract StakingConfig {
     /// @notice Update minimum stake
     /// @dev Only callable by GOVERNANCE
     /// @param _minimumStake New minimum stake value
-    function setMinimumStake(uint256 _minimumStake) external {
+    function setMinimumStake(
+        uint256 _minimumStake
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         uint256 oldValue = minimumStake;
@@ -87,7 +89,9 @@ contract StakingConfig {
     /// @notice Update lockup duration
     /// @dev Only callable by GOVERNANCE
     /// @param _lockupDurationMicros New lockup duration in microseconds (must be > 0)
-    function setLockupDurationMicros(uint64 _lockupDurationMicros) external {
+    function setLockupDurationMicros(
+        uint64 _lockupDurationMicros
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_lockupDurationMicros == 0) {
@@ -103,7 +107,9 @@ contract StakingConfig {
     /// @notice Update minimum proposal stake
     /// @dev Only callable by GOVERNANCE
     /// @param _minimumProposalStake New minimum proposal stake value
-    function setMinimumProposalStake(uint256 _minimumProposalStake) external {
+    function setMinimumProposalStake(
+        uint256 _minimumProposalStake
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         uint256 oldValue = minimumProposalStake;

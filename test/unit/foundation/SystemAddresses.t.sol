@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
+import { Test } from "forge-std/Test.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 
 /// @title SystemAddressesTest
 /// @notice Unit tests for SystemAddresses library

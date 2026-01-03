@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
+import { Test } from "forge-std/Test.sol";
 import {
     StakePosition,
     ValidatorStatus,
@@ -34,7 +34,7 @@ contract TypesTest is Test {
         uint64 lockedUntil = 1_700_000_000 * MICRO; // Nov 2023 in microseconds
         uint64 stakedAt = 1_699_000_000 * MICRO; // Oct 2023 in microseconds
 
-        StakePosition memory pos = StakePosition({amount: 1000 ether, lockedUntil: lockedUntil, stakedAt: stakedAt});
+        StakePosition memory pos = StakePosition({ amount: 1000 ether, lockedUntil: lockedUntil, stakedAt: stakedAt });
 
         assertEq(pos.amount, 1000 ether);
         assertEq(pos.lockedUntil, lockedUntil);
@@ -49,8 +49,12 @@ contract TypesTest is Test {
         assertEq(pos.stakedAt, 0);
     }
 
-    function testFuzz_StakePosition(uint256 amount, uint64 lockedUntil, uint64 stakedAt) public pure {
-        StakePosition memory pos = StakePosition({amount: amount, lockedUntil: lockedUntil, stakedAt: stakedAt});
+    function testFuzz_StakePosition(
+        uint256 amount,
+        uint64 lockedUntil,
+        uint64 stakedAt
+    ) public pure {
+        StakePosition memory pos = StakePosition({ amount: amount, lockedUntil: lockedUntil, stakedAt: stakedAt });
 
         assertEq(pos.amount, amount);
         assertEq(pos.lockedUntil, lockedUntil);
@@ -86,10 +90,7 @@ contract TypesTest is Test {
         bytes memory pop = hex"11223344";
 
         ValidatorConsensusInfo memory info = ValidatorConsensusInfo({
-            validator: address(0x1234),
-            consensusPubkey: pubkey,
-            consensusPop: pop,
-            votingPower: 1000
+            validator: address(0x1234), consensusPubkey: pubkey, consensusPop: pop, votingPower: 1000
         });
 
         assertEq(info.validator, address(0x1234));
@@ -144,10 +145,7 @@ contract TypesTest is Test {
         bytes memory pubkey = hex"aabbccdd";
 
         ValidatorInfo memory info = ValidatorInfo({
-            validator: address(0x1234),
-            votingPower: 1000,
-            validatorIndex: 5,
-            consensusPubkey: pubkey
+            validator: address(0x1234), votingPower: 1000, validatorIndex: 5, consensusPubkey: pubkey
         });
 
         assertEq(info.validator, address(0x1234));
@@ -234,10 +232,10 @@ contract TypesTest is Test {
         StakePosition[] memory positions = new StakePosition[](2);
 
         positions[0] =
-            StakePosition({amount: 100 ether, lockedUntil: TIMESTAMP_NOV_2023, stakedAt: TIMESTAMP_OCT_2023});
+            StakePosition({ amount: 100 ether, lockedUntil: TIMESTAMP_NOV_2023, stakedAt: TIMESTAMP_OCT_2023 });
 
         positions[1] =
-            StakePosition({amount: 200 ether, lockedUntil: TIMESTAMP_DEC_2023, stakedAt: TIMESTAMP_NOV_2023});
+            StakePosition({ amount: 200 ether, lockedUntil: TIMESTAMP_DEC_2023, stakedAt: TIMESTAMP_NOV_2023 });
 
         assertEq(positions[0].amount, 100 ether);
         assertEq(positions[0].lockedUntil, TIMESTAMP_NOV_2023);

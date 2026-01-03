@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
+import { Test } from "forge-std/Test.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
 
 /// @title ErrorsTest
 /// @notice Unit tests for Errors library
@@ -252,17 +252,24 @@ contract ErrorsTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_NoStakePosition(address staker) public {
+    function testFuzz_NoStakePosition(
+        address staker
+    ) public {
         vm.expectRevert(abi.encodeWithSelector(Errors.NoStakePosition.selector, staker));
         this.throwNoStakePosition(staker);
     }
 
-    function testFuzz_InsufficientStake(uint256 required, uint256 actual) public {
+    function testFuzz_InsufficientStake(
+        uint256 required,
+        uint256 actual
+    ) public {
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientStake.selector, required, actual));
         this.throwInsufficientStake(required, actual);
     }
 
-    function testFuzz_ValidatorNotFound(address validator) public {
+    function testFuzz_ValidatorNotFound(
+        address validator
+    ) public {
         vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, validator));
         this.throwValidatorNotFound(validator);
     }
@@ -290,15 +297,23 @@ contract ErrorsTest is Test {
     // ========================================================================
 
     // Staking errors
-    function throwNoStakePosition(address staker) external pure {
+    function throwNoStakePosition(
+        address staker
+    ) external pure {
         revert Errors.NoStakePosition(staker);
     }
 
-    function throwInsufficientStake(uint256 required, uint256 actual) external pure {
+    function throwInsufficientStake(
+        uint256 required,
+        uint256 actual
+    ) external pure {
         revert Errors.InsufficientStake(required, actual);
     }
 
-    function throwLockupNotExpired(uint64 lockedUntil, uint64 currentTime) external pure {
+    function throwLockupNotExpired(
+        uint64 lockedUntil,
+        uint64 currentTime
+    ) external pure {
         revert Errors.LockupNotExpired(lockedUntil, currentTime);
     }
 
@@ -307,31 +322,50 @@ contract ErrorsTest is Test {
     }
 
     // Validator errors
-    function throwValidatorNotFound(address validator) external pure {
+    function throwValidatorNotFound(
+        address validator
+    ) external pure {
         revert Errors.ValidatorNotFound(validator);
     }
 
-    function throwValidatorAlreadyExists(address validator) external pure {
+    function throwValidatorAlreadyExists(
+        address validator
+    ) external pure {
         revert Errors.ValidatorAlreadyExists(validator);
     }
 
-    function throwInvalidStatus(uint8 expected, uint8 actual) external pure {
+    function throwInvalidStatus(
+        uint8 expected,
+        uint8 actual
+    ) external pure {
         revert Errors.InvalidStatus(expected, actual);
     }
 
-    function throwInsufficientBond(uint256 required, uint256 actual) external pure {
+    function throwInsufficientBond(
+        uint256 required,
+        uint256 actual
+    ) external pure {
         revert Errors.InsufficientBond(required, actual);
     }
 
-    function throwExceedsMaximumBond(uint256 maximum, uint256 actual) external pure {
+    function throwExceedsMaximumBond(
+        uint256 maximum,
+        uint256 actual
+    ) external pure {
         revert Errors.ExceedsMaximumBond(maximum, actual);
     }
 
-    function throwNotOwner(address expected, address actual) external pure {
+    function throwNotOwner(
+        address expected,
+        address actual
+    ) external pure {
         revert Errors.NotOwner(expected, actual);
     }
 
-    function throwNotOperator(address expected, address actual) external pure {
+    function throwNotOperator(
+        address expected,
+        address actual
+    ) external pure {
         revert Errors.NotOperator(expected, actual);
     }
 
@@ -339,19 +373,30 @@ contract ErrorsTest is Test {
         revert Errors.ValidatorSetChangesDisabled();
     }
 
-    function throwMaxValidatorSetSizeReached(uint256 maxSize) external pure {
+    function throwMaxValidatorSetSizeReached(
+        uint256 maxSize
+    ) external pure {
         revert Errors.MaxValidatorSetSizeReached(maxSize);
     }
 
-    function throwVotingPowerIncreaseLimitExceeded(uint256 limit, uint256 actual) external pure {
+    function throwVotingPowerIncreaseLimitExceeded(
+        uint256 limit,
+        uint256 actual
+    ) external pure {
         revert Errors.VotingPowerIncreaseLimitExceeded(limit, actual);
     }
 
-    function throwMonikerTooLong(uint256 maxLength, uint256 actualLength) external pure {
+    function throwMonikerTooLong(
+        uint256 maxLength,
+        uint256 actualLength
+    ) external pure {
         revert Errors.MonikerTooLong(maxLength, actualLength);
     }
 
-    function throwUnbondNotReady(uint64 availableAt, uint64 currentTime) external pure {
+    function throwUnbondNotReady(
+        uint64 availableAt,
+        uint64 currentTime
+    ) external pure {
         revert Errors.UnbondNotReady(availableAt, currentTime);
     }
 
@@ -364,32 +409,49 @@ contract ErrorsTest is Test {
         revert Errors.ReconfigurationNotInProgress();
     }
 
-    function throwEpochNotYetEnded(uint64 nextEpochTime, uint64 currentTime) external pure {
+    function throwEpochNotYetEnded(
+        uint64 nextEpochTime,
+        uint64 currentTime
+    ) external pure {
         revert Errors.EpochNotYetEnded(nextEpochTime, currentTime);
     }
 
     // Governance errors
-    function throwProposalNotFound(uint64 proposalId) external pure {
+    function throwProposalNotFound(
+        uint64 proposalId
+    ) external pure {
         revert Errors.ProposalNotFound(proposalId);
     }
 
-    function throwVotingPeriodEnded(uint64 expirationTime) external pure {
+    function throwVotingPeriodEnded(
+        uint64 expirationTime
+    ) external pure {
         revert Errors.VotingPeriodEnded(expirationTime);
     }
 
-    function throwVotingPeriodNotEnded(uint64 expirationTime) external pure {
+    function throwVotingPeriodNotEnded(
+        uint64 expirationTime
+    ) external pure {
         revert Errors.VotingPeriodNotEnded(expirationTime);
     }
 
-    function throwProposalAlreadyResolved(uint64 proposalId) external pure {
+    function throwProposalAlreadyResolved(
+        uint64 proposalId
+    ) external pure {
         revert Errors.ProposalAlreadyResolved(proposalId);
     }
 
-    function throwExecutionHashMismatch(bytes32 expected, bytes32 actual) external pure {
+    function throwExecutionHashMismatch(
+        bytes32 expected,
+        bytes32 actual
+    ) external pure {
         revert Errors.ExecutionHashMismatch(expected, actual);
     }
 
-    function throwInsufficientLockup(uint64 required, uint64 actual) external pure {
+    function throwInsufficientLockup(
+        uint64 required,
+        uint64 actual
+    ) external pure {
         revert Errors.InsufficientLockup(required, actual);
     }
 
@@ -397,16 +459,25 @@ contract ErrorsTest is Test {
         revert Errors.AtomicResolutionNotAllowed();
     }
 
-    function throwInsufficientVotingPower(uint256 required, uint256 actual) external pure {
+    function throwInsufficientVotingPower(
+        uint256 required,
+        uint256 actual
+    ) external pure {
         revert Errors.InsufficientVotingPower(required, actual);
     }
 
     // Timestamp errors
-    function throwTimestampMustAdvance(uint64 proposed, uint64 current) external pure {
+    function throwTimestampMustAdvance(
+        uint64 proposed,
+        uint64 current
+    ) external pure {
         revert Errors.TimestampMustAdvance(proposed, current);
     }
 
-    function throwTimestampMustEqual(uint64 proposed, uint64 current) external pure {
+    function throwTimestampMustEqual(
+        uint64 proposed,
+        uint64 current
+    ) external pure {
         revert Errors.TimestampMustEqual(proposed, current);
     }
 }

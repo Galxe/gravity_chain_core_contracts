@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Reconfiguration} from "../../../src/blocker/Reconfiguration.sol";
-import {IReconfiguration} from "../../../src/blocker/IReconfiguration.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
-import {DKG} from "../../../src/runtime/DKG.sol";
-import {RandomnessConfig} from "../../../src/runtime/RandomnessConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../../../src/foundation/Types.sol";
-import {NotAllowed, NotAllowedAny} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { Reconfiguration } from "../../../src/blocker/Reconfiguration.sol";
+import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
+import { DKG } from "../../../src/runtime/DKG.sol";
+import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
+import { NotAllowed, NotAllowedAny } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @notice Mock ValidatorManagement for testing
 contract MockValidatorManagement {
     uint64 public lastEpochReceived;
     ValidatorConsensusInfo[] private _validators;
 
-    function setValidators(ValidatorConsensusInfo[] memory validators) external {
+    function setValidators(
+        ValidatorConsensusInfo[] memory validators
+    ) external {
         delete _validators;
         for (uint256 i = 0; i < validators.length; i++) {
             _validators.push(validators[i]);
@@ -28,7 +30,9 @@ contract MockValidatorManagement {
         return _validators;
     }
 
-    function onNewEpoch(uint64 newEpoch) external {
+    function onNewEpoch(
+        uint64 newEpoch
+    ) external {
         lastEpochReceived = newEpoch;
     }
 }
@@ -94,14 +98,14 @@ contract ReconfigurationTest is Test {
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
-                secrecyThreshold: half,
-                reconstructionThreshold: twoThirds,
-                fastPathSecrecyThreshold: twoThirds
+                secrecyThreshold: half, reconstructionThreshold: twoThirds, fastPathSecrecyThreshold: twoThirds
             })
         });
     }
 
-    function _createValidators(uint256 count) internal pure returns (ValidatorConsensusInfo[] memory) {
+    function _createValidators(
+        uint256 count
+    ) internal pure returns (ValidatorConsensusInfo[] memory) {
         ValidatorConsensusInfo[] memory validators = new ValidatorConsensusInfo[](count);
         for (uint256 i = 0; i < count; i++) {
             validators[i] = ValidatorConsensusInfo({
@@ -119,7 +123,9 @@ contract ReconfigurationTest is Test {
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
     }
 
-    function _advanceTime(uint64 micros) internal {
+    function _advanceTime(
+        uint64 micros
+    ) internal {
         uint64 currentTime = Timestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         vm.prank(SystemAddresses.BLOCK);
         Timestamp(SystemAddresses.TIMESTAMP).updateGlobalTime(address(0x1234), currentTime + micros);
@@ -130,7 +136,9 @@ contract ReconfigurationTest is Test {
         return Reconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
     }
 
-    function _finishTransition(bytes memory dkgResult) internal {
+    function _finishTransition(
+        bytes memory dkgResult
+    ) internal {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(dkgResult);
     }
@@ -477,7 +485,9 @@ contract ReconfigurationTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_setEpochIntervalMicros(uint64 newInterval) public {
+    function testFuzz_setEpochIntervalMicros(
+        uint64 newInterval
+    ) public {
         vm.assume(newInterval > 0);
         _initializeReconfiguration();
 
@@ -487,7 +497,9 @@ contract ReconfigurationTest is Test {
         assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), newInterval);
     }
 
-    function testFuzz_epochTransitionWithVariableInterval(uint64 interval) public {
+    function testFuzz_epochTransitionWithVariableInterval(
+        uint64 interval
+    ) public {
         // Use reasonable bounds for epoch interval (1 second to 1 week in microseconds)
         interval = uint64(bound(interval, 1_000_000, 604_800_000_000));
 

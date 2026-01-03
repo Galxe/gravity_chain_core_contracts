@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title RandomnessConfig
 /// @author Gravity Team
@@ -84,7 +84,9 @@ contract RandomnessConfig {
     /// @notice Initialize the randomness configuration
     /// @dev Can only be called once by GENESIS
     /// @param config Initial configuration
-    function initialize(RandomnessConfigData calldata config) external {
+    function initialize(
+        RandomnessConfigData calldata config
+    ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
         if (_initialized) {
@@ -138,7 +140,9 @@ contract RandomnessConfig {
     /// @notice Set configuration for next epoch
     /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
     /// @param newConfig New configuration to apply at next epoch
-    function setForNextEpoch(RandomnessConfigData calldata newConfig) external {
+    function setForNextEpoch(
+        RandomnessConfigData calldata newConfig
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
@@ -184,7 +188,7 @@ contract RandomnessConfig {
     /// @notice Create an Off configuration (randomness disabled)
     /// @return Configuration with Off variant
     function newOff() external pure returns (RandomnessConfigData memory) {
-        return RandomnessConfigData({variant: ConfigVariant.Off, configV2: ConfigV2Data(0, 0, 0)});
+        return RandomnessConfigData({ variant: ConfigVariant.Off, configV2: ConfigV2Data(0, 0, 0) });
     }
 
     /// @notice Create a V2 configuration with thresholds
@@ -192,11 +196,11 @@ contract RandomnessConfig {
     /// @param reconstructionThreshold Minimum stake ratio to reveal (fixed-point)
     /// @param fastPathSecrecyThreshold Threshold for fast path (fixed-point)
     /// @return Configuration with V2 variant
-    function newV2(uint64 secrecyThreshold, uint64 reconstructionThreshold, uint64 fastPathSecrecyThreshold)
-        external
-        pure
-        returns (RandomnessConfigData memory)
-    {
+    function newV2(
+        uint64 secrecyThreshold,
+        uint64 reconstructionThreshold,
+        uint64 fastPathSecrecyThreshold
+    ) external pure returns (RandomnessConfigData memory) {
         return RandomnessConfigData({
             variant: ConfigVariant.V2,
             configV2: ConfigV2Data({
@@ -213,7 +217,9 @@ contract RandomnessConfig {
 
     /// @notice Validate configuration data
     /// @param config Configuration to validate
-    function _validateConfig(RandomnessConfigData calldata config) internal pure {
+    function _validateConfig(
+        RandomnessConfigData calldata config
+    ) internal pure {
         if (config.variant == ConfigVariant.V2) {
             // For V2, reconstruction threshold must be >= secrecy threshold
             if (config.configV2.reconstructionThreshold < config.configV2.secrecyThreshold) {

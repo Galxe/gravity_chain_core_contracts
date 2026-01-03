@@ -98,27 +98,37 @@ interface IStakePool {
     /// @notice Withdraw stake (only when lockup expired)
     /// @dev Only callable by owner. Reverts if lockup not expired.
     /// @param amount Amount to withdraw
-    function withdraw(uint256 amount) external;
+    function withdraw(
+        uint256 amount
+    ) external;
 
     /// @notice Extend lockup by a specified duration
     /// @dev Only callable by owner. Duration must be >= minLockupDuration.
     ///      This is additive: extends from current lockedUntil, not from now.
     /// @param durationMicros Duration to add in microseconds
-    function increaseLockup(uint64 durationMicros) external;
+    function increaseLockup(
+        uint64 durationMicros
+    ) external;
 
     /// @notice Change the operator address
     /// @dev Only callable by owner
     /// @param newOperator New operator address
-    function setOperator(address newOperator) external;
+    function setOperator(
+        address newOperator
+    ) external;
 
     /// @notice Change the delegated voter address
     /// @dev Only callable by owner
     /// @param newVoter New voter address
-    function setVoter(address newVoter) external;
+    function setVoter(
+        address newVoter
+    ) external;
 
     /// @notice Set or change the hook contract
     /// @dev Only callable by owner
     /// @param newHook New hook address (or address(0) to remove)
-    function setHook(address newHook) external;
+    function setHook(
+        address newHook
+    ) external;
 }
 

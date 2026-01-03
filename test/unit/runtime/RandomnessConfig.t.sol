@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {RandomnessConfig} from "../../../src/runtime/RandomnessConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
+import { Test } from "forge-std/Test.sol";
+import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title RandomnessConfigTest
 /// @notice Unit tests for RandomnessConfig contract
@@ -28,22 +28,19 @@ contract RandomnessConfigTest is Test {
 
     function _createOffConfig() internal pure returns (RandomnessConfig.RandomnessConfigData memory) {
         return RandomnessConfig.RandomnessConfigData({
-            variant: RandomnessConfig.ConfigVariant.Off,
-            configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
+            variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
         });
     }
 
-    function _createV2Config(uint64 secrecy, uint64 reconstruction, uint64 fastPath)
-        internal
-        pure
-        returns (RandomnessConfig.RandomnessConfigData memory)
-    {
+    function _createV2Config(
+        uint64 secrecy,
+        uint64 reconstruction,
+        uint64 fastPath
+    ) internal pure returns (RandomnessConfig.RandomnessConfigData memory) {
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
-                secrecyThreshold: secrecy,
-                reconstructionThreshold: reconstruction,
-                fastPathSecrecyThreshold: fastPath
+                secrecyThreshold: secrecy, reconstructionThreshold: reconstruction, fastPathSecrecyThreshold: fastPath
             })
         });
     }
@@ -111,7 +108,9 @@ contract RandomnessConfigTest is Test {
         RandomnessConfig.RandomnessConfigData memory invalidConfig = _createV2Config(TWO_THIRDS, HALF, THREE_QUARTERS);
 
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy"));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy")
+        );
         config.initialize(invalidConfig);
     }
 
@@ -231,7 +230,9 @@ contract RandomnessConfigTest is Test {
         RandomnessConfig.RandomnessConfigData memory invalidConfig = _createV2Config(TWO_THIRDS, HALF, THREE_QUARTERS);
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy"));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy")
+        );
         config.setForNextEpoch(invalidConfig);
     }
 
@@ -316,7 +317,9 @@ contract RandomnessConfigTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectEmit(true, true, false, false);
-        emit RandomnessConfig.RandomnessConfigUpdated(RandomnessConfig.ConfigVariant.Off, RandomnessConfig.ConfigVariant.V2);
+        emit RandomnessConfig.RandomnessConfigUpdated(
+            RandomnessConfig.ConfigVariant.Off, RandomnessConfig.ConfigVariant.V2
+        );
         config.initialize(initConfig);
     }
 
@@ -337,7 +340,9 @@ contract RandomnessConfigTest is Test {
 
         vm.prank(SystemAddresses.EPOCH_MANAGER);
         vm.expectEmit(true, true, false, false);
-        emit RandomnessConfig.RandomnessConfigUpdated(RandomnessConfig.ConfigVariant.V2, RandomnessConfig.ConfigVariant.Off);
+        emit RandomnessConfig.RandomnessConfigUpdated(
+            RandomnessConfig.ConfigVariant.V2, RandomnessConfig.ConfigVariant.Off
+        );
         config.applyPendingConfig();
     }
 
@@ -357,7 +362,11 @@ contract RandomnessConfigTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_InitializeV2(uint64 secrecy, uint64 reconstruction, uint64 fastPath) public {
+    function testFuzz_InitializeV2(
+        uint64 secrecy,
+        uint64 reconstruction,
+        uint64 fastPath
+    ) public {
         // Ensure valid config: reconstruction >= secrecy
         vm.assume(reconstruction >= secrecy);
 
@@ -375,7 +384,11 @@ contract RandomnessConfigTest is Test {
         assertEq(currentConfig.configV2.fastPathSecrecyThreshold, fastPath);
     }
 
-    function testFuzz_SetAndApplyPendingConfig(uint64 secrecy, uint64 reconstruction, uint64 fastPath) public {
+    function testFuzz_SetAndApplyPendingConfig(
+        uint64 secrecy,
+        uint64 reconstruction,
+        uint64 fastPath
+    ) public {
         _initializeWithOff();
         vm.assume(reconstruction >= secrecy);
 
@@ -399,14 +412,20 @@ contract RandomnessConfigTest is Test {
         assertEq(currentConfig.configV2.fastPathSecrecyThreshold, fastPath);
     }
 
-    function testFuzz_RevertWhen_InvalidV2Config(uint64 secrecy, uint64 reconstruction, uint64 fastPath) public {
+    function testFuzz_RevertWhen_InvalidV2Config(
+        uint64 secrecy,
+        uint64 reconstruction,
+        uint64 fastPath
+    ) public {
         // Ensure invalid config: reconstruction < secrecy
         vm.assume(reconstruction < secrecy);
 
         RandomnessConfig.RandomnessConfigData memory invalidConfig = _createV2Config(secrecy, reconstruction, fastPath);
 
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy"));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy")
+        );
         config.initialize(invalidConfig);
     }
 }

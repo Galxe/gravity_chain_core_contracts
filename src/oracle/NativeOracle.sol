@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {INativeOracle, IOracleCallback} from "./INativeOracle.sol";
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { INativeOracle, IOracleCallback } from "./INativeOracle.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title NativeOracle
 /// @author Gravity Team
@@ -78,10 +78,12 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function recordHash(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload)
-        external
-        whenInitialized
-    {
+    function recordHash(
+        bytes32 dataHash,
+        bytes32 sourceName,
+        uint128 syncId,
+        bytes calldata payload
+    ) external whenInitialized {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
         // Update sync status (validates syncId is increasing)
@@ -97,10 +99,12 @@ contract NativeOracle is INativeOracle {
     }
 
     /// @inheritdoc INativeOracle
-    function recordData(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload)
-        external
-        whenInitialized
-    {
+    function recordData(
+        bytes32 dataHash,
+        bytes32 sourceName,
+        uint128 syncId,
+        bytes calldata payload
+    ) external whenInitialized {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
         // Update sync status (validates syncId is increasing)
@@ -191,7 +195,10 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function setCallback(bytes32 sourceName, address callback) external whenInitialized {
+    function setCallback(
+        bytes32 sourceName,
+        address callback
+    ) external whenInitialized {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         address oldCallback = _callbacks[sourceName];
@@ -201,7 +208,9 @@ contract NativeOracle is INativeOracle {
     }
 
     /// @inheritdoc INativeOracle
-    function getCallback(bytes32 sourceName) external view returns (address callback) {
+    function getCallback(
+        bytes32 sourceName
+    ) external view returns (address callback) {
         return _callbacks[sourceName];
     }
 
@@ -210,20 +219,26 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function verifyHash(bytes32 dataHash) external view returns (bool exists, DataRecord memory record) {
+    function verifyHash(
+        bytes32 dataHash
+    ) external view returns (bool exists, DataRecord memory record) {
         record = _dataRecords[dataHash];
         exists = record.exists;
     }
 
     /// @inheritdoc INativeOracle
-    function verifyPreImage(bytes calldata preImage) external view returns (bool exists, DataRecord memory record) {
+    function verifyPreImage(
+        bytes calldata preImage
+    ) external view returns (bool exists, DataRecord memory record) {
         bytes32 dataHash = keccak256(preImage);
         record = _dataRecords[dataHash];
         exists = record.exists;
     }
 
     /// @inheritdoc INativeOracle
-    function getData(bytes32 dataHash) external view returns (bytes memory data) {
+    function getData(
+        bytes32 dataHash
+    ) external view returns (bytes memory data) {
         return _dataRecords[dataHash].data;
     }
 
@@ -232,12 +247,17 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function getSyncStatus(bytes32 sourceName) external view returns (SyncStatus memory status) {
+    function getSyncStatus(
+        bytes32 sourceName
+    ) external view returns (SyncStatus memory status) {
         return _syncStatus[sourceName];
     }
 
     /// @inheritdoc INativeOracle
-    function isSyncedPast(bytes32 sourceName, uint128 syncId) external view returns (bool) {
+    function isSyncedPast(
+        bytes32 sourceName,
+        uint128 syncId
+    ) external view returns (bool) {
         SyncStatus storage status = _syncStatus[sourceName];
         return status.initialized && status.latestSyncId >= syncId;
     }
@@ -265,7 +285,10 @@ contract NativeOracle is INativeOracle {
     /// @dev Validates that syncId is strictly increasing
     /// @param sourceName The source identifier
     /// @param syncId The new sync ID
-    function _updateSyncStatus(bytes32 sourceName, uint128 syncId) internal {
+    function _updateSyncStatus(
+        bytes32 sourceName,
+        uint128 syncId
+    ) internal {
         SyncStatus storage status = _syncStatus[sourceName];
 
         if (status.initialized) {
@@ -285,7 +308,10 @@ contract NativeOracle is INativeOracle {
     /// @notice Record a hash without storing payload data
     /// @param dataHash The hash to record
     /// @param syncId The sync ID for this record
-    function _recordHashInternal(bytes32 dataHash, uint128 syncId) internal {
+    function _recordHashInternal(
+        bytes32 dataHash,
+        uint128 syncId
+    ) internal {
         DataRecord storage record = _dataRecords[dataHash];
 
         // Only increment total if this is a new record
@@ -302,7 +328,11 @@ contract NativeOracle is INativeOracle {
     /// @param dataHash The hash to record
     /// @param syncId The sync ID for this record
     /// @param payload The payload to store
-    function _recordDataInternal(bytes32 dataHash, uint128 syncId, bytes calldata payload) internal {
+    function _recordDataInternal(
+        bytes32 dataHash,
+        uint128 syncId,
+        bytes calldata payload
+    ) internal {
         DataRecord storage record = _dataRecords[dataHash];
 
         // Only increment total if this is a new record
@@ -320,7 +350,11 @@ contract NativeOracle is INativeOracle {
     /// @param sourceName The source identifier
     /// @param dataHash The data hash
     /// @param payload The event payload
-    function _invokeCallback(bytes32 sourceName, bytes32 dataHash, bytes calldata payload) internal {
+    function _invokeCallback(
+        bytes32 sourceName,
+        bytes32 dataHash,
+        bytes calldata payload
+    ) internal {
         address callback = _callbacks[sourceName];
         if (callback == address(0)) return;
 
@@ -328,7 +362,7 @@ contract NativeOracle is INativeOracle {
         // This prevents malicious callbacks from:
         // 1. Consuming excessive gas
         // 2. Blocking oracle updates by reverting
-        try IOracleCallback(callback).onOracleEvent{gas: CALLBACK_GAS_LIMIT}(dataHash, payload) {
+        try IOracleCallback(callback).onOracleEvent{ gas: CALLBACK_GAS_LIMIT }(dataHash, payload) {
             emit CallbackSuccess(sourceName, dataHash, callback);
         } catch (bytes memory reason) {
             emit CallbackFailed(sourceName, dataHash, callback, reason);
@@ -344,7 +378,10 @@ contract NativeOracle is INativeOracle {
     /// @param eventType The event type enum value
     /// @param sourceId The source identifier (e.g., keccak256("ethereum"))
     /// @return sourceName The computed source name
-    function computeSourceName(EventType eventType, bytes32 sourceId) external pure returns (bytes32) {
+    function computeSourceName(
+        EventType eventType,
+        bytes32 sourceId
+    ) external pure returns (bytes32) {
         return keccak256(abi.encode(eventType, sourceId));
     }
 }

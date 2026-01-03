@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title Timestamp
 /// @author Gravity Team
@@ -62,7 +62,10 @@ contract Timestamp {
     ///      - NIL blocks: timestamp must equal current (timestamp == current)
     /// @param proposer The block proposer address (SYSTEM_CALLER for NIL blocks)
     /// @param timestamp New timestamp in microseconds
-    function updateGlobalTime(address proposer, uint64 timestamp) external {
+    function updateGlobalTime(
+        address proposer,
+        uint64 timestamp
+    ) external {
         requireAllowed(SystemAddresses.BLOCK);
 
         uint64 current = microseconds;

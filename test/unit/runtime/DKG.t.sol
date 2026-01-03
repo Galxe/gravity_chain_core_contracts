@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {DKG} from "../../../src/runtime/DKG.sol";
-import {RandomnessConfig} from "../../../src/runtime/RandomnessConfig.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../../../src/foundation/Types.sol";
-import {NotAllowed} from "../../../src/foundation/SystemAccessControl.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
+import { Test } from "forge-std/Test.sol";
+import { DKG } from "../../../src/runtime/DKG.sol";
+import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
+import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 
 /// @title DKGTest
 /// @notice Unit tests for DKG contract
@@ -41,8 +41,7 @@ contract DKGTest is Test {
 
     function _createOffConfig() internal pure returns (RandomnessConfig.RandomnessConfigData memory) {
         return RandomnessConfig.RandomnessConfigData({
-            variant: RandomnessConfig.ConfigVariant.Off,
-            configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
+            variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
         });
     }
 
@@ -52,14 +51,14 @@ contract DKGTest is Test {
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
-                secrecyThreshold: half,
-                reconstructionThreshold: twoThirds,
-                fastPathSecrecyThreshold: twoThirds
+                secrecyThreshold: half, reconstructionThreshold: twoThirds, fastPathSecrecyThreshold: twoThirds
             })
         });
     }
 
-    function _createValidators(uint256 count) internal pure returns (ValidatorConsensusInfo[] memory) {
+    function _createValidators(
+        uint256 count
+    ) internal pure returns (ValidatorConsensusInfo[] memory) {
         ValidatorConsensusInfo[] memory validators = new ValidatorConsensusInfo[](count);
         for (uint256 i = 0; i < count; i++) {
             validators[i] = ValidatorConsensusInfo({
@@ -81,7 +80,9 @@ contract DKGTest is Test {
         _startSession(EPOCH_1);
     }
 
-    function _startSession(uint64 epoch) internal {
+    function _startSession(
+        uint64 epoch
+    ) internal {
         vm.prank(SystemAddresses.EPOCH_MANAGER);
         dkg.start(epoch, _createV2Config(), _createValidators(3), _createValidators(4));
     }
@@ -382,7 +383,10 @@ contract DKGTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_StartFinish(uint64 epoch, bytes calldata transcript) public {
+    function testFuzz_StartFinish(
+        uint64 epoch,
+        bytes calldata transcript
+    ) public {
         vm.assume(transcript.length > 0);
         _initializeDKG();
 
@@ -405,7 +409,10 @@ contract DKGTest is Test {
         assertEq(completedInfo.transcript, transcript);
     }
 
-    function testFuzz_ValidatorCounts(uint8 dealerCount, uint8 targetCount) public {
+    function testFuzz_ValidatorCounts(
+        uint8 dealerCount,
+        uint8 targetCount
+    ) public {
         vm.assume(dealerCount > 0 && dealerCount <= 10);
         vm.assume(targetCount > 0 && targetCount <= 10);
 

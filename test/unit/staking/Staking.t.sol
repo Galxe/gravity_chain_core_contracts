@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test} from "forge-std/Test.sol";
-import {Staking} from "../../../src/staking/Staking.sol";
-import {IStaking} from "../../../src/staking/IStaking.sol";
-import {IStakePool} from "../../../src/staking/IStakePool.sol";
-import {IStakingHook} from "../../../src/staking/IStakingHook.sol";
-import {StakingConfig} from "../../../src/runtime/StakingConfig.sol";
-import {Timestamp} from "../../../src/runtime/Timestamp.sol";
-import {SystemAddresses} from "../../../src/foundation/SystemAddresses.sol";
-import {Errors} from "../../../src/foundation/Errors.sol";
+import { Test } from "forge-std/Test.sol";
+import { Staking } from "../../../src/staking/Staking.sol";
+import { IStaking } from "../../../src/staking/IStaking.sol";
+import { IStakePool } from "../../../src/staking/IStakePool.sol";
+import { IStakingHook } from "../../../src/staking/IStakingHook.sol";
+import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
+import { Timestamp } from "../../../src/runtime/Timestamp.sol";
+import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
 
 /// @title MockStakingHook
 /// @notice Mock hook contract for testing
@@ -21,17 +21,23 @@ contract MockStakingHook is IStakingHook {
     uint256 public withdrawnCount;
     uint256 public lockupCount;
 
-    function onStakeAdded(uint256 amount) external override {
+    function onStakeAdded(
+        uint256 amount
+    ) external override {
         lastAddedAmount = amount;
         addedCount++;
     }
 
-    function onStakeWithdrawn(uint256 amount) external override {
+    function onStakeWithdrawn(
+        uint256 amount
+    ) external override {
         lastWithdrawnAmount = amount;
         withdrawnCount++;
     }
 
-    function onLockupIncreased(uint64 newLockedUntil) external override {
+    function onLockupIncreased(
+        uint64 newLockedUntil
+    ) external override {
         lastLockedUntil = newLockedUntil;
         lockupCount++;
     }
@@ -85,7 +91,7 @@ contract StakingTest is Test {
 
     function test_createPool_createsNewPool() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertNotEq(pool, address(0), "Pool should be created");
         assertEq(staking.getPoolCount(), 1, "Pool count should be 1");
@@ -94,7 +100,7 @@ contract StakingTest is Test {
 
     function test_createPool_setsCorrectOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(bob);
+        address pool = staking.createPool{ value: MIN_STAKE }(bob);
 
         assertEq(IStakePool(pool).getOwner(), bob, "Owner should be bob");
     }
@@ -102,14 +108,14 @@ contract StakingTest is Test {
     function test_createPool_setsInitialStake() public {
         uint256 initialStake = 10 ether;
         vm.prank(alice);
-        address pool = staking.createPool{value: initialStake}(alice);
+        address pool = staking.createPool{ value: initialStake }(alice);
 
         assertEq(IStakePool(pool).getStake(), initialStake, "Stake should match initial value");
     }
 
     function test_createPool_setsInitialLockup() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 expectedLockedUntil = INITIAL_TIMESTAMP + LOCKUP_DURATION;
         assertEq(IStakePool(pool).getLockedUntil(), expectedLockedUntil, "Lockup should be set");
@@ -120,26 +126,26 @@ contract StakingTest is Test {
         vm.expectEmit(true, false, true, true);
         // We don't know the exact pool address before creation, so we just check the event is emitted
         emit IStaking.PoolCreated(alice, address(0), alice, 0);
-        staking.createPool{value: MIN_STAKE}(alice);
+        staking.createPool{ value: MIN_STAKE }(alice);
     }
 
     function test_createPool_incrementsNonce() public {
         assertEq(staking.getPoolNonce(), 0, "Initial nonce should be 0");
 
         vm.prank(alice);
-        staking.createPool{value: MIN_STAKE}(alice);
+        staking.createPool{ value: MIN_STAKE }(alice);
         assertEq(staking.getPoolNonce(), 1, "Nonce should be 1");
 
         vm.prank(bob);
-        staking.createPool{value: MIN_STAKE}(bob);
+        staking.createPool{ value: MIN_STAKE }(bob);
         assertEq(staking.getPoolNonce(), 2, "Nonce should be 2");
     }
 
     function test_createPool_allowsMultiplePoolsPerOwner() public {
         vm.startPrank(alice);
-        address pool1 = staking.createPool{value: MIN_STAKE}(alice);
-        address pool2 = staking.createPool{value: MIN_STAKE}(alice);
-        address pool3 = staking.createPool{value: MIN_STAKE}(alice);
+        address pool1 = staking.createPool{ value: MIN_STAKE }(alice);
+        address pool2 = staking.createPool{ value: MIN_STAKE }(alice);
+        address pool3 = staking.createPool{ value: MIN_STAKE }(alice);
         vm.stopPrank();
 
         assertNotEq(pool1, pool2, "Pools should have different addresses");
@@ -150,11 +156,11 @@ contract StakingTest is Test {
     function test_createPool_anyoneCanCreate() public {
         // Alice creates pool for herself
         vm.prank(alice);
-        address pool1 = staking.createPool{value: MIN_STAKE}(alice);
+        address pool1 = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Bob creates pool for Alice
         vm.prank(bob);
-        address pool2 = staking.createPool{value: MIN_STAKE}(alice);
+        address pool2 = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertEq(IStakePool(pool1).getOwner(), alice);
         assertEq(IStakePool(pool2).getOwner(), alice);
@@ -164,13 +170,13 @@ contract StakingTest is Test {
     function test_RevertWhen_createPool_insufficientStake() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientStakeForPoolCreation.selector, 0.5 ether, MIN_STAKE));
-        staking.createPool{value: 0.5 ether}(alice);
+        staking.createPool{ value: 0.5 ether }(alice);
     }
 
     function test_RevertWhen_createPool_zeroStake() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientStakeForPoolCreation.selector, 0, MIN_STAKE));
-        staking.createPool{value: 0}(alice);
+        staking.createPool{ value: 0 }(alice);
     }
 
     function test_getPool_revertsOnInvalidIndex() public {
@@ -180,9 +186,9 @@ contract StakingTest is Test {
 
     function test_getAllPools_returnsAllPools() public {
         vm.prank(alice);
-        address pool1 = staking.createPool{value: MIN_STAKE}(alice);
+        address pool1 = staking.createPool{ value: MIN_STAKE }(alice);
         vm.prank(bob);
-        address pool2 = staking.createPool{value: MIN_STAKE}(bob);
+        address pool2 = staking.createPool{ value: MIN_STAKE }(bob);
 
         address[] memory allPools = staking.getAllPools();
         assertEq(allPools.length, 2);
@@ -200,7 +206,7 @@ contract StakingTest is Test {
 
     function test_isPool_returnsTrueForValidPool() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertTrue(staking.isPool(pool), "Should return true for valid pool");
     }
@@ -220,14 +226,14 @@ contract StakingTest is Test {
     function test_getPoolVotingPower_returnsCorrectValue() public {
         uint256 stakeAmount = 10 ether;
         vm.prank(alice);
-        address pool = staking.createPool{value: stakeAmount}(alice);
+        address pool = staking.createPool{ value: stakeAmount }(alice);
 
         assertEq(staking.getPoolVotingPower(pool), stakeAmount, "Should return voting power via factory");
     }
 
     function test_getPoolVotingPower_returnsZeroWhenUnlocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -242,7 +248,7 @@ contract StakingTest is Test {
     function test_getPoolStake_returnsCorrectValue() public {
         uint256 stakeAmount = 10 ether;
         vm.prank(alice);
-        address pool = staking.createPool{value: stakeAmount}(alice);
+        address pool = staking.createPool{ value: stakeAmount }(alice);
 
         assertEq(staking.getPoolStake(pool), stakeAmount, "Should return stake via factory");
     }
@@ -254,7 +260,7 @@ contract StakingTest is Test {
 
     function test_getPoolOwner_returnsCorrectValue() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(bob);
+        address pool = staking.createPool{ value: MIN_STAKE }(bob);
 
         assertEq(staking.getPoolOwner(pool), bob, "Should return owner via factory");
     }
@@ -266,7 +272,7 @@ contract StakingTest is Test {
 
     function test_getPoolVoter_returnsCorrectValue() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Change voter
         vm.prank(alice);
@@ -282,7 +288,7 @@ contract StakingTest is Test {
 
     function test_getPoolOperator_returnsCorrectValue() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Change operator
         vm.prank(alice);
@@ -298,7 +304,7 @@ contract StakingTest is Test {
 
     function test_getPoolLockedUntil_returnsCorrectValue() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 expectedLockedUntil = INITIAL_TIMESTAMP + LOCKUP_DURATION;
         assertEq(staking.getPoolLockedUntil(pool), expectedLockedUntil, "Should return lockedUntil via factory");
@@ -311,14 +317,14 @@ contract StakingTest is Test {
 
     function test_isPoolLocked_returnsTrueWhenLocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertTrue(staking.isPoolLocked(pool), "Should return true when locked via factory");
     }
 
     function test_isPoolLocked_returnsFalseWhenUnlocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -336,18 +342,18 @@ contract StakingTest is Test {
 
     function test_addStake_increasesStake() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint256 additionalStake = 5 ether;
         vm.prank(alice);
-        IStakePool(pool).addStake{value: additionalStake}();
+        IStakePool(pool).addStake{ value: additionalStake }();
 
         assertEq(IStakePool(pool).getStake(), MIN_STAKE + additionalStake);
     }
 
     function test_addStake_extendsLockupIfNeeded() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 initialLockedUntil = IStakePool(pool).getLockedUntil();
 
@@ -355,7 +361,7 @@ contract StakingTest is Test {
         _advanceTime(LOCKUP_DURATION / 2);
 
         vm.prank(alice);
-        IStakePool(pool).addStake{value: 1 ether}();
+        IStakePool(pool).addStake{ value: 1 ether }();
 
         // Lockup should be extended from now
         uint64 newLockedUntil = IStakePool(pool).getLockedUntil();
@@ -364,30 +370,30 @@ contract StakingTest is Test {
 
     function test_addStake_emitsStakeAddedEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
         emit IStakePool.StakeAdded(pool, 5 ether);
-        IStakePool(pool).addStake{value: 5 ether}();
+        IStakePool(pool).addStake{ value: 5 ether }();
     }
 
     function test_RevertWhen_addStake_zeroAmount() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         vm.expectRevert(Errors.ZeroAmount.selector);
-        IStakePool(pool).addStake{value: 0}();
+        IStakePool(pool).addStake{ value: 0 }();
     }
 
     function test_RevertWhen_addStake_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOwner.selector, bob, alice));
-        IStakePool(pool).addStake{value: 1 ether}();
+        IStakePool(pool).addStake{ value: 1 ether }();
     }
 
     // ========================================================================
@@ -397,14 +403,14 @@ contract StakingTest is Test {
     function test_getVotingPower_returnsStakeWhenLocked() public {
         uint256 stakeAmount = 10 ether;
         vm.prank(alice);
-        address pool = staking.createPool{value: stakeAmount}(alice);
+        address pool = staking.createPool{ value: stakeAmount }(alice);
 
         assertEq(IStakePool(pool).getVotingPower(), stakeAmount);
     }
 
     function test_getVotingPower_returnsZeroWhenUnlocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Advance time past lockup
         _advanceTime(LOCKUP_DURATION + 1);
@@ -414,14 +420,14 @@ contract StakingTest is Test {
 
     function test_isLocked_returnsTrueWhenLocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertTrue(IStakePool(pool).isLocked());
     }
 
     function test_isLocked_returnsFalseWhenUnlocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -430,7 +436,7 @@ contract StakingTest is Test {
 
     function test_getRemainingLockup_returnsCorrectValue() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 remaining = IStakePool(pool).getRemainingLockup();
         assertEq(remaining, LOCKUP_DURATION);
@@ -443,7 +449,7 @@ contract StakingTest is Test {
 
     function test_getRemainingLockup_returnsZeroWhenExpired() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -456,7 +462,7 @@ contract StakingTest is Test {
 
     function test_withdraw_withdrawsStake() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: 10 ether}(alice);
+        address pool = staking.createPool{ value: 10 ether }(alice);
 
         // Advance time past lockup
         _advanceTime(LOCKUP_DURATION + 1);
@@ -471,7 +477,7 @@ contract StakingTest is Test {
 
     function test_withdraw_emitsStakeWithdrawnEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: 10 ether}(alice);
+        address pool = staking.createPool{ value: 10 ether }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -483,7 +489,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_withdraw_locked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 lockedUntil = IStakePool(pool).getLockedUntil();
         vm.prank(alice);
@@ -493,7 +499,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_withdraw_zeroAmount() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -504,7 +510,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_withdraw_insufficientStake() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -515,7 +521,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_withdraw_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -530,7 +536,7 @@ contract StakingTest is Test {
 
     function test_increaseLockup_extendsLockup() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 oldLockedUntil = IStakePool(pool).getLockedUntil();
         uint64 extension = LOCKUP_DURATION; // Extend by another full lockup duration
@@ -544,7 +550,7 @@ contract StakingTest is Test {
 
     function test_increaseLockup_emitsLockupIncreasedEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 oldLockedUntil = IStakePool(pool).getLockedUntil();
         uint64 extension = LOCKUP_DURATION;
@@ -557,7 +563,7 @@ contract StakingTest is Test {
 
     function test_increaseLockup_restoresVotingPower() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Advance time past lockup
         _advanceTime(LOCKUP_DURATION + 1);
@@ -572,7 +578,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_increaseLockup_durationTooShort() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 shortDuration = LOCKUP_DURATION / 2; // Less than minimum
 
@@ -583,7 +589,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_increaseLockup_overflow() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         // Try to overflow by adding max uint64
         vm.prank(alice);
@@ -593,7 +599,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_increaseLockup_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOwner.selector, bob, alice));
@@ -606,7 +612,7 @@ contract StakingTest is Test {
 
     function test_defaultRoles_setToOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         assertEq(IStakePool(pool).getOwner(), alice);
         assertEq(IStakePool(pool).getOperator(), alice);
@@ -615,7 +621,7 @@ contract StakingTest is Test {
 
     function test_setOperator_changesOperator() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         IStakePool(pool).setOperator(bob);
@@ -625,7 +631,7 @@ contract StakingTest is Test {
 
     function test_setOperator_emitsOperatorChangedEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
@@ -635,7 +641,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_setOperator_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOwner.selector, bob, alice));
@@ -644,7 +650,7 @@ contract StakingTest is Test {
 
     function test_setVoter_changesVoter() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         IStakePool(pool).setVoter(bob);
@@ -654,7 +660,7 @@ contract StakingTest is Test {
 
     function test_setVoter_emitsVoterChangedEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
@@ -664,7 +670,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_setVoter_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOwner.selector, bob, alice));
@@ -677,7 +683,7 @@ contract StakingTest is Test {
 
     function test_setHook_setsHook() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
 
@@ -689,7 +695,7 @@ contract StakingTest is Test {
 
     function test_setHook_emitsHookChangedEvent() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
 
@@ -701,14 +707,14 @@ contract StakingTest is Test {
 
     function test_hook_calledOnAddStake() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
         vm.prank(alice);
         IStakePool(pool).setHook(address(mockHook));
 
         vm.prank(alice);
-        IStakePool(pool).addStake{value: 5 ether}();
+        IStakePool(pool).addStake{ value: 5 ether }();
 
         assertEq(mockHook.lastAddedAmount(), 5 ether);
         assertEq(mockHook.addedCount(), 1);
@@ -716,7 +722,7 @@ contract StakingTest is Test {
 
     function test_hook_calledOnWithdraw() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: 10 ether}(alice);
+        address pool = staking.createPool{ value: 10 ether }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
         vm.prank(alice);
@@ -733,7 +739,7 @@ contract StakingTest is Test {
 
     function test_hook_calledOnIncreaseLockup() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
         vm.prank(alice);
@@ -749,7 +755,7 @@ contract StakingTest is Test {
 
     function test_RevertWhen_setHook_notOwner() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         MockStakingHook mockHook = new MockStakingHook();
 
@@ -762,35 +768,43 @@ contract StakingTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_createPool_variousAmounts(uint96 amount) public {
+    function testFuzz_createPool_variousAmounts(
+        uint96 amount
+    ) public {
         amount = uint96(bound(amount, MIN_STAKE, 1000 ether));
 
         vm.prank(alice);
-        address pool = staking.createPool{value: amount}(alice);
+        address pool = staking.createPool{ value: amount }(alice);
 
         assertEq(IStakePool(pool).getStake(), amount);
         assertEq(IStakePool(pool).getVotingPower(), amount);
     }
 
-    function testFuzz_addStake_variousAmounts(uint96 initialStake, uint96 additionalStake) public {
+    function testFuzz_addStake_variousAmounts(
+        uint96 initialStake,
+        uint96 additionalStake
+    ) public {
         initialStake = uint96(bound(initialStake, MIN_STAKE, 500 ether));
         additionalStake = uint96(bound(additionalStake, 1, 500 ether));
 
         vm.prank(alice);
-        address pool = staking.createPool{value: initialStake}(alice);
+        address pool = staking.createPool{ value: initialStake }(alice);
 
         vm.prank(alice);
-        IStakePool(pool).addStake{value: additionalStake}();
+        IStakePool(pool).addStake{ value: additionalStake }();
 
         assertEq(IStakePool(pool).getStake(), uint256(initialStake) + uint256(additionalStake));
     }
 
-    function testFuzz_withdraw_afterLockup(uint96 stakeAmount, uint96 withdrawAmount) public {
+    function testFuzz_withdraw_afterLockup(
+        uint96 stakeAmount,
+        uint96 withdrawAmount
+    ) public {
         stakeAmount = uint96(bound(stakeAmount, MIN_STAKE, 1000 ether));
         withdrawAmount = uint96(bound(withdrawAmount, 1, stakeAmount));
 
         vm.prank(alice);
-        address pool = staking.createPool{value: stakeAmount}(alice);
+        address pool = staking.createPool{ value: stakeAmount }(alice);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
@@ -802,7 +816,9 @@ contract StakingTest is Test {
         assertEq(alice.balance, balanceBefore + withdrawAmount);
     }
 
-    function testFuzz_multiplePools_concurrentOperations(uint8 numPools) public {
+    function testFuzz_multiplePools_concurrentOperations(
+        uint8 numPools
+    ) public {
         numPools = uint8(bound(numPools, 1, 10));
 
         address[] memory pools = new address[](numPools);
@@ -810,7 +826,7 @@ contract StakingTest is Test {
         // Create pools
         for (uint256 i = 0; i < numPools; i++) {
             vm.prank(alice);
-            pools[i] = staking.createPool{value: MIN_STAKE}(alice);
+            pools[i] = staking.createPool{ value: MIN_STAKE }(alice);
         }
 
         assertEq(staking.getPoolCount(), numPools);
@@ -828,7 +844,7 @@ contract StakingTest is Test {
 
     function test_invariant_votingPowerMatchesLockedStake() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: 10 ether}(alice);
+        address pool = staking.createPool{ value: 10 ether }(alice);
 
         // When locked: votingPower == stake
         assertTrue(IStakePool(pool).isLocked());
@@ -842,14 +858,14 @@ contract StakingTest is Test {
 
     function test_invariant_lockupNeverDecreases() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: MIN_STAKE}(alice);
+        address pool = staking.createPool{ value: MIN_STAKE }(alice);
 
         uint64 lockedUntil1 = IStakePool(pool).getLockedUntil();
 
         // addStake should only increase or maintain lockup
         _advanceTime(LOCKUP_DURATION / 4);
         vm.prank(alice);
-        IStakePool(pool).addStake{value: 1 ether}();
+        IStakePool(pool).addStake{ value: 1 ether }();
         uint64 lockedUntil2 = IStakePool(pool).getLockedUntil();
         assertGe(lockedUntil2, lockedUntil1, "Lockup should not decrease");
 
@@ -862,7 +878,7 @@ contract StakingTest is Test {
 
     function test_invariant_withdrawOnlyWhenUnlocked() public {
         vm.prank(alice);
-        address pool = staking.createPool{value: 10 ether}(alice);
+        address pool = staking.createPool{ value: 10 ether }(alice);
 
         // Should fail while locked
         assertTrue(IStakePool(pool).isLocked());
@@ -881,7 +897,9 @@ contract StakingTest is Test {
     // HELPERS
     // ========================================================================
 
-    function _advanceTime(uint64 duration) internal {
+    function _advanceTime(
+        uint64 duration
+    ) internal {
         uint64 currentTime = timestamp.microseconds();
         uint64 newTime = currentTime + duration;
         vm.prank(SystemAddresses.BLOCK);
