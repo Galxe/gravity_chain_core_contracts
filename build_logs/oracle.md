@@ -59,7 +59,7 @@ Data is recorded by the consensus engine via SYSTEM_CALLER after validators reac
 |------|----------|-----------|
 | 2026-01-02 | Use existing `HASH_ORACLE` address (renamed to `NATIVE_ORACLE`) | Reuse allocated system address |
 | 2026-01-02 | SYSTEM_CALLER calls NativeOracle directly | Consistent with Blocker pattern, no GravityPortal needed on Gravity chain |
-| 2026-01-02 | Governance (TIMELOCK) only for callback registration | Maximum security for callback control |
+| 2026-01-02 | Governance (GOVERNANCE) only for callback registration | Maximum security for callback control |
 | 2026-01-02 | Simple callback interface, routers built later | Focus on core oracle, avoid over-engineering |
 | 2026-01-02 | Callback gas limit of 500,000 | Prevents DOS while allowing reasonable callback logic |
 | 2026-01-02 | Callbacks failures do NOT revert oracle recording | Critical for availability |
@@ -98,7 +98,7 @@ spec_v2/
 |----------|--------|
 | System address for oracle | Use existing 0x1625F2023, renamed from HASH_ORACLE to NATIVE_ORACLE |
 | GravityPortal on Gravity chain | Not needed, SYSTEM_CALLER calls oracle directly |
-| Callback registration access | Governance (TIMELOCK) only |
+| Callback registration access | Governance (GOVERNANCE) only |
 | G Token Bridge | Deferred to future implementation |
 
 ---
@@ -108,7 +108,7 @@ spec_v2/
 ```
 Native Oracle depends on:
 ├── Foundation Layer
-│   ├── SystemAddresses.sol (for SYSTEM_CALLER, GENESIS, TIMELOCK)
+│   ├── SystemAddresses.sol (for SYSTEM_CALLER, GENESIS, GOVERNANCE)
 │   ├── SystemAccessControl.sol (for requireAllowed)
 │   └── Errors.sol (for custom errors)
 
@@ -141,7 +141,7 @@ flowchart TD
     SC -->|recordHash/recordData| NO
     NO -->|onOracleEvent| CB
     
-    TL[TIMELOCK/Governance] -->|setCallback| NO
+    GOV[Governance] -->|setCallback| NO
 ```
 
 ---

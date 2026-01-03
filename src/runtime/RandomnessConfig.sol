@@ -8,7 +8,7 @@ import {Errors} from "../foundation/Errors.sol";
 /// @title RandomnessConfig
 /// @author Gravity Team
 /// @notice Configuration parameters for on-chain randomness (DKG thresholds)
-/// @dev Initialized at genesis, updatable via governance (TIMELOCK).
+/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
 ///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 ///      Threshold values use fixed-point representation (value / 2^64).
 contract RandomnessConfig {
@@ -132,14 +132,14 @@ contract RandomnessConfig {
     }
 
     // ========================================================================
-    // GOVERNANCE FUNCTIONS (TIMELOCK only)
+    // GOVERNANCE FUNCTIONS (GOVERNANCE only)
     // ========================================================================
 
     /// @notice Set configuration for next epoch
-    /// @dev Only callable by TIMELOCK (governance). Config will be applied at epoch boundary.
+    /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
     /// @param newConfig New configuration to apply at next epoch
     function setForNextEpoch(RandomnessConfigData calldata newConfig) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         _validateConfig(newConfig);

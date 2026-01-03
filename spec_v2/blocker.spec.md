@@ -74,7 +74,7 @@ flowchart TD
     subgraph Callers[External Callers]
         RUNTIME[VM Runtime]
         CONSENSUS[Consensus Engine]
-        GOV[Governance/TIMELOCK]
+        GOV[Governance]
     end
     
     RUNTIME -->|onBlockStart| B
@@ -215,7 +215,7 @@ Check and start epoch transition if conditions are met.
 
 Finish epoch transition after DKG completes.
 
-**Access Control**: SYSTEM_CALLER (consensus engine) or TIMELOCK (governance)
+**Access Control**: SYSTEM_CALLER (consensus engine) or GOVERNANCE (governance)
 
 **Parameters**:
 - `dkgResult` - DKG transcript (empty bytes for force-end or if DKG disabled)
@@ -240,7 +240,7 @@ Finish epoch transition after DKG completes.
 
 Update epoch interval via governance.
 
-**Access Control**: TIMELOCK only
+**Access Control**: GOVERNANCE only
 
 **Behavior**:
 1. Require `newIntervalMicros > 0`
@@ -315,8 +315,8 @@ Called by VM runtime at the start of each block.
 |----------|-----------------|
 | `Reconfiguration.initialize()` | GENESIS only |
 | `Reconfiguration.checkAndStartTransition()` | BLOCK only |
-| `Reconfiguration.finishTransition()` | SYSTEM_CALLER or TIMELOCK |
-| `Reconfiguration.setEpochIntervalMicros()` | TIMELOCK only |
+| `Reconfiguration.finishTransition()` | SYSTEM_CALLER or GOVERNANCE |
+| `Reconfiguration.setEpochIntervalMicros()` | GOVERNANCE only |
 | `Reconfiguration` view functions | Anyone |
 | `Blocker.initialize()` | GENESIS only |
 | `Blocker.onBlockStart()` | SYSTEM_CALLER only |
@@ -455,11 +455,11 @@ This is acceptable behavior since the chain was down anyway.
 ## Security Considerations
 
 1. **Single Orchestrator**: Only Reconfiguration controls epoch transitions
-2. **Two Entry Points**: Only Blocker (start) and SYSTEM_CALLER/TIMELOCK (finish) can trigger transitions
+2. **Two Entry Points**: Only Blocker (start) and SYSTEM_CALLER/GOVERNANCE (finish) can trigger transitions
 3. **DKG-Gated**: Cannot complete transition without DKG completion (unless force-ended)
 4. **Explicit State Machine**: TransitionState prevents invalid state changes
 5. **Time-based**: Uses on-chain timestamp, not manipulable block numbers
-6. **Governance Escape Hatch**: TIMELOCK can force-end epoch if DKG is stuck
+6. **Governance Escape Hatch**: GOVERNANCE can force-end epoch if DKG is stuck
 
 ---
 
@@ -471,7 +471,7 @@ This is acceptable behavior since the chain was down anyway.
    - [x] Initialize correctly
    - [x] State machine transitions (Idle → DkgInProgress → Idle)
    - [x] Time-based transition condition
-   - [x] Access control (BLOCK, SYSTEM_CALLER, TIMELOCK)
+   - [x] Access control (BLOCK, SYSTEM_CALLER, GOVERNANCE)
    - [x] Parameter updates (setEpochIntervalMicros)
    - [x] Error conditions
    - [x] Full epoch lifecycle

@@ -70,8 +70,8 @@ contract GovernanceTest is Test {
         govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS);
 
         // Deploy Governance
-        vm.etch(SystemAddresses.VOTING, address(new Governance()).code);
-        governance = Governance(SystemAddresses.VOTING);
+        vm.etch(SystemAddresses.GOVERNANCE, address(new Governance()).code);
+        governance = Governance(SystemAddresses.GOVERNANCE);
 
         // Initialize Governance
         vm.prank(SystemAddresses.GENESIS);

@@ -192,7 +192,7 @@ contract NativeOracle is INativeOracle {
 
     /// @inheritdoc INativeOracle
     function setCallback(bytes32 sourceName, address callback) external whenInitialized {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         address oldCallback = _callbacks[sourceName];
         _callbacks[sourceName] = callback;

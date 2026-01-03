@@ -13,12 +13,17 @@ contract SystemAddressesTest is Test {
         assertEq(SystemAddresses.GENESIS, address(0x0000000000000000000000000001625F2008));
         assertEq(SystemAddresses.EPOCH_MANAGER, address(0x0000000000000000000000000001625F2010));
         assertEq(SystemAddresses.STAKE_CONFIG, address(0x0000000000000000000000000001625F2011));
+        assertEq(SystemAddresses.STAKING, address(0x0000000000000000000000000001625F2012));
         assertEq(SystemAddresses.VALIDATOR_MANAGER, address(0x0000000000000000000000000001625F2013));
+        assertEq(SystemAddresses.GOVERNANCE, address(0x0000000000000000000000000001625F2014));
+        assertEq(SystemAddresses.VALIDATOR_CONFIG, address(0x0000000000000000000000000001625F2015));
         assertEq(SystemAddresses.BLOCK, address(0x0000000000000000000000000001625F2016));
         assertEq(SystemAddresses.TIMESTAMP, address(0x0000000000000000000000000001625F2017));
         assertEq(SystemAddresses.JWK_MANAGER, address(0x0000000000000000000000000001625F2018));
-        assertEq(SystemAddresses.TIMELOCK, address(0x0000000000000000000000000001625F201F));
         assertEq(SystemAddresses.NATIVE_ORACLE, address(0x0000000000000000000000000001625F2023));
+        assertEq(SystemAddresses.RANDOMNESS_CONFIG, address(0x0000000000000000000000000001625F2024));
+        assertEq(SystemAddresses.DKG, address(0x0000000000000000000000000001625F2025));
+        assertEq(SystemAddresses.GOVERNANCE_CONFIG, address(0x0000000000000000000000000001625F2026));
     }
 
     /// @notice Test that all addresses are non-zero
@@ -27,27 +32,37 @@ contract SystemAddressesTest is Test {
         assertTrue(SystemAddresses.GENESIS != address(0), "GENESIS should not be zero");
         assertTrue(SystemAddresses.EPOCH_MANAGER != address(0), "EPOCH_MANAGER should not be zero");
         assertTrue(SystemAddresses.STAKE_CONFIG != address(0), "STAKE_CONFIG should not be zero");
+        assertTrue(SystemAddresses.STAKING != address(0), "STAKING should not be zero");
         assertTrue(SystemAddresses.VALIDATOR_MANAGER != address(0), "VALIDATOR_MANAGER should not be zero");
+        assertTrue(SystemAddresses.GOVERNANCE != address(0), "GOVERNANCE should not be zero");
+        assertTrue(SystemAddresses.VALIDATOR_CONFIG != address(0), "VALIDATOR_CONFIG should not be zero");
         assertTrue(SystemAddresses.BLOCK != address(0), "BLOCK should not be zero");
         assertTrue(SystemAddresses.TIMESTAMP != address(0), "TIMESTAMP should not be zero");
         assertTrue(SystemAddresses.JWK_MANAGER != address(0), "JWK_MANAGER should not be zero");
-        assertTrue(SystemAddresses.TIMELOCK != address(0), "TIMELOCK should not be zero");
         assertTrue(SystemAddresses.NATIVE_ORACLE != address(0), "NATIVE_ORACLE should not be zero");
+        assertTrue(SystemAddresses.RANDOMNESS_CONFIG != address(0), "RANDOMNESS_CONFIG should not be zero");
+        assertTrue(SystemAddresses.DKG != address(0), "DKG should not be zero");
+        assertTrue(SystemAddresses.GOVERNANCE_CONFIG != address(0), "GOVERNANCE_CONFIG should not be zero");
     }
 
     /// @notice Test that all addresses are unique
     function test_AddressesUnique() public pure {
-        address[10] memory addresses = [
+        address[15] memory addresses = [
             SystemAddresses.SYSTEM_CALLER,
             SystemAddresses.GENESIS,
             SystemAddresses.EPOCH_MANAGER,
             SystemAddresses.STAKE_CONFIG,
+            SystemAddresses.STAKING,
             SystemAddresses.VALIDATOR_MANAGER,
+            SystemAddresses.GOVERNANCE,
+            SystemAddresses.VALIDATOR_CONFIG,
             SystemAddresses.BLOCK,
             SystemAddresses.TIMESTAMP,
             SystemAddresses.JWK_MANAGER,
-            SystemAddresses.TIMELOCK,
-            SystemAddresses.NATIVE_ORACLE
+            SystemAddresses.NATIVE_ORACLE,
+            SystemAddresses.RANDOMNESS_CONFIG,
+            SystemAddresses.DKG,
+            SystemAddresses.GOVERNANCE_CONFIG
         ];
 
         // Check each pair for uniqueness
@@ -64,35 +79,21 @@ contract SystemAddressesTest is Test {
         uint256 pattern = 0x1625F2;
         uint256 shift = 12; // 3 hex digits = 12 bits for the suffix
 
-        // Verify SYSTEM_CALLER follows pattern (ends in 000)
+        // Verify all addresses follow pattern
         assertEq(uint160(SystemAddresses.SYSTEM_CALLER) >> shift, pattern);
-
-        // Verify GENESIS follows pattern (ends in 008)
         assertEq(uint160(SystemAddresses.GENESIS) >> shift, pattern);
-
-        // Verify EPOCH_MANAGER follows pattern (ends in 010)
         assertEq(uint160(SystemAddresses.EPOCH_MANAGER) >> shift, pattern);
-
-        // Verify STAKE_CONFIG follows pattern (ends in 011)
         assertEq(uint160(SystemAddresses.STAKE_CONFIG) >> shift, pattern);
-
-        // Verify VALIDATOR_MANAGER follows pattern (ends in 013)
+        assertEq(uint160(SystemAddresses.STAKING) >> shift, pattern);
         assertEq(uint160(SystemAddresses.VALIDATOR_MANAGER) >> shift, pattern);
-
-        // Verify BLOCK follows pattern (ends in 016)
+        assertEq(uint160(SystemAddresses.GOVERNANCE) >> shift, pattern);
+        assertEq(uint160(SystemAddresses.VALIDATOR_CONFIG) >> shift, pattern);
         assertEq(uint160(SystemAddresses.BLOCK) >> shift, pattern);
-
-        // Verify TIMESTAMP follows pattern (ends in 017)
         assertEq(uint160(SystemAddresses.TIMESTAMP) >> shift, pattern);
-
-        // Verify JWK_MANAGER follows pattern (ends in 018)
         assertEq(uint160(SystemAddresses.JWK_MANAGER) >> shift, pattern);
-
-        // Verify TIMELOCK follows pattern (ends in 01F)
-        assertEq(uint160(SystemAddresses.TIMELOCK) >> shift, pattern);
-
-        // Verify NATIVE_ORACLE follows pattern (ends in 023)
         assertEq(uint160(SystemAddresses.NATIVE_ORACLE) >> shift, pattern);
+        assertEq(uint160(SystemAddresses.RANDOMNESS_CONFIG) >> shift, pattern);
+        assertEq(uint160(SystemAddresses.DKG) >> shift, pattern);
+        assertEq(uint160(SystemAddresses.GOVERNANCE_CONFIG) >> shift, pattern);
     }
 }
-

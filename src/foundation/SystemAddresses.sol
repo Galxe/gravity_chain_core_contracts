@@ -32,9 +32,9 @@ library SystemAddresses {
     /// @dev Manages validator registration, bonding, and set transitions
     address internal constant VALIDATOR_MANAGER = address(0x0000000000000000000000000001625F2013);
 
-    /// @notice Governance voting engine
-    /// @dev Generic proposal/vote/resolve engine for governance
-    address internal constant VOTING = address(0x0000000000000000000000000001625F2014);
+    /// @notice Governance contract
+    /// @dev Handles proposals, voting, and execution of governance decisions
+    address internal constant GOVERNANCE = address(0x0000000000000000000000000001625F2014);
 
     /// @notice Validator configuration contract
     /// @dev Stores validator parameters (minimum/maximum bond, unbonding delay, etc.)
@@ -51,10 +51,6 @@ library SystemAddresses {
     /// @notice JWK (JSON Web Key) manager
     /// @dev Manages JWKs for keyless account authentication
     address internal constant JWK_MANAGER = address(0x0000000000000000000000000001625F2018);
-
-    /// @notice Timelock controller for governance
-    /// @dev Enforces time delays on governance proposals
-    address internal constant TIMELOCK = address(0x0000000000000000000000000001625F201F);
 
     /// @notice Native Oracle contract
     /// @dev Stores verified data from external sources (blockchains, JWK providers, DNS).

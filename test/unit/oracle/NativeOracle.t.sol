@@ -48,7 +48,7 @@ contract NativeOracleTest is Test {
     // Test addresses
     address public systemCaller;
     address public genesis;
-    address public timelock;
+    address public governance;
     address public alice;
     address public bob;
 
@@ -62,7 +62,7 @@ contract NativeOracleTest is Test {
         // Set up addresses
         systemCaller = SystemAddresses.SYSTEM_CALLER;
         genesis = SystemAddresses.GENESIS;
-        timelock = SystemAddresses.TIMELOCK;
+        governance = SystemAddresses.GOVERNANCE;
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
@@ -294,7 +294,7 @@ contract NativeOracleTest is Test {
     // ========================================================================
 
     function test_SetCallback() public {
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         assertEq(oracle.getCallback(ethereumSourceName), address(mockCallback));
@@ -308,11 +308,11 @@ contract NativeOracleTest is Test {
 
     function test_SetCallback_Unregister() public {
         // Register callback
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         // Unregister by setting to zero
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(0));
 
         assertEq(oracle.getCallback(ethereumSourceName), address(0));
@@ -320,7 +320,7 @@ contract NativeOracleTest is Test {
 
     function test_CallbackInvoked() public {
         // Register callback
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         // Record hash
@@ -339,7 +339,7 @@ contract NativeOracleTest is Test {
     function test_CallbackFailureDoesNotRevert() public {
         // Register callback that reverts
         mockCallback.setRevert(true);
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         // Record hash - should NOT revert even though callback fails
@@ -360,7 +360,7 @@ contract NativeOracleTest is Test {
     function test_CallbackGasLimitEnforced() public {
         // Register callback that consumes all gas
         mockCallback.setConsumeAllGas(true);
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         // Record hash - should NOT revert even though callback runs out of gas
@@ -377,7 +377,7 @@ contract NativeOracleTest is Test {
 
     function test_CallbackInvokedForBatch() public {
         // Register callback
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         // Record batch
@@ -573,12 +573,12 @@ contract NativeOracleTest is Test {
         vm.expectEmit(true, true, true, false);
         emit INativeOracle.CallbackSet(ethereumSourceName, address(0), address(mockCallback));
 
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
     }
 
     function test_Events_CallbackSuccess() public {
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         bytes memory payload = abi.encode(alice, uint256(100));
@@ -593,7 +593,7 @@ contract NativeOracleTest is Test {
 
     function test_Events_CallbackFailed() public {
         mockCallback.setRevert(true);
-        vm.prank(timelock);
+        vm.prank(governance);
         oracle.setCallback(ethereumSourceName, address(mockCallback));
 
         bytes memory payload = abi.encode(alice, uint256(100));

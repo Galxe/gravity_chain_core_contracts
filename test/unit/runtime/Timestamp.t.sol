@@ -205,8 +205,8 @@ contract TimestampTest is Test {
     }
 
     function test_RevertWhen_CallerIsTimelock() public {
-        vm.prank(SystemAddresses.TIMELOCK);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.TIMELOCK, SystemAddresses.BLOCK));
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GOVERNANCE, SystemAddresses.BLOCK));
         timestamp.updateGlobalTime(PROPOSER, INITIAL_TIME);
     }
 

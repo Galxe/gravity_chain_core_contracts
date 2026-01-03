@@ -90,7 +90,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint256 newMinStake = 5 ether;
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumStake(newMinStake);
 
         assertEq(config.minimumStake(), newMinStake);
@@ -99,7 +99,7 @@ contract StakingConfigTest is Test {
     function test_SetMinimumStake_ToZero() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumStake(0);
 
         assertEq(config.minimumStake(), 0);
@@ -110,7 +110,7 @@ contract StakingConfigTest is Test {
 
         address notTimelock = address(0x1234);
         vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.TIMELOCK));
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
         config.setMinimumStake(5 ether);
     }
 
@@ -118,7 +118,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint256 newMinStake = 5 ether;
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit StakingConfig.ConfigUpdated("minimumStake", MIN_STAKE, newMinStake);
         config.setMinimumStake(newMinStake);
@@ -132,7 +132,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint64 newDuration = 60 days * 1_000_000; // 60 days in microseconds
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setLockupDurationMicros(newDuration);
 
         assertEq(config.lockupDurationMicros(), newDuration);
@@ -141,7 +141,7 @@ contract StakingConfigTest is Test {
     function test_RevertWhen_SetLockupDurationMicros_Zero() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidLockupDuration.selector);
         config.setLockupDurationMicros(0);
     }
@@ -151,7 +151,7 @@ contract StakingConfigTest is Test {
 
         address notTimelock = address(0x1234);
         vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.TIMELOCK));
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
         config.setLockupDurationMicros(60 days * 1_000_000);
     }
 
@@ -159,7 +159,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint64 newDuration = 60 days * 1_000_000;
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit StakingConfig.ConfigUpdated("lockupDurationMicros", LOCKUP_DURATION, newDuration);
         config.setLockupDurationMicros(newDuration);
@@ -173,7 +173,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint256 newMinProposalStake = 20 ether;
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumProposalStake(newMinProposalStake);
 
         assertEq(config.minimumProposalStake(), newMinProposalStake);
@@ -182,7 +182,7 @@ contract StakingConfigTest is Test {
     function test_SetMinimumProposalStake_ToZero() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumProposalStake(0);
 
         assertEq(config.minimumProposalStake(), 0);
@@ -192,7 +192,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         // Can set minimumProposalStake below minimumStake (governance decision)
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumProposalStake(MIN_STAKE / 2);
 
         assertEq(config.minimumProposalStake(), MIN_STAKE / 2);
@@ -203,7 +203,7 @@ contract StakingConfigTest is Test {
 
         address notTimelock = address(0x1234);
         vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.TIMELOCK));
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
         config.setMinimumProposalStake(20 ether);
     }
 
@@ -211,7 +211,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         uint256 newMinProposalStake = 20 ether;
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit StakingConfig.ConfigUpdated("minimumProposalStake", MIN_PROPOSAL_STAKE, newMinProposalStake);
         config.setMinimumProposalStake(newMinProposalStake);
@@ -225,7 +225,7 @@ contract StakingConfigTest is Test {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.TIMELOCK));
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE));
         config.setMinimumStake(5 ether);
     }
 
@@ -234,7 +234,7 @@ contract StakingConfigTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectRevert(
-            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.TIMELOCK)
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
         );
         config.setMinimumStake(5 ether);
     }
@@ -257,7 +257,7 @@ contract StakingConfigTest is Test {
     function testFuzz_SetMinimumStake(uint256 newValue) public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumStake(newValue);
 
         assertEq(config.minimumStake(), newValue);
@@ -267,7 +267,7 @@ contract StakingConfigTest is Test {
         vm.assume(newValue > 0);
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setLockupDurationMicros(newValue);
 
         assertEq(config.lockupDurationMicros(), newValue);
@@ -276,7 +276,7 @@ contract StakingConfigTest is Test {
     function testFuzz_SetMinimumProposalStake(uint256 newValue) public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinimumProposalStake(newValue);
 
         assertEq(config.minimumProposalStake(), newValue);

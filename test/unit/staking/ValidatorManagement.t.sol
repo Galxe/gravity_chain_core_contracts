@@ -247,7 +247,7 @@ contract ValidatorManagementTest is Test {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
 
         // Disable validator set changes
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         validatorConfig.setAllowValidatorSetChange(false);
 
         vm.prank(alice);

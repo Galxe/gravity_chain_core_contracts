@@ -74,8 +74,8 @@ pattern and are reserved at genesis.
 | `BLOCK`            | `0x0000000000000000000000000001625F2016`       | Block prologue/epilogue handler   |
 | `TIMESTAMP`        | `0x0000000000000000000000000001625F2017`       | On-chain time oracle              |
 | `JWK_MANAGER`      | `0x0000000000000000000000000001625F2018`       | JWK management for keyless auth   |
-| `TIMELOCK`         | `0x0000000000000000000000000001625F201F`       | Timelock controller (governance)  |
-| `HASH_ORACLE`      | `0x0000000000000000000000000001625F2023`       | Hash oracle                       |
+| `GOVERNANCE`       | `0x0000000000000000000000000001625F2014`       | Governance contract               |
+| `NATIVE_ORACLE`    | `0x0000000000000000000000000001625F2023`       | Native oracle                     |
 
 ### Implementation
 
@@ -120,13 +120,13 @@ library SystemAddresses {
     /// @dev Manages JWKs for keyless account authentication
     address internal constant JWK_MANAGER = 0x0000000000000000000000000001625F2018;
 
-    /// @notice Timelock controller for governance
-    /// @dev Enforces time delays on governance proposals
-    address internal constant TIMELOCK = 0x0000000000000000000000000001625F201F;
+    /// @notice Governance contract
+    /// @dev Handles proposals, voting, and execution of governance decisions
+    address internal constant GOVERNANCE = 0x0000000000000000000000000001625F2014;
 
-    /// @notice Hash oracle contract
-    /// @dev Provides hash verification services
-    address internal constant HASH_ORACLE = 0x0000000000000000000000000001625F2023;
+    /// @notice Native oracle contract
+    /// @dev Stores verified data from external sources
+    address internal constant NATIVE_ORACLE = 0x0000000000000000000000000001625F2023;
 }
 ```
 
@@ -630,7 +630,7 @@ contract ValidatorManager {
     }
 
     modifier onlyGovernance() {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
         _;
     }
 
@@ -662,7 +662,7 @@ contract EmergencyController {
         requireAllowed(
             SystemAddresses.SYSTEM_CALLER,
             SystemAddresses.GENESIS,
-            SystemAddresses.TIMELOCK
+            SystemAddresses.GOVERNANCE
         );
         // ... emergency logic
     }

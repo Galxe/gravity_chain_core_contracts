@@ -147,8 +147,8 @@ contract Reconfiguration is IReconfiguration {
 
     /// @inheritdoc IReconfiguration
     function finishTransition(bytes calldata dkgResult) external override {
-        // Allow SYSTEM_CALLER (consensus engine) or TIMELOCK (governance force-end)
-        requireAllowed(SystemAddresses.SYSTEM_CALLER, SystemAddresses.TIMELOCK);
+        // Allow SYSTEM_CALLER (consensus engine) or GOVERNANCE (governance force-end)
+        requireAllowed(SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         // 1. Validate state
@@ -187,7 +187,7 @@ contract Reconfiguration is IReconfiguration {
 
     /// @inheritdoc IReconfiguration
     function setEpochIntervalMicros(uint64 newIntervalMicros) external override {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         if (newIntervalMicros == 0) {

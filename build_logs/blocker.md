@@ -36,7 +36,7 @@ Implementation of the Blocker layer containing `Reconfiguration.sol` and `Blocke
 
 ### Access Control for `finishTransition()`
 - Callable by SYSTEM_CALLER (consensus engine) for normal transitions
-- Callable by TIMELOCK (governance) for force-ending stuck epochs
+- Callable by GOVERNANCE (governance) for force-ending stuck epochs
 - Provides escape hatch if DKG is stuck
 
 ### ValidatorManagement Interface

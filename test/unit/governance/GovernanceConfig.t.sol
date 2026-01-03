@@ -87,18 +87,18 @@ contract GovernanceConfigTest is Test {
 
         uint128 newThreshold = 2000 ether;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setMinVotingThreshold(newThreshold);
 
         assertEq(config.minVotingThreshold(), newThreshold);
     }
 
-    function test_RevertWhen_SetMinVotingThresholdNotTimelock() public {
+    function test_RevertWhen_SetMinVotingThresholdNotGovernance() public {
         _initializeConfig();
 
-        address notTimelock = address(0x5678);
+        address notGovernance = address(0x5678);
 
-        vm.prank(notTimelock);
+        vm.prank(notGovernance);
         vm.expectRevert();
         config.setMinVotingThreshold(2000 ether);
     }
@@ -108,18 +108,18 @@ contract GovernanceConfigTest is Test {
 
         uint256 newStake = 200 ether;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setRequiredProposerStake(newStake);
 
         assertEq(config.requiredProposerStake(), newStake);
     }
 
-    function test_RevertWhen_SetRequiredProposerStakeNotTimelock() public {
+    function test_RevertWhen_SetRequiredProposerStakeNotGovernance() public {
         _initializeConfig();
 
-        address notTimelock = address(0x5678);
+        address notGovernance = address(0x5678);
 
-        vm.prank(notTimelock);
+        vm.prank(notGovernance);
         vm.expectRevert();
         config.setRequiredProposerStake(200 ether);
     }
@@ -129,18 +129,18 @@ contract GovernanceConfigTest is Test {
 
         uint64 newDuration = 14 days * 1_000_000;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setVotingDurationMicros(newDuration);
 
         assertEq(config.votingDurationMicros(), newDuration);
     }
 
-    function test_RevertWhen_SetVotingDurationMicrosNotTimelock() public {
+    function test_RevertWhen_SetVotingDurationMicrosNotGovernance() public {
         _initializeConfig();
 
-        address notTimelock = address(0x5678);
+        address notGovernance = address(0x5678);
 
-        vm.prank(notTimelock);
+        vm.prank(notGovernance);
         vm.expectRevert();
         config.setVotingDurationMicros(14 days * 1_000_000);
     }
@@ -148,7 +148,7 @@ contract GovernanceConfigTest is Test {
     function test_RevertWhen_SetVotingDurationMicrosZero() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidVotingDuration.selector);
         config.setVotingDurationMicros(0);
     }
@@ -158,18 +158,18 @@ contract GovernanceConfigTest is Test {
 
         uint128 newThreshold = 6000; // 60%
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setEarlyResolutionThresholdBps(newThreshold);
 
         assertEq(config.earlyResolutionThresholdBps(), newThreshold);
     }
 
-    function test_RevertWhen_SetEarlyResolutionThresholdBpsNotTimelock() public {
+    function test_RevertWhen_SetEarlyResolutionThresholdBpsNotGovernance() public {
         _initializeConfig();
 
-        address notTimelock = address(0x5678);
+        address notGovernance = address(0x5678);
 
-        vm.prank(notTimelock);
+        vm.prank(notGovernance);
         vm.expectRevert();
         config.setEarlyResolutionThresholdBps(6000);
     }
@@ -177,7 +177,7 @@ contract GovernanceConfigTest is Test {
     function test_RevertWhen_SetEarlyResolutionThresholdBpsTooHigh() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidEarlyResolutionThreshold.selector, uint128(10001)));
         config.setEarlyResolutionThresholdBps(10001);
     }
@@ -191,7 +191,7 @@ contract GovernanceConfigTest is Test {
 
         uint128 newThreshold = 2000 ether;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit GovernanceConfig.ConfigUpdated(keccak256("minVotingThreshold"), MIN_VOTING_THRESHOLD, newThreshold);
         config.setMinVotingThreshold(newThreshold);
@@ -202,7 +202,7 @@ contract GovernanceConfigTest is Test {
 
         uint256 newStake = 200 ether;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit GovernanceConfig.ConfigUpdated(keccak256("requiredProposerStake"), REQUIRED_PROPOSER_STAKE, newStake);
         config.setRequiredProposerStake(newStake);
@@ -213,7 +213,7 @@ contract GovernanceConfigTest is Test {
 
         uint64 newDuration = 14 days * 1_000_000;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit GovernanceConfig.ConfigUpdated(keccak256("votingDurationMicros"), VOTING_DURATION_MICROS, newDuration);
         config.setVotingDurationMicros(newDuration);
@@ -224,7 +224,7 @@ contract GovernanceConfigTest is Test {
 
         uint128 newThreshold = 6000;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, true);
         emit GovernanceConfig.ConfigUpdated(
             keccak256("earlyResolutionThresholdBps"), EARLY_RESOLUTION_THRESHOLD_BPS, newThreshold

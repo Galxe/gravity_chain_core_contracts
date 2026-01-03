@@ -52,7 +52,7 @@ interface IReconfiguration {
     function checkAndStartTransition() external returns (bool started);
 
     /// @notice Finish epoch transition after DKG completes
-    /// @dev Called by consensus engine (SYSTEM_CALLER) or governance (TIMELOCK) after DKG completes
+    /// @dev Called by consensus engine (SYSTEM_CALLER) or governance (GOVERNANCE) after DKG completes
     /// @param dkgResult The DKG transcript (empty bytes if DKG disabled or force-ending epoch)
     function finishTransition(bytes calldata dkgResult) external;
 
@@ -61,7 +61,7 @@ interface IReconfiguration {
     // ========================================================================
 
     /// @notice Update epoch interval
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param newIntervalMicros New epoch interval in microseconds
     function setEpochIntervalMicros(uint64 newIntervalMicros) external;
 

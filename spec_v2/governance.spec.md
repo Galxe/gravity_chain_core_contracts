@@ -110,7 +110,7 @@ graph TD
 | Constant            | Address                                    | Description                  |
 | ------------------- | ------------------------------------------ | ---------------------------- |
 | `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F2026`   | Governance config contract   |
-| `VOTING`            | `0x0000000000000000000000000001625F2014`   | Governance contract          |
+| `GOVERNANCE`        | `0x0000000000000000000000000001625F2014`   | Governance contract          |
 
 ---
 
@@ -172,7 +172,7 @@ graph TD
 
 ### Purpose
 
-Configuration parameters for governance. Initialized at genesis, updatable via governance (TIMELOCK).
+Configuration parameters for governance. Initialized at genesis, updatable via governance (GOVERNANCE).
 
 ### System Address
 
@@ -220,7 +220,7 @@ interface IGovernanceConfig {
         uint128 _earlyResolutionThresholdBps
     ) external;
 
-    // === Setters (TIMELOCK only) ===
+    // === Setters (GOVERNANCE only) ===
     function setMinVotingThreshold(uint128 _minVotingThreshold) external;
     function setRequiredProposerStake(uint256 _requiredProposerStake) external;
     function setVotingDurationMicros(uint64 _votingDurationMicros) external;
@@ -234,7 +234,7 @@ interface IGovernanceConfig {
 | -------------------------------- | ------------------ |
 | All view functions               | Anyone             |
 | `initialize()`                   | GENESIS only       |
-| All setters                      | TIMELOCK only      |
+| All setters                      | GOVERNANCE only    |
 
 ### Validation Rules
 
@@ -502,7 +502,7 @@ Check if a proposal can be resolved.
 | Contract          | Function                | Allowed Callers               |
 | ----------------- | ----------------------- | ----------------------------- |
 | GovernanceConfig  | `initialize()`          | GENESIS only (once)           |
-| GovernanceConfig  | All setters             | TIMELOCK only                 |
+| GovernanceConfig  | All setters             | GOVERNANCE only               |
 | GovernanceConfig  | All view functions      | Anyone                        |
 | Governance        | `createProposal()`      | Pool's voter address          |
 | Governance        | `vote()`                | Pool's voter address          |

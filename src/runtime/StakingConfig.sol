@@ -8,7 +8,7 @@ import {Errors} from "../foundation/Errors.sol";
 /// @title StakingConfig
 /// @author Gravity Team
 /// @notice Configuration parameters for governance staking
-/// @dev Initialized at genesis, updatable via governance (TIMELOCK).
+/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
 ///      Anyone can stake tokens to participate in governance voting.
 contract StakingConfig {
     // ========================================================================
@@ -69,14 +69,14 @@ contract StakingConfig {
     }
 
     // ========================================================================
-    // GOVERNANCE SETTERS (TIMELOCK only)
+    // GOVERNANCE SETTERS (GOVERNANCE only)
     // ========================================================================
 
     /// @notice Update minimum stake
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _minimumStake New minimum stake value
     function setMinimumStake(uint256 _minimumStake) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         uint256 oldValue = minimumStake;
         minimumStake = _minimumStake;
@@ -85,10 +85,10 @@ contract StakingConfig {
     }
 
     /// @notice Update lockup duration
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _lockupDurationMicros New lockup duration in microseconds (must be > 0)
     function setLockupDurationMicros(uint64 _lockupDurationMicros) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_lockupDurationMicros == 0) {
             revert Errors.InvalidLockupDuration();
@@ -101,10 +101,10 @@ contract StakingConfig {
     }
 
     /// @notice Update minimum proposal stake
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _minimumProposalStake New minimum proposal stake value
     function setMinimumProposalStake(uint256 _minimumProposalStake) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         uint256 oldValue = minimumProposalStake;
         minimumProposalStake = _minimumProposalStake;

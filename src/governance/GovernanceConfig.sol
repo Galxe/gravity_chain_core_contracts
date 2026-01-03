@@ -8,7 +8,7 @@ import {Errors} from "../foundation/Errors.sol";
 /// @title GovernanceConfig
 /// @author Gravity Team
 /// @notice Configuration parameters for on-chain governance
-/// @dev Initialized at genesis, updatable via governance (TIMELOCK)
+/// @dev Initialized at genesis, updatable via governance (GOVERNANCE)
 contract GovernanceConfig {
     // ========================================================================
     // CONSTANTS
@@ -86,34 +86,34 @@ contract GovernanceConfig {
     }
 
     // ========================================================================
-    // SETTERS (TIMELOCK only)
+    // SETTERS (GOVERNANCE only)
     // ========================================================================
 
     /// @notice Update minimum voting threshold
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _minVotingThreshold New minimum voting threshold
     function setMinVotingThreshold(uint128 _minVotingThreshold) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         emit ConfigUpdated(keccak256("minVotingThreshold"), minVotingThreshold, _minVotingThreshold);
         minVotingThreshold = _minVotingThreshold;
     }
 
     /// @notice Update required proposer stake
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _requiredProposerStake New required proposer stake
     function setRequiredProposerStake(uint256 _requiredProposerStake) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         emit ConfigUpdated(keccak256("requiredProposerStake"), requiredProposerStake, _requiredProposerStake);
         requiredProposerStake = _requiredProposerStake;
     }
 
     /// @notice Update voting duration
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _votingDurationMicros New voting duration in microseconds
     function setVotingDurationMicros(uint64 _votingDurationMicros) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
@@ -124,10 +124,10 @@ contract GovernanceConfig {
     }
 
     /// @notice Update early resolution threshold
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _earlyResolutionThresholdBps New threshold in basis points
     function setEarlyResolutionThresholdBps(uint128 _earlyResolutionThresholdBps) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_earlyResolutionThresholdBps > MAX_EARLY_RESOLUTION_THRESHOLD_BPS) {
             revert Errors.InvalidEarlyResolutionThreshold(_earlyResolutionThresholdBps);

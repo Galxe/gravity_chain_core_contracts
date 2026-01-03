@@ -22,7 +22,7 @@ consensus—information is only accepted after validators reach consensus on its
 1. **Consensus-Gated**: Only SYSTEM_CALLER (consensus engine) can record data after validators agree
 2. **Storage Flexibility**: Hash-only mode (storage-efficient) or data mode (direct access)
 3. **Callback Support**: Optional callbacks for event-driven processing
-4. **Governance Control**: Callback registration requires governance approval (TIMELOCK)
+4. **Governance Control**: Callback registration requires governance approval (GOVERNANCE)
 5. **Failure Tolerance**: Callback failures do NOT revert oracle recording
 6. **Source Isolation**: Independent sync tracking per source
 
@@ -62,7 +62,7 @@ flowchart TD
     SC -->|recordHash/recordData| NO
     NO -->|onOracleEvent| CB
     
-    TL[TIMELOCK/Governance] -->|setCallback| NO
+    GOV[Governance] -->|setCallback| NO
 
     subgraph Foundation[Foundation Layer]
         SA[SystemAddresses]
@@ -289,7 +289,7 @@ Batch record multiple hashes from the same source.
 
 Register a callback handler for a source.
 
-**Access Control**: TIMELOCK (governance) only
+**Access Control**: GOVERNANCE only
 
 **Parameters**:
 - `sourceName` - The source identifier
@@ -442,7 +442,7 @@ error OracleNotInitialized();
 | `recordData()` | SYSTEM_CALLER only |
 | `recordHashBatch()` | SYSTEM_CALLER only |
 | `recordDataBatch()` | SYSTEM_CALLER only |
-| `setCallback()` | TIMELOCK only |
+| `setCallback()` | GOVERNANCE only |
 | All view/pure functions | Anyone |
 
 ---
@@ -455,7 +455,7 @@ error OracleNotInitialized();
 4. **Sync ID Ordering**: Prevents replay attacks and ensures data freshness
 5. **Source Isolation**: Each source has independent sync tracking and callback
 6. **No Overwrites**: Once recorded, only syncId can be updated (not replaced)
-7. **Governance Callback Control**: Only TIMELOCK can register callbacks
+7. **Governance Callback Control**: Only GOVERNANCE can register callbacks
 
 ---
 

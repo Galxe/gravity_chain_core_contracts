@@ -288,8 +288,8 @@ contract ReconfigurationTest is Test {
         _advanceTime(TWO_HOURS + 1);
         _startTransition();
 
-        // Finish via TIMELOCK (governance force-end)
-        vm.prank(SystemAddresses.TIMELOCK);
+        // Finish via GOVERNANCE (governance force-end)
+        vm.prank(SystemAddresses.GOVERNANCE);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition("");
 
         assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
@@ -313,7 +313,7 @@ contract ReconfigurationTest is Test {
         address notAuthorized = address(0x1234);
         address[] memory allowed = new address[](2);
         allowed[0] = SystemAddresses.SYSTEM_CALLER;
-        allowed[1] = SystemAddresses.TIMELOCK;
+        allowed[1] = SystemAddresses.GOVERNANCE;
 
         vm.prank(notAuthorized);
         vm.expectRevert(abi.encodeWithSelector(NotAllowedAny.selector, notAuthorized, allowed));
@@ -335,7 +335,7 @@ contract ReconfigurationTest is Test {
 
         uint64 newInterval = ONE_HOUR;
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
         emit EpochDurationUpdated(TWO_HOURS, newInterval);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(newInterval);
@@ -343,25 +343,25 @@ contract ReconfigurationTest is Test {
         assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), newInterval);
     }
 
-    function test_RevertWhen_setEpochIntervalMicros_notTimelock() public {
+    function test_RevertWhen_setEpochIntervalMicros_notGovernance() public {
         _initializeReconfiguration();
 
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.TIMELOCK));
+        address notGovernance = address(0x1234);
+        vm.prank(notGovernance);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(ONE_HOUR);
     }
 
     function test_RevertWhen_setEpochIntervalMicros_zeroInterval() public {
         _initializeReconfiguration();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidEpochInterval.selector);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(0);
     }
 
     function test_RevertWhen_setEpochIntervalMicros_notInitialized() public {
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(ONE_HOUR);
     }
@@ -481,7 +481,7 @@ contract ReconfigurationTest is Test {
         vm.assume(newInterval > 0);
         _initializeReconfiguration();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(newInterval);
 
         assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), newInterval);
@@ -494,7 +494,7 @@ contract ReconfigurationTest is Test {
         _initializeReconfiguration();
 
         // Update interval
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(interval);
 
         // Should not be ready to transition yet

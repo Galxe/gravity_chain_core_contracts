@@ -136,7 +136,7 @@ interface INativeOracle {
     // ========================================================================
 
     /// @notice Register a callback handler for a source
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param sourceName The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
     function setCallback(bytes32 sourceName, address callback) external;

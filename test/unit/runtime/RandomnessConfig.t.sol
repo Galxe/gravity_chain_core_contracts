@@ -161,7 +161,7 @@ contract RandomnessConfigTest is Test {
 
         // Set pending config
         RandomnessConfig.RandomnessConfigData memory newConfig = _createOffConfig();
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(newConfig);
 
         (bool hasPending, RandomnessConfig.RandomnessConfigData memory pendingConfig) = config.getPendingConfig();
@@ -178,7 +178,7 @@ contract RandomnessConfigTest is Test {
 
         RandomnessConfig.RandomnessConfigData memory newConfig = _createOffConfig();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(newConfig);
 
         assertTrue(config.hasPendingConfig());
@@ -194,13 +194,13 @@ contract RandomnessConfigTest is Test {
         _initializeWithV2();
 
         // First pending config
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
 
         // Overwrite with new pending config
         RandomnessConfig.RandomnessConfigData memory newV2Config =
             _createV2Config(THREE_QUARTERS, THREE_QUARTERS, THREE_QUARTERS);
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(newV2Config);
 
         (bool hasPending, RandomnessConfig.RandomnessConfigData memory pendingConfig) = config.getPendingConfig();
@@ -214,12 +214,12 @@ contract RandomnessConfigTest is Test {
 
         address notTimelock = address(0x1234);
         vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.TIMELOCK));
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
         config.setForNextEpoch(_createOffConfig());
     }
 
     function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.RandomnessNotInitialized.selector);
         config.setForNextEpoch(_createOffConfig());
     }
@@ -230,7 +230,7 @@ contract RandomnessConfigTest is Test {
         // Invalid: reconstruction < secrecy
         RandomnessConfig.RandomnessConfigData memory invalidConfig = _createV2Config(TWO_THIRDS, HALF, THREE_QUARTERS);
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidRandomnessConfig.selector, "reconstruction must be >= secrecy"));
         config.setForNextEpoch(invalidConfig);
     }
@@ -244,7 +244,7 @@ contract RandomnessConfigTest is Test {
         assertTrue(config.enabled());
 
         // Set pending config to Off
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
         assertTrue(config.hasPendingConfig());
 
@@ -323,7 +323,7 @@ contract RandomnessConfigTest is Test {
     function test_Event_PendingRandomnessConfigSet() public {
         _initializeWithV2();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(true, false, false, false);
         emit RandomnessConfig.PendingRandomnessConfigSet(RandomnessConfig.ConfigVariant.Off);
         config.setForNextEpoch(_createOffConfig());
@@ -332,7 +332,7 @@ contract RandomnessConfigTest is Test {
     function test_Event_RandomnessConfigUpdated_Apply() public {
         _initializeWithV2();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
 
         vm.prank(SystemAddresses.EPOCH_MANAGER);
@@ -344,7 +344,7 @@ contract RandomnessConfigTest is Test {
     function test_Event_PendingRandomnessConfigCleared() public {
         _initializeWithV2();
 
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
 
         vm.prank(SystemAddresses.EPOCH_MANAGER);
@@ -382,7 +382,7 @@ contract RandomnessConfigTest is Test {
         RandomnessConfig.RandomnessConfigData memory newConfig = _createV2Config(secrecy, reconstruction, fastPath);
 
         // Set pending
-        vm.prank(SystemAddresses.TIMELOCK);
+        vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(newConfig);
         assertTrue(config.hasPendingConfig());
         assertFalse(config.enabled()); // Still Off

@@ -8,7 +8,7 @@ import {Errors} from "../foundation/Errors.sol";
 /// @title ValidatorConfig
 /// @author Gravity Team
 /// @notice Configuration parameters for validator registry
-/// @dev Initialized at genesis, updatable via governance (TIMELOCK).
+/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
 ///      Controls validator bonding, set size limits, and join/leave rules.
 contract ValidatorConfig {
     // ========================================================================
@@ -119,14 +119,14 @@ contract ValidatorConfig {
     }
 
     // ========================================================================
-    // GOVERNANCE SETTERS (TIMELOCK only)
+    // GOVERNANCE SETTERS (GOVERNANCE only)
     // ========================================================================
 
     /// @notice Update minimum bond
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _minimumBond New minimum bond value (must be > 0 and <= maximumBond)
     function setMinimumBond(uint256 _minimumBond) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_minimumBond == 0) {
             revert Errors.InvalidMinimumBond();
@@ -143,10 +143,10 @@ contract ValidatorConfig {
     }
 
     /// @notice Update maximum bond
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _maximumBond New maximum bond value (must be >= minimumBond)
     function setMaximumBond(uint256 _maximumBond) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_maximumBond < minimumBond) {
             revert Errors.MinimumBondExceedsMaximum(minimumBond, _maximumBond);
@@ -159,10 +159,10 @@ contract ValidatorConfig {
     }
 
     /// @notice Update unbonding delay
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _unbondingDelayMicros New unbonding delay in microseconds (must be > 0)
     function setUnbondingDelayMicros(uint64 _unbondingDelayMicros) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_unbondingDelayMicros == 0) {
             revert Errors.InvalidUnbondingDelay();
@@ -175,10 +175,10 @@ contract ValidatorConfig {
     }
 
     /// @notice Update allow validator set change flag
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _allow New value for allowValidatorSetChange
     function setAllowValidatorSetChange(bool _allow) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         bool oldValue = allowValidatorSetChange;
         allowValidatorSetChange = _allow;
@@ -187,10 +187,10 @@ contract ValidatorConfig {
     }
 
     /// @notice Update voting power increase limit
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _votingPowerIncreaseLimitPct New limit (1-50)
     function setVotingPowerIncreaseLimitPct(uint64 _votingPowerIncreaseLimitPct) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) {
             revert Errors.InvalidVotingPowerIncreaseLimit(_votingPowerIncreaseLimitPct);
@@ -203,10 +203,10 @@ contract ValidatorConfig {
     }
 
     /// @notice Update max validator set size
-    /// @dev Only callable by TIMELOCK (governance)
+    /// @dev Only callable by GOVERNANCE
     /// @param _maxValidatorSetSize New max size (1-65536)
     function setMaxValidatorSetSize(uint256 _maxValidatorSetSize) external {
-        requireAllowed(SystemAddresses.TIMELOCK);
+        requireAllowed(SystemAddresses.GOVERNANCE);
 
         if (_maxValidatorSetSize == 0 || _maxValidatorSetSize > MAX_VALIDATOR_SET_SIZE) {
             revert Errors.InvalidValidatorSetSize(_maxValidatorSetSize);
