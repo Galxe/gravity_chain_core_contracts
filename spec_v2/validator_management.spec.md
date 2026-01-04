@@ -2,7 +2,7 @@
 status: draft
 owner: @yxia
 layer: validator_management
-updated: 2026-01-03
+updated: 2026-01-04
 ---
 
 # Validator Management Layer Specification
@@ -17,6 +17,113 @@ Key design principles:
 2. **ValidatorManager ↔ Staking Only**: ValidatorManager only interacts with the Staking factory contract, never StakePool directly
 3. **Epoch-Based Transitions**: All status changes (PENDING_ACTIVE → ACTIVE, PENDING_INACTIVE → INACTIVE) happen at epoch boundaries
 4. **Aptos-Style Index Assignment**: Validators get indices assigned at each epoch boundary for consensus protocol
+
+---
+
+## Core Invariant: Active Stake Minimum Bond Guarantee
+
+> **CRITICAL INVARIANT**: For active validators (ACTIVE or PENDING_INACTIVE), `activeStake >= minimumBond` at all times.
+
+This is the most important security property for validator staking. It ensures:
+
+1. **Consensus Stability**: Validators cannot reduce their stake below the minimum bond while active
+2. **Slashing Guarantee**: Sufficient stake is always locked and available for potential slashing
+3. **Voting Power Integrity**: Combined with lockup auto-renewal, voting power remains stable and predictable
+
+### Why ActiveStake (Not EffectiveStake)?
+
+The previous design checked `effectiveStake at (now + minLockup) >= minBond`. This has a security flaw:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    SECURITY FLAW IN PREVIOUS DESIGN                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Scenario: minBond = 10 ETH, epoch duration > lockup duration
+  
+  1. Validator has activeStake = 20 ETH, lockedUntil = now + 7 days
+  2. Validator unstakes 15 ETH → pending bucket created with lockedUntil = now + 7 days
+  3. Check at (now + minLockup): pending is still "effective" ✓ passes
+  4. Time passes... pending bucket's lockedUntil expires BEFORE next epoch
+  5. At next epoch:
+     - activeStake = 5 ETH (20 - 15 unstaked)
+     - pending = 15 ETH but lockedUntil expired → ineffective (0 voting power)
+     - effectiveStake = 5 ETH < minBond ✗
+  6. But validator is already ACTIVE and STAYS ACTIVE!
+  
+  → The invariant is BROKEN between epochs
+```
+
+### The Fix: Check ActiveStake Directly
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ACTIVE STAKE MINIMUM BOND GUARANTEE                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  For active validators (ACTIVE or PENDING_INACTIVE):
+  
+  activeStake >= minimumBond   (ALWAYS, at all times)
+  
+  On unstake():
+    1. Check: activeStake - amount >= minimumBond
+    2. If not → REVERT with WithdrawalWouldBreachMinimumBond
+    3. Validator must leaveValidatorSet() first to withdraw below minBond
+    
+  Combined with:
+    - Lockup auto-renewal at each epoch → voting power never drops to 0
+    - activeStake >= minBond → baseline is always protected
+    
+  Result: Voting power is ALWAYS >= minBond for active validators
+```
+
+### How It Works with Lockup Auto-Renewal
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    COMBINED GUARANTEE                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  activeStake >= minBond           (enforced on unstake)
+           +
+  lockedUntil auto-renewed         (at each epoch boundary)
+           =
+  votingPower >= minBond ALWAYS    (for active validators)
+
+  Example:
+  - Validator has activeStake = 15 ETH, pending = 5 ETH (lockedUntil expired)
+  - At epoch boundary: lockup auto-renewed to now + minLockupDuration
+  - Even though pending was ineffective, activeStake (15 ETH) >= minBond (10 ETH)
+  - After renewal: votingPower = activeStake = 15 ETH ✓
+  - Pending stake can be withdrawn after unbonding delay, but activeStake is protected
+```
+
+### Enforcement Points
+
+| Check Point | Enforcement |
+| --- | --- |
+| **Registration** | Voting power at `now` must be ≥ `minimumBond` |
+| **Join Validator Set** | Voting power at `now` must be ≥ `minimumBond` |
+| **Epoch Activation** | Voting power at `now` must be ≥ `minimumBond` (or revert to INACTIVE) |
+| **Unstake (ACTIVE/PENDING_INACTIVE)** | `activeStake - amount >= minimumBond` |
+| **Epoch Renewal** | Lockup auto-renewed to `now + minLockupDuration` for all active validators |
+
+### Simple and Robust
+
+```solidity
+// In StakePool._unstake():
+if (validatorMgmt.isValidator(address(this))) {
+    ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
+    if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+        uint256 minBond = IValidatorConfig(VALIDATOR_CONFIG).minimumBond();
+        
+        // Simple check: activeStake after unstake must be >= minBond
+        if (activeStake - amount < minBond) {
+            revert Errors.WithdrawalWouldBreachMinimumBond(activeStake - amount, minBond);
+        }
+    }
+}
+```
 
 ### Contracts
 
@@ -51,6 +158,10 @@ graph TD
         VC[ValidatorConfig]
     end
     
+    subgraph Blocker[Layer: Blocker]
+        RC[Reconfiguration]
+    end
+    
     subgraph Staking[Layer 2: Staking]
         S[Staking]
         SP[StakePool]
@@ -71,6 +182,8 @@ graph TD
     VM --> E
     VM --> S
     VM --> VC
+    VM --> RC
+    VM --> TS
     
     S --> SP
     
@@ -157,9 +270,20 @@ Manages validator registration, lifecycle transitions, and the active validator 
 **ValidatorManager ONLY calls the Staking factory contract**. It never calls StakePool contracts directly. All StakePool queries go through Staking's view functions:
 
 - `Staking.isPool(pool)` - Verify pool is valid
-- `Staking.getPoolVotingPower(pool)` - Get voting power
+- `Staking.getPoolVotingPower(pool, atTime)` - Get voting power at time T
 - `Staking.getPoolOperator(pool)` - Get operator address
 - `Staking.getPoolOwner(pool)` - Get owner address
+- `Staking.renewPoolLockup(pool)` - Renew lockup for active validators
+
+### Constants
+
+```solidity
+/// @notice Maximum moniker length in bytes
+uint256 public constant MAX_MONIKER_LENGTH = 31;
+
+/// @notice Precision factor for percentage calculations
+uint256 internal constant PRECISION_FACTOR = 1e4;
+```
 
 ### State Variables
 
@@ -181,6 +305,9 @@ uint64 public currentEpoch;
 
 /// @notice Total voting power of active validators (snapshotted at epoch boundary)
 uint256 public totalVotingPower;
+
+/// @notice Whether the contract has been initialized
+bool private _initialized;
 ```
 
 ### Interface
@@ -216,7 +343,7 @@ interface IValidatorManagement {
     function setFeeRecipient(address stakePool, address newRecipient) external;
     
     // === Epoch Processing ===
-    function onNewEpoch() external;
+    function onNewEpoch(uint64 newEpoch) external;
     
     // === View Functions ===
     function getValidator(address stakePool) external view returns (ValidatorRecord memory);
@@ -257,7 +384,8 @@ Register a new validator with a stake pool.
 4. Verify voting power >= `minimumBond` from ValidatorConfig
 5. Verify moniker length <= 31 bytes
 6. Create `ValidatorRecord` with status = INACTIVE
-7. Emit `ValidatorRegistered` event
+7. Set owner, operator, feeRecipient from stake pool
+8. Emit `ValidatorRegistered` event
 
 **Reverts**:
 - `InvalidPool` - Pool not created by Staking factory
@@ -280,7 +408,7 @@ Request to join the active validator set.
 3. Verify caller is operator
 4. Verify `allowValidatorSetChange` is true
 5. Verify voting power still meets minimum
-6. Verify max validator set size won't be exceeded
+6. Verify max validator set size won't be exceeded (activeValidators + pendingActive < maxSize)
 7. Change status to PENDING_ACTIVE
 8. Add to `_pendingActive` array
 9. Emit `ValidatorJoinRequested` event
@@ -332,6 +460,9 @@ Request to leave the active validator set. Can also cancel a pending join reques
 Process epoch transition.
 
 **Access Control**: EPOCH_MANAGER only
+
+**Parameters**:
+- `newEpoch` - The new epoch number to set
 
 **Behavior**:
 1. Process PENDING_INACTIVE → INACTIVE:
@@ -400,6 +531,23 @@ Set a new fee recipient address.
 
 ---
 
+### View Functions
+
+| Function | Description |
+| --- | --- |
+| `getValidator(stakePool)` | Get full validator record (reverts if not found) |
+| `getActiveValidators()` | Get all active validators with consensus info |
+| `getActiveValidatorByIndex(index)` | Get validator at specific index |
+| `getTotalVotingPower()` | Get total voting power (snapshotted at epoch boundary) |
+| `getActiveValidatorCount()` | Get count of active validators |
+| `isValidator(stakePool)` | Check if pool is a registered validator (returns false for unregistered) |
+| `getValidatorStatus(stakePool)` | Get validator status (reverts if not found) |
+| `getCurrentEpoch()` | Get current epoch number |
+| `getPendingActiveValidators()` | Get list of pending active validators |
+| `getPendingInactiveValidators()` | Get list of pending inactive validators |
+
+---
+
 ## Access Control Matrix
 
 | Function | Allowed Callers |
@@ -420,14 +568,45 @@ Voting power is calculated by querying the Staking contract:
 
 ```solidity
 function _getValidatorVotingPower(address stakePool) internal view returns (uint256) {
-    uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
+    uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+    uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
     uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
     return power > maxBond ? maxBond : power;
 }
 ```
 
 - Power is capped at `maximumBond` from ValidatorConfig
-- Only locked stake counts as voting power (from StakePool)
+- Power is calculated at current time using time-parameterized voting power
+- Only effective stake counts as voting power (activeStake + effective pending)
+
+---
+
+## Unstake Protection for Active Validators
+
+Active validators (status ACTIVE or PENDING_INACTIVE) have unstake protection enforced at the StakePool level:
+
+```solidity
+// In StakePool._unstake():
+IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+if (validatorMgmt.isValidator(address(this))) {
+    ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
+    if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+        uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        
+        // Simple check: activeStake after unstake must be >= minBond
+        if (activeStake - amount < minBond) {
+            revert Errors.WithdrawalWouldBreachMinimumBond(activeStake - amount, minBond);
+        }
+    }
+}
+```
+
+**Key Security Properties**:
+1. Active validators cannot reduce `activeStake` below `minimumBond`
+2. This is a simple, direct check on `activeStake` (not `effectiveStake`)
+3. Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond
+4. Validators must call `leaveValidatorSet()` and wait for epoch transition to become INACTIVE before full withdrawal
+5. Pending stake (already unstaked) can still be withdrawn after unbonding delay - only activeStake is protected
 
 ---
 
@@ -456,7 +635,14 @@ function _getValidatorVotingPower(address stakePool) internal view returns (uint
 
 ```solidity
 // 1. Create a stake pool with sufficient bond
-address pool = staking.createPool{value: 10 ether}(msg.sender);
+uint64 lockUntil = uint64(block.timestamp * 1_000_000) + 30 days * 1_000_000;
+address pool = staking.createPool{value: 10 ether}(
+    msg.sender,  // owner
+    msg.sender,  // staker
+    msg.sender,  // operator (required for validator registration)
+    msg.sender,  // voter
+    lockUntil
+);
 
 // 2. Register as validator (caller must be pool operator)
 validatorManager.registerValidator(
@@ -477,10 +663,24 @@ validatorManager.joinValidatorSet(pool);
 ### Leaving the Validator Set
 
 ```solidity
-// 1. Request to leave (must be ACTIVE)
+// 1. Request to leave (must be ACTIVE or PENDING_ACTIVE)
 validatorManager.leaveValidatorSet(pool);
 
 // 2. Wait for epoch transition - validator becomes INACTIVE
+
+// 3. Now staker can unstake without minimum bond restriction
+IStakePool(pool).unstake(fullAmount);
+
+// 4. Wait for lockup + unbonding delay, then withdraw
+IStakePool(pool).withdrawAvailable(recipient);
+```
+
+### Canceling a Join Request
+
+```solidity
+// Validator in PENDING_ACTIVE status can cancel
+validatorManager.leaveValidatorSet(pool);
+// Status reverts to INACTIVE immediately (no epoch wait needed)
 ```
 
 ---
@@ -502,10 +702,14 @@ validatorManager.leaveValidatorSet(pool);
    - Revert on non-INACTIVE status
    - Revert on disabled set changes
    - Revert on max size reached
+   - Revert during reconfiguration
 
 3. **Leave Validator Set**
-   - Successful leave request
-   - Revert on non-ACTIVE status
+   - Successful leave request from ACTIVE
+   - Successful cancel from PENDING_ACTIVE
+   - Revert on invalid status
+   - Revert on last validator
+   - Revert during reconfiguration
 
 4. **Epoch Processing**
    - Activates pending validators
@@ -513,10 +717,19 @@ validatorManager.leaveValidatorSet(pool);
    - Assigns indices correctly
    - Respects voting power limit
    - Updates total voting power
+   - Renews lockups for active validators
+   - Applies pending fee recipients
+   - Syncs owner/operator from stake pools
 
 5. **Operator Functions**
    - Rotate consensus key
    - Set fee recipient (applied at epoch)
+   - Revert during reconfiguration
+
+6. **Unstake Protection**
+   - Active validator cannot unstake below minimum bond
+   - PENDING_INACTIVE validator cannot unstake below minimum bond
+   - INACTIVE validator can unstake fully
 
 ### Fuzz Tests
 
@@ -526,41 +739,83 @@ validatorManager.leaveValidatorSet(pool);
 
 ### Invariant Tests
 
-1. Indices are always contiguous (0 to n-1)
-2. Total voting power matches sum of individual powers
-3. Only ACTIVE/PENDING_INACTIVE validators have valid indices
-4. Status transitions follow defined state machine
+1. **Active Stake Minimum Bond** (CRITICAL): For all active validators (ACTIVE or PENDING_INACTIVE), `activeStake >= minimumBond`
+2. **Voting Power Guarantee**: After epoch renewal, for all active validators, `votingPower >= minimumBond`
+3. Indices are always contiguous (0 to n-1)
+4. Total voting power matches sum of individual powers
+5. Only ACTIVE/PENDING_INACTIVE validators have valid indices
+6. Status transitions follow defined state machine
+7. Active validators' lockups are always ≥ `now` after epoch renewal
 
 ---
 
 ## Security Considerations
 
-1. **StakePool Validation**: Only pools created by Staking factory are accepted
-2. **Operator Authorization**: All operations verify caller is the pool's operator via Staking contract
-3. **Voting Power Limit**: Prevents rapid validator set takeover
-4. **Epoch-Based Changes**: No immediate activation/deactivation (prevents flash-stake attacks)
-5. **Index Consistency**: Indices are reassigned every epoch to maintain contiguity
-6. **No Direct StakePool Calls**: All pool queries go through Staking factory
-7. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
-8. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
-9. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
-10. **Withdrawal Protection**: Active validators (ACTIVE or PENDING_INACTIVE) cannot withdraw stake from their StakePool
-11. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style)
-12. **Excessive Stake Protection**: Even stake exceeding maximumBond cannot be withdrawn while active
+1. **Active Stake Minimum Bond** (CRITICAL): Active validators must maintain `activeStake >= minimumBond` at all times. This is enforced by a simple check on `activeStake - amount >= minBond` on every unstake operation. Combined with lockup auto-renewal, this guarantees voting power is always >= minBond.
+2. **StakePool Validation**: Only pools created by Staking factory are accepted
+3. **Operator Authorization**: All operations verify caller is the pool's operator via Staking contract
+4. **Voting Power Limit**: Prevents rapid validator set takeover
+5. **Epoch-Based Changes**: No immediate activation/deactivation (prevents flash-stake attacks)
+6. **Index Consistency**: Indices are reassigned every epoch to maintain contiguity
+7. **No Direct StakePool Calls**: All pool queries go through Staking factory
+8. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
+9. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
+10. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
+11. **Unstake Protection**: Active validators cannot reduce `activeStake` below `minimumBond` (simple direct check)
+12. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style), ensuring voting power = activeStake
+13. **Excessive Stake Protection**: Even stake exceeding maximumBond cannot cause voting power to exceed cap, but the full amount is still subject to unstake restrictions
 
 ---
 
 ## Changelog
 
+### 2026-01-04: Security Fix - Active Stake Minimum Bond
+
+**SECURITY FIX**: Changed from checking `effectiveStake at (now + minLockup)` to checking `activeStake` directly.
+
+**The Problem (Previous Design)**
+- Previous design checked `effectiveStake at (now + minLockup) >= minBond`
+- This allowed a validator to unstake below minBond in activeStake as long as pending was "effective"
+- If pending bucket's lockedUntil expired before the next epoch, effective stake would drop below minBond
+- But the validator would remain ACTIVE with insufficient stake
+
+**The Fix**
+- Now checks `activeStake - amount >= minimumBond` directly
+- This ensures activeStake (the baseline) is always >= minBond for active validators
+- Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond
+- Simple, robust, no timing edge cases
+
+**Changes**
+- Updated Core Invariant section with new design and security flaw explanation
+- Updated Unstake Protection section with simplified check
+- Updated Security Considerations
+- Updated Invariant Tests
+
+### 2026-01-04: Specification Alignment
+
+Updated specification to match the current implementation:
+
+**Unstake Protection Clarification**
+- Clarified that unstake protection is enforced in `StakePool._unstake()`, not a separate withdraw function
+- Active validators (ACTIVE or PENDING_INACTIVE) cannot unstake below minimumBond effective stake
+- The check considers effective stake at `(now + minLockup)` to ensure bond maintenance throughout lockup
+- Added code example showing the actual implementation
+
+**Voting Power Queries**
+- Updated `_getValidatorVotingPower()` to show time-parameterized query using `getPoolVotingPower(pool, now_)`
+
+**Interface Updates**
+- `onNewEpoch(uint64 newEpoch)` now takes the new epoch number as a parameter
+
 ### 2026-01-03: Staking Security Enhancements
 
 Added security mechanisms to protect active validators and match Aptos's staking behavior:
 
-**Withdrawal Protection**
-- Active validators (ACTIVE or PENDING_INACTIVE) cannot withdraw stake from their StakePool
-- Enforced in `StakePool.withdraw()` by checking `ValidatorManagement.getValidatorStatus()`
+**Unstake Protection**
+- Active validators (ACTIVE or PENDING_INACTIVE) cannot unstake below minimum bond
+- Enforced in `StakePool._unstake()` by checking `ValidatorManagement.getValidatorStatus()`
 - Validators must call `leaveValidatorSet()` and wait for epoch transition to become INACTIVE
-- Error: `CannotWithdrawWhileActiveValidator(pool)`
+- Error: `WithdrawalWouldBreachMinimumBond(effectiveAfter, minBond)`
 
 **Lockup Auto-Renewal (Aptos-style)**
 - Added `_renewActiveValidatorLockups()` called in `onNewEpoch()`
@@ -602,4 +857,3 @@ Added security checks to match Aptos's `stake.move` validator management:
 **allowValidatorSetChange for Leave**
 - Added `allowValidatorSetChange` check to `leaveValidatorSet()` (was only on join)
 - Matches Aptos behavior where both join and leave are gated by this config
-

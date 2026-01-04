@@ -353,47 +353,19 @@ contract StakePool is IStakePool, Ownable2Step {
             revert Errors.InsufficientAvailableStake(amount, activeStake);
         }
 
-        // For validators, check that effective stake at (now + minLockup) >= minimumBond
-        // This ensures the bond is maintained throughout the lockup period
+        // For active validators, activeStake must remain >= minimumBond after unstake
+        // This is a simple, robust check that ensures the bond is always protected.
+        // Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond.
         IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
         if (validatorMgmt.isValidator(address(this))) {
             ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
             if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
                 uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-                uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-                uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
 
-                // Calculate effective stake at (now + minLockup) after this unstake
-                // The new pending bucket will have lockedUntil = current pool's lockedUntil
-                // At time (now + minLockup), any bucket with lockedUntil <= (now + minLockup) is ineffective
-                uint256 futureEffective = _getEffectiveStakeAt(now_ + minLockup);
-
-                // After unstake, the amount moves to pending with lockedUntil
-                // If lockedUntil <= (now + minLockup), this amount becomes ineffective immediately
-                // If lockedUntil > (now + minLockup), this amount is still effective
-                // Since we're creating a bucket with current lockedUntil, and lockedUntil >= now + minLockup,
-                // the new pending is still effective at (now + minLockup)
-                // So futureEffective doesn't change due to this unstake for the check
-
-                // Actually, wait - futureEffective is calculated BEFORE unstake
-                // After unstake: activeStake decreases, pending increases
-                // At time (now + minLockup), if bucket's lockedUntil <= (now + minLockup), it's ineffective
-                // If lockedUntil > (now + minLockup), it's still effective
-
-                // The bucket we create has lockedUntil = this.lockedUntil
-                // If this.lockedUntil <= (now + minLockup): bucket becomes ineffective at (now + minLockup)
-                //    So futureEffective after unstake = futureEffective before - amount
-                // If this.lockedUntil > (now + minLockup): bucket is still effective at (now + minLockup)
-                //    So futureEffective after unstake = futureEffective before (no change, just moved from active to effective pending)
-
-                // Check if current lockedUntil will make the pending ineffective at (now + minLockup)
-                if (lockedUntil <= now_ + minLockup) {
-                    // Pending will be ineffective at (now + minLockup), so effective stake decreases
-                    if (futureEffective < amount + minBond) {
-                        revert Errors.WithdrawalWouldBreachMinimumBond(futureEffective - amount, minBond);
-                    }
+                // Simple check: activeStake after unstake must be >= minBond
+                if (activeStake - amount < minBond) {
+                    revert Errors.WithdrawalWouldBreachMinimumBond(activeStake - amount, minBond);
                 }
-                // else: pending is still effective at (now + minLockup), no change in effective stake
             }
         }
 

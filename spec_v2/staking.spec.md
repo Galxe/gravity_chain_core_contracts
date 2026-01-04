@@ -2,6 +2,7 @@
 status: draft
 owner: @yxia
 layer: staking
+updated: 2026-01-04
 ---
 
 # Staking Layer Specification
@@ -16,6 +17,7 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 - Individual StakePool contracts deployed via CREATE2 (not resources under addresses)
 - Two-role separation (Owner/Staker) enables composable staking logic (DPOS, LSD, etc.)
 - Staking is NOT validator-specific — validators use staking as a building block
+- O(log n) bucket-based withdrawal model with prefix sums for efficient voting power queries
 
 ### Contracts
 
@@ -33,8 +35,8 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 ### Key Principles
 
 1. **Anyone Can Create a Pool** — No permission required to create a StakePool
-2. **Queue-Based Withdrawals** — Withdrawals are queued and become claimable when lockup expires
-3. **Time-Parameterized Voting Power** — Voting power can be queried at any time T
+2. **Bucket-Based Withdrawals** — Pending withdrawals aggregated into buckets sorted by lockedUntil
+3. **Time-Parameterized Voting Power** — Voting power can be queried at any time T with O(log n) complexity
 4. **No Epoch Processing** — Staking layer is stateless w.r.t. epochs; consumers (e.g., ValidatorManager) snapshot if needed
 5. **Two-Role Separation** — Owner (admin) / Staker (funds) / Operator / Voter
 6. **Composable Staking** — Staker role can be a smart contract for DPOS, LSD, etc.
@@ -84,6 +86,7 @@ graph TD
     subgraph Runtime[Layer 1: Runtime]
         TS[Timestamp]
         SC[StakingConfig]
+        VC[ValidatorConfig]
     end
 
     subgraph OpenZeppelin[OpenZeppelin]
@@ -97,8 +100,11 @@ graph TD
         SP[StakePool]
     end
 
+    subgraph ValidatorMgmt[Layer 3: Validator Management]
+        VM[ValidatorManagement]
+    end
+
     subgraph Consumers[Consumers - snapshot for epoch security]
-        VM[ValidatorManager]
         GOV[Governance]
     end
 
@@ -109,15 +115,18 @@ graph TD
 
     S --> SA
     S --> E
+    S --> SC
 
     SP --> SA
     SP --> E
     SP --> TS
     SP --> SC
+    SP --> VC
+    SP --> VM
     SP --> OZ
 
-    VM -.->|queries voting power| SP
-    GOV -.->|queries voting power| SP
+    VM -.->|queries voting power| S
+    GOV -.->|queries voting power| S
 
     DPOS -.->|acts as staker| SP
     LSD -.->|acts as staker| SP
@@ -148,7 +157,7 @@ graph TD
     
     Owner -->|setVoter, setOperator, setStaker| StakePool
     Owner -->|transferOwnership, acceptOwnership| StakePool
-    Staker -->|addStake, withdraw, renewLockUntil| StakePool
+    Staker -->|addStake, unstake, withdrawAvailable, renewLockUntil| StakePool
     Operator -.->|reserved for validator ops| StakePool
     Voter -.->|used for governance voting| StakePool
 ```
@@ -158,8 +167,8 @@ graph TD
 | Role       | Controlled By      | Can Do                                                          |
 | ---------- | ------------------ | --------------------------------------------------------------- |
 | **Owner**  | `Ownable2Step`     | Set voter/operator/staker, transfer ownership (2-step process)  |
-| **Staker** | `staker` address   | Add stake, withdraw, renew lockup (can be a smart contract)     |
-| **Operator** | `operator` address | Reserved for validator operations (future integration)          |
+| **Staker** | `staker` address   | Add stake, unstake, withdraw, renew lockup (can be a contract)  |
+| **Operator** | `operator` address | Reserved for validator operations (used by ValidatorManager)   |
 | **Voter**  | `voter` address    | Cast governance votes using pool's voting power                 |
 
 ### Ownership Transfer (Ownable2Step)
@@ -176,11 +185,10 @@ This prevents accidental transfers to wrong addresses.
 The staker role enables composable staking:
 
 ```solidity
-// Example: DPOS contract as staker (queue-based withdrawals)
+// Example: DPOS contract as staker (bucket-based withdrawals)
 contract DPOSStaker {
     IStakePool public pool;
     mapping(address => uint256) public shares;
-    mapping(address => uint256[]) public delegatorWithdrawals; // nonces
     
     function delegatedStake() external payable {
         // Track delegator shares
@@ -190,36 +198,35 @@ contract DPOSStaker {
         pool.addStake{value: msg.value}();
     }
     
-    function requestDelegatedWithdraw(uint256 amount) external returns (uint256 nonce) {
+    function requestDelegatedWithdraw(uint256 amount) external {
         require(shares[msg.sender] >= amount);
         shares[msg.sender] -= amount;
         
-        // Request withdrawal (queued until lockup expires)
-        nonce = pool.requestWithdrawal(amount);
-        delegatorWithdrawals[msg.sender].push(nonce);
+        // Unstake (creates pending bucket with current lockedUntil)
+        pool.unstake(amount);
     }
     
-    function claimDelegatedWithdraw(uint256 nonce) external {
-        // Claim and transfer to delegator
-        pool.claimWithdrawal(nonce, msg.sender);
+    function claimDelegatedWithdraw(address recipient) external returns (uint256) {
+        // Claim all available pending amounts
+        return pool.withdrawAvailable(recipient);
     }
 }
 ```
 
 ---
 
-## Queue-Based Withdrawal Model
+## Bucket-Based Withdrawal Model
 
-Each StakePool uses a queue-based withdrawal model with time-parameterized voting power:
+Each StakePool uses a bucket-based withdrawal model with O(log n) voting power queries:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      STAKE STATE MODEL (Queue-Based)                         │
+│                      STAKE STATE MODEL (Bucket-Based)                        │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                               ┌──────────────┐
                      addStake │              │
-                   ──────────▶│    STAKE     │
+                   ──────────▶│ activeStake  │
                               │   (amount)   │
                               └──────┬───────┘
                                      │
@@ -227,34 +234,35 @@ Each StakePool uses a queue-based withdrawal model with time-parameterized votin
                     │                                 │
                     ▼                                 ▼
              ┌───────────┐                     ┌───────────────┐
-             │  LOCKED   │ requestWithdrawal  │   PENDING     │
-             │           │ ─────────────────▶ │  WITHDRAWALS  │
-             │ lockedUntil│                   │  (queue)      │
-             │  > now    │                    └───────────────┘
-             └───────────┘                           │
-                    │                                │
-            Voting Power:                    claimWithdrawal (when claimableTime <= now)
-    stake - ineffectivePending                       │
-                                                     ▼
+             │  LOCKED   │   unstake()         │   PENDING     │
+             │           │ ─────────────────▶  │   BUCKETS     │
+             │ lockedUntil│                    │  (sorted by   │
+             │  > now    │                     │  lockedUntil) │
+             └───────────┘                     └───────────────┘
+                    │                                 │
+            Voting Power:                    withdrawAvailable()
+    activeStake + effectivePending           (when now > lockedUntil + unbondingDelay)
+                                                      │
+                                                      ▼
                                               Tokens transferred
+                                              (via claimedAmount pointer)
 ```
 
 ### State Variables
 
-| Variable                  | Type                              | Description                                 |
-| ------------------------- | --------------------------------- | ------------------------------------------- |
-| `stake`                   | uint256                           | Total staked amount (includes pending)      |
-| `lockedUntil`             | uint64                            | Lockup expiration (microseconds)            |
-| `pendingWithdrawals`      | mapping(uint256 => PendingWithdrawal) | Pending withdrawal queue by nonce      |
-| `withdrawalNonce`         | uint256                           | Next nonce to assign                        |
-| `totalPendingWithdrawals` | uint256                           | Sum of all pending amounts                  |
+| Variable           | Type                  | Description                                    |
+| ------------------ | --------------------- | ---------------------------------------------- |
+| `activeStake`      | uint256               | Stake not in pending state                     |
+| `lockedUntil`      | uint64                | Lockup expiration (microseconds)               |
+| `_pendingBuckets`  | PendingBucket[]       | Sorted buckets with prefix-sum amounts         |
+| `claimedAmount`    | uint256               | Cumulative amount claimed (claim pointer)      |
 
-### PendingWithdrawal Struct
+### PendingBucket Struct
 
 ```solidity
-struct PendingWithdrawal {
-    uint256 amount;       // Amount to withdraw
-    uint64 claimableTime; // = lockedUntil at request time
+struct PendingBucket {
+    uint64 lockedUntil;        // When this stake stops being effective
+    uint256 cumulativeAmount;  // Prefix sum up to and including this bucket
 }
 ```
 
@@ -262,49 +270,91 @@ struct PendingWithdrawal {
 
 ```solidity
 function getVotingPower(uint64 atTime) returns (uint256) {
-    if (lockedUntil <= atTime) return 0;
+    // Voting power = activeStake + pending where lockedUntil > atTime
+    return _getEffectiveStakeAt(atTime);
+}
+
+function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) {
+    // Find cumulative amount of pending that has become ineffective (lockedUntil <= atTime)
+    uint256 ineffective = _getCumulativeAmountAtTime(atTime);  // O(log n) binary search
     
-    // Calculate ineffective pending (where claimableTime - atTime < minLockupDuration)
-    uint256 ineffective = _getIneffectivePendingAmountAt(atTime, minLockupDuration);
+    // Subtract already claimed amount
+    if (ineffective <= claimedAmount) {
+        ineffective = 0;
+    } else {
+        ineffective -= claimedAmount;
+    }
     
-    if (ineffective >= stake) return 0;
-    return stake - ineffective;
+    // Calculate total pending
+    uint256 totalPending = _pendingBuckets.length > 0 
+        ? _pendingBuckets[len-1].cumulativeAmount - claimedAmount 
+        : 0;
+    
+    if (ineffective >= totalPending) {
+        return activeStake;
+    }
+    
+    return activeStake + (totalPending - ineffective);
 }
 ```
 
 - **Time-parameterized**: Can query voting power at any time T
-- **Pending withdrawals**: Reduce effective voting power when nearing claimable time
-- **Lockup protection**: Main stake must be locked for any voting power
+- **O(log n) complexity**: Binary search on sorted buckets with prefix sums
+- **Pending effectiveness**: Pending stake is "effective" while lockedUntil > T
+
+### Claiming Logic
+
+Tokens become claimable when: `now > lockedUntil + unbondingDelay`
+
+```solidity
+function _getClaimableAmount() internal view returns (uint256) {
+    uint64 now_ = ITimestamp(TIMESTAMP).nowMicroseconds();
+    uint64 unbondingDelay = IStakingConfig(STAKE_CONFIG).unbondingDelayMicros();
+    
+    // lockedUntil must be < now - unbondingDelay for the bucket to be claimable
+    if (now_ <= unbondingDelay) return 0;
+    uint64 threshold = now_ - unbondingDelay;
+    
+    // Binary search for cumulative amount where lockedUntil <= threshold
+    uint256 claimableCumulative = _getCumulativeAmountAtTime(threshold);
+    
+    if (claimableCumulative <= claimedAmount) return 0;
+    return claimableCumulative - claimedAmount;
+}
+```
 
 ### State Transitions
 
 **On `addStake(amount)` (staker only):**
 
-- Increases `stake` by `amount` immediately
+- Increases `activeStake` by `amount` immediately
 - Extends `lockedUntil` to `max(current, now + minLockupDuration)`
 - Voting power increases immediately
 
-**On `requestWithdrawal(amount)` (staker only):**
+**On `unstake(amount)` (staker only):**
 
-- Creates pending withdrawal entry with `claimableTime = lockedUntil`
-- For validators: verifies effective stake after withdrawal >= minimumBond
-- Increments `withdrawalNonce` and returns nonce
-- Increases `totalPendingWithdrawals`
-- Does NOT reduce `stake` until claimed
+- Reduces `activeStake` by `amount`
+- Creates or merges into pending bucket with current `lockedUntil`
+- For validators (ACTIVE or PENDING_INACTIVE): verifies `activeStake - amount >= minimumBond`
+- Pending stake remains "effective" for voting until its lockedUntil passes
 
-**On `claimWithdrawal(nonce, recipient)` (staker only):**
+**On `withdrawAvailable(recipient)` (staker only):**
 
-- Requires `claimableTime <= now` for the pending withdrawal
-- Decreases `stake` by pending amount
-- Decreases `totalPendingWithdrawals`
-- Deletes pending entry
+- Calculates claimable amount: buckets where `now > lockedUntil + unbondingDelay`
+- Updates `claimedAmount` pointer (no bucket deletion needed)
 - Transfers tokens to specified `recipient`
+- Returns amount withdrawn
+
+**On `unstakeAndWithdraw(amount, recipient)` (staker only):**
+
+- Calls `unstake(amount)` then `withdrawAvailable(recipient)`
+- Convenience function for users wanting to unstake and claim in one transaction
 
 **On `renewLockUntil(duration)` (staker only):**
 
 - Extends `lockedUntil` by `duration`
 - Validates result: `newLockedUntil >= now + minLockupDuration`
-- Does NOT affect existing pending withdrawals
+- Does NOT affect existing pending buckets (they keep original lockedUntil)
 
 ---
 
@@ -353,7 +403,8 @@ interface IStaking {
     function getPoolVotingPower(address pool, uint64 atTime) external view returns (uint256);
     function getPoolVotingPowerNow(address pool) external view returns (uint256);
     function getPoolEffectiveStake(address pool, uint64 atTime) external view returns (uint256);
-    function getPoolStake(address pool) external view returns (uint256);
+    function getPoolActiveStake(address pool) external view returns (uint256);
+    function getPoolTotalPending(address pool) external view returns (uint256);
     function getPoolOwner(address pool) external view returns (address);
     function getPoolStaker(address pool) external view returns (address);
     function getPoolVoter(address pool) external view returns (address);
@@ -411,7 +462,7 @@ Create a new StakePool with all parameters specified explicitly.
 - Anyone can create multiple pools (no limit per address)
 - All parameters must be explicitly provided (no defaults)
 - `lockedUntil` must be valid: `>= now + minLockupDuration`
-- Initial stake (`msg.value`) becomes the pool's stake immediately
+- Initial stake (`msg.value`) becomes the pool's activeStake immediately
 
 #### Pool Status Query Functions
 
@@ -422,7 +473,8 @@ All pool status query functions revert with `InvalidPool(pool)` if the pool addr
 | `getPoolVotingPower(pool, atTime)`  | Pool's voting power at time T (accounts for pending) |
 | `getPoolVotingPowerNow(pool)`       | Pool's current voting power (convenience function)   |
 | `getPoolEffectiveStake(pool, atTime)`| Pool's effective stake at time T                    |
-| `getPoolStake(pool)`                | Pool's total staked amount (includes pending)        |
+| `getPoolActiveStake(pool)`          | Pool's active stake (not including pending)          |
+| `getPoolTotalPending(pool)`         | Pool's total pending withdrawal amount               |
 | `getPoolOwner(pool)`                | Pool's owner address (from Ownable2Step)             |
 | `getPoolStaker(pool)`               | Pool's staker address                                |
 | `getPoolVoter(pool)`                | Pool's delegated voter address                       |
@@ -452,7 +504,7 @@ Renew lockup for an active validator's stake pool.
 
 ### Purpose
 
-Individual stake pool contract with two-role separation. Inherits from OpenZeppelin's `Ownable2Step` for ownership.
+Individual stake pool contract with O(log n) bucket-based withdrawals. Inherits from OpenZeppelin's `Ownable2Step` for ownership.
 
 ### State Variables
 
@@ -460,7 +512,7 @@ Individual stake pool contract with two-role separation. Inherits from OpenZeppe
 /// @notice Address of the Staking factory
 address public immutable FACTORY;
 
-/// @notice Staker address (manages funds: stake/requestWithdrawal/claimWithdrawal)
+/// @notice Staker address (manages funds: stake/unstake/withdraw)
 address public staker;
 
 /// @notice Operator address (reserved for validator operations)
@@ -469,20 +521,19 @@ address public operator;
 /// @notice Delegated voter address (votes in governance using this pool's stake)
 address public voter;
 
-/// @notice Total staked amount (includes pending withdrawals until claimed)
-uint256 public stake;
+/// @notice Active staked amount (not including pending withdrawals)
+uint256 public activeStake;
 
 /// @notice Lockup expiration timestamp (microseconds)
 uint64 public lockedUntil;
 
-/// @notice Pending withdrawal requests by nonce
-mapping(uint256 => PendingWithdrawal) public pendingWithdrawals;
+/// @notice Pending withdrawal buckets sorted by lockedUntil (strictly increasing)
+/// @dev Each bucket stores cumulativeAmount as prefix sum for O(log n) lookups
+PendingBucket[] internal _pendingBuckets;
 
-/// @notice Next nonce to assign for withdrawal requests
-uint256 public withdrawalNonce;
-
-/// @notice Sum of all pending withdrawal amounts
-uint256 public totalPendingWithdrawals;
+/// @notice Cumulative amount that has been claimed from pending buckets
+/// @dev Acts as a claim pointer - no need to delete buckets
+uint256 public claimedAmount;
 ```
 
 ### Interface
@@ -490,15 +541,15 @@ uint256 public totalPendingWithdrawals;
 ```solidity
 interface IStakePool {
     // === Structs ===
-    struct PendingWithdrawal {
-        uint256 amount;
-        uint64 claimableTime;  // = lockedUntil at request time
+    struct PendingBucket {
+        uint64 lockedUntil;        // When this stake stops being effective
+        uint256 cumulativeAmount;  // Prefix sum up to and including this bucket
     }
 
     // === Events ===
     event StakeAdded(address indexed pool, uint256 amount);
-    event WithdrawalRequested(address indexed pool, uint256 indexed nonce, uint256 amount, uint64 claimableTime);
-    event WithdrawalClaimed(address indexed pool, uint256 indexed nonce, uint256 amount, address indexed recipient);
+    event Unstaked(address indexed pool, uint256 amount, uint64 lockedUntil);
+    event WithdrawalClaimed(address indexed pool, uint256 amount, address indexed recipient);
     event LockupRenewed(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
     event OperatorChanged(address indexed pool, address oldOperator, address newOperator);
     event VoterChanged(address indexed pool, address oldVoter, address newVoter);
@@ -508,16 +559,18 @@ interface IStakePool {
     function getStaker() external view returns (address);
     function getOperator() external view returns (address);
     function getVoter() external view returns (address);
-    function getStake() external view returns (uint256);
+    function getActiveStake() external view returns (uint256);
+    function getTotalPending() external view returns (uint256);
     function getVotingPower(uint64 atTime) external view returns (uint256);
     function getVotingPowerNow() external view returns (uint256);
     function getEffectiveStake(uint64 atTime) external view returns (uint256);
     function getLockedUntil() external view returns (uint64);
     function getRemainingLockup() external view returns (uint64);
     function isLocked() external view returns (bool);
-    function getPendingWithdrawal(uint256 nonce) external view returns (PendingWithdrawal memory);
-    function getTotalPendingWithdrawals() external view returns (uint256);
-    function getWithdrawalNonce() external view returns (uint256);
+    function getPendingBucketCount() external view returns (uint256);
+    function getPendingBucket(uint256 index) external view returns (PendingBucket memory);
+    function getClaimedAmount() external view returns (uint256);
+    function getClaimableAmount() external view returns (uint256);
 
     // === Owner Functions (via Ownable2Step) ===
     function setOperator(address newOperator) external;
@@ -526,8 +579,9 @@ interface IStakePool {
 
     // === Staker Functions ===
     function addStake() external payable;
-    function requestWithdrawal(uint256 amount) external returns (uint256 nonce);
-    function claimWithdrawal(uint256 nonce, address recipient) external;
+    function unstake(uint256 amount) external;
+    function withdrawAvailable(address recipient) external returns (uint256 amount);
+    function unstakeAndWithdraw(uint256 amount, address recipient) external returns (uint256 withdrawn);
     function renewLockUntil(uint64 durationMicros) external;
 
     // === System Functions ===
@@ -547,6 +601,8 @@ constructor(
     address _voter,
     uint64 _lockedUntil
 ) payable Ownable(_owner) {
+    FACTORY = msg.sender;
+    
     // Validate lockedUntil >= now + minLockup
     uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
     uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
@@ -558,7 +614,9 @@ constructor(
     operator = _operator;
     voter = _voter;
     lockedUntil = _lockedUntil;
-    stake = msg.value;
+    activeStake = msg.value;
+    
+    emit StakeAdded(address(this), msg.value);
 }
 ```
 
@@ -573,50 +631,68 @@ Add native tokens to the stake pool. Voting power increases immediately.
 **Behavior:**
 
 1. Revert if `msg.value == 0`
-2. Increase `stake` by `msg.value`
+2. Increase `activeStake` by `msg.value`
 3. Update lockup: `lockedUntil = max(lockedUntil, now + minLockupDuration)`
 4. Emit `StakeAdded` event
 
-#### `requestWithdrawal(uint256 amount)` — Staker Only
+#### `unstake(uint256 amount)` — Staker Only
 
-Request a withdrawal. Creates a pending entry that can be claimed when lockup expires.
+Unstake tokens (move from active stake to pending bucket).
 
 **Access Control:** Only `staker`
 
 **Behavior:**
 
 1. Revert if `amount == 0`
-2. Revert if `amount > stake - totalPendingWithdrawals` (insufficient available)
-3. **For validators**: Check effective stake after withdrawal >= minimumBond
-4. Create pending withdrawal: `{amount, claimableTime: lockedUntil}`
-5. Increment `withdrawalNonce` and return nonce
-6. Increase `totalPendingWithdrawals` by `amount`
-7. Emit `WithdrawalRequested` event
+2. Revert if `amount > activeStake` (insufficient available)
+3. **For validators (ACTIVE or PENDING_INACTIVE)**: Check `activeStake - amount >= minimumBond`
+4. Reduce `activeStake` by `amount`
+5. Add to pending bucket with current `lockedUntil`:
+   - If last bucket has same `lockedUntil`: merge (add to cumulativeAmount)
+   - Otherwise: append new bucket with cumulative prefix sum
+6. Emit `Unstaked` event
 
 **Notes:**
-- Active validators CAN request withdrawals if they maintain >= minimumBond
-- `claimableTime = lockedUntil` at request time (lockup IS the waiting period)
-- Pending withdrawals reduce voting power as they approach claimable time
+- Active validators cannot reduce `activeStake` below `minimumBond`
+- Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond
+- The pending amount is still "effective" for voting until its lockedUntil passes
+- Tokens remain in contract until `withdrawAvailable()` is called after unbonding
 
-#### `claimWithdrawal(uint256 nonce, address recipient)` — Staker Only
+#### `withdrawAvailable(address recipient)` — Staker Only
 
-Claim a pending withdrawal and receive tokens.
+Withdraw all available pending stake.
 
 **Access Control:** Only `staker`
 
 **Behavior:**
 
-1. Revert if pending withdrawal not found
-2. Revert if `claimableTime > now` (not yet claimable)
-3. Decrease `stake` by pending amount
-4. Decrease `totalPendingWithdrawals` by pending amount
-5. Delete pending entry
-6. Emit `WithdrawalClaimed` event
-7. Transfer tokens to `recipient`
+1. Calculate claimable amount: buckets where `now > lockedUntil + unbondingDelay`
+2. If claimable amount is 0, return 0
+3. Update `claimedAmount` pointer (CEI pattern)
+4. Emit `WithdrawalClaimed` event
+5. Transfer tokens to `recipient`
+6. Return amount withdrawn
 
-**Security Note:** 
-- Tokens are only transferred when claimed, not when requested
-- `claimableTime = lockedUntil` ensures waiting period matches lockup
+**Notes:**
+- Uses claim pointer model - O(log n) binary search, no bucket iteration
+- Multiple pending buckets may be claimed in a single call
+- Tokens are only transferred when claimed, not when unstaked
+
+#### `unstakeAndWithdraw(uint256 amount, address recipient)` — Staker Only
+
+Helper: unstake and withdraw in one call.
+
+**Access Control:** Only `staker`
+
+**Behavior:**
+
+1. Call `_unstake(amount)` - moves amount from activeStake to pending bucket
+2. Call `_withdrawAvailable(recipient)` - claims any previously pending amounts that have completed unbonding
+3. Return amount actually withdrawn (may be 0 if nothing is claimable yet)
+
+**Notes:**
+- The newly unstaked amount is NOT immediately claimable (needs lockup + unbonding delay)
+- Only previously pending amounts that have completed their waiting period are withdrawn
 
 #### `renewLockUntil(uint64 durationMicros)` — Staker Only
 
@@ -636,7 +712,7 @@ Extend lockup by a specified duration to maintain or restore voting power.
 
 - The `durationMicros` parameter specifies how much time to ADD to the current lockup
 - The **resulting** `newLockedUntil` must be `>= now + minLockupDuration`
-- This allows small extensions when lockup is already far in the future
+- Does NOT affect existing pending buckets (they keep original lockedUntil)
 - Can be used to restore voting power if lockup has expired
 
 #### `systemRenewLockup()` — System Function
@@ -656,6 +732,7 @@ Renew lockup for active validators (called by Staking factory during epoch trans
 - Called by `Staking.renewPoolLockup()` which is called by ValidatorManagement
 - Implements Aptos-style auto-renewal for active validators
 - Ensures voting power never drops to zero due to lockup expiration while validating
+- Does NOT affect existing pending buckets (they keep original lockedUntil)
 
 #### `setOperator(address newOperator)` — Owner Only
 
@@ -695,16 +772,16 @@ Change the staker address.
 
 #### `getVotingPower(uint64 atTime)`
 
-Returns voting power at a specific time T. Accounts for pending withdrawals.
+Returns voting power at a specific time T. Accounts for pending buckets.
 
 **Behavior:**
 
-1. Return `0` if `lockedUntil <= atTime` (lockup expired at time T)
-2. Calculate ineffective pending (where `claimableTime - atTime < minLockupDuration`)
-3. Return `stake - ineffectivePending` (or 0 if result would be negative)
+1. Return effective stake at time T
+2. Effective stake = activeStake + pending where lockedUntil > T
+3. Uses O(log n) binary search on prefix-sum buckets
 
 **Notes:**
-- Pending withdrawals become "ineffective" (don't count toward voting power) when their remaining lockup is less than minLockupDuration
+- Pending buckets are "effective" while their lockedUntil > T
 - Use `getVotingPowerNow()` for convenience to query current voting power
 
 ---
@@ -750,6 +827,7 @@ For epoch-based security (e.g., preventing flash-loan attacks on consensus), **c
 Lockup parameters are configured in `StakingConfig`:
 
 - `lockupDurationMicros` — Minimum lockup duration (e.g., 14 days in microseconds)
+- `unbondingDelayMicros` — Additional wait after lockup expires before withdrawal (e.g., 7 days)
 
 ### Lockup Behavior
 
@@ -757,13 +835,14 @@ Lockup parameters are configured in `StakingConfig`:
 2. **On addStake**: `lockedUntil = max(current, now + minLockupDuration)` (extends if needed)
 3. **On renewLockUntil(duration)**: `lockedUntil = lockedUntil + duration` (result must be `>= now + minLockupDuration`)
 
-### Lockup and Withdrawals (Queue-Based)
+### Lockup and Withdrawals (Bucket-Based)
 
-- **Request Phase**: `requestWithdrawal(amount)` creates pending entry with `claimableTime = lockedUntil`
-- **Claim Phase**: `claimWithdrawal(nonce, recipient)` transfers tokens when `claimableTime <= now`
-- For active validators: can request withdrawal but must maintain >= minimumBond effective stake
-- Pending withdrawals reduce voting power as they approach claimable time
-- Staker can re-lock by calling `renewLockUntil()` (does NOT affect existing pending withdrawals)
+- **Unstake Phase**: `unstake(amount)` creates/merges pending bucket with current `lockedUntil`
+- **Waiting Period**: Tokens wait in pending state until `now > lockedUntil + unbondingDelay`
+- **Claim Phase**: `withdrawAvailable(recipient)` transfers all claimable tokens
+- For active validators: can unstake but must maintain `activeStake >= minimumBond`
+- Pending buckets are "effective" (count toward voting power) while `lockedUntil > now`
+- Staker can re-lock by calling `renewLockUntil()` (does NOT affect existing pending buckets)
 - **For active validators**: Lockups are auto-renewed at each epoch boundary via `systemRenewLockup()`
 - **For non-validators**: No automatic lockup renewal — staker must explicitly extend
 
@@ -776,7 +855,7 @@ Lockup parameters are configured in `StakingConfig`:
 | Staking   | createPool                                      | Anyone (with min stake) |
 | Staking   | renewPoolLockup                                 | VALIDATOR_MANAGER only  |
 | Staking   | view functions                                  | Anyone                  |
-| StakePool | addStake/requestWithdrawal/claimWithdrawal/renewLockUntil | Staker only   |
+| StakePool | addStake/unstake/withdrawAvailable/unstakeAndWithdraw/renewLockUntil | Staker only   |
 | StakePool | systemRenewLockup                               | Staking factory only    |
 | StakePool | setOperator/setVoter/setStaker                  | Owner only              |
 | StakePool | transferOwnership                               | Owner only              |
@@ -791,6 +870,7 @@ All time values use **microseconds** (uint64), consistent with the Timestamp con
 
 - `StakePool.lockedUntil` — microseconds
 - `StakingConfig.lockupDurationMicros` — microseconds
+- `StakingConfig.unbondingDelayMicros` — microseconds
 
 ---
 
@@ -810,15 +890,15 @@ The following errors from `Errors.sol` are used:
 
 | Error                                                                | When                                                     |
 | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| `ZeroAmount()`                                                       | addStake/requestWithdrawal with 0                        |
+| `ZeroAmount()`                                                       | addStake/unstake with 0                                  |
 | `NotStaker(address caller, address staker)`                          | Non-staker calling staker-only function                  |
 | `LockupDurationTooShort(uint64 provided, uint64 minimum)`            | renewLockUntil result < now + minLockupDuration          |
 | `LockupOverflow(uint64 current, uint64 addition)`                    | renewLockUntil would overflow lockedUntil                |
-| `InsufficientAvailableStake(uint256 requested, uint256 available)`   | requestWithdrawal exceeds available (stake - pending)    |
-| `WithdrawalNotFound(uint256 nonce)`                                  | claimWithdrawal with invalid nonce                       |
-| `WithdrawalNotClaimable(uint64 claimableTime, uint64 currentTime)`   | claimWithdrawal before claimableTime                     |
-| `WithdrawalWouldBreachMinimumBond(uint256 effectiveAfter, uint256 minimumBond)` | Validator withdrawal would breach min bond |
+| `InsufficientAvailableStake(uint256 requested, uint256 available)`   | unstake exceeds activeStake                              |
+| `LockedUntilDecreased(uint64 previous, uint64 current)`              | Bucket lockedUntil decreased (internal invariant)        |
+| `WithdrawalWouldBreachMinimumBond(uint256 activeStakeAfter, uint256 minimumBond)` | Validator unstake would reduce activeStake below min bond |
 | `OnlyStakingFactory(address caller)`                                 | systemRenewLockup called by non-factory                  |
+| `TransferFailed()`                                                   | ETH transfer failed during withdrawal                    |
 
 ---
 
@@ -840,7 +920,7 @@ address pool = staking.createPool{value: 100 ether}(
 // 2. Add more stake later (as staker, voting power increases immediately)
 IStakePool(pool).addStake{value: 50 ether}();
 
-// 3. Check voting power at current time (150 ether if locked)
+// 3. Check voting power at current time
 uint256 power = IStakePool(pool).getVotingPowerNow();
 
 // 4. Check voting power at a future time
@@ -853,11 +933,14 @@ IStakePool(pool).setVoter(delegatee);
 // 6. Extend lockup by 30 days (as staker)
 IStakePool(pool).renewLockUntil(30 days * 1_000_000); // microseconds
 
-// 7. Request a withdrawal (queued until lockup expires)
-uint256 nonce = IStakePool(pool).requestWithdrawal(50 ether);
+// 7. Unstake some amount (moves to pending bucket)
+IStakePool(pool).unstake(50 ether);
 
-// 8. Wait for lockup to expire, then claim withdrawal (as staker)
-IStakePool(pool).claimWithdrawal(nonce, msg.sender);
+// 8. Wait for lockup + unbonding delay, then withdraw available (as staker)
+uint256 withdrawn = IStakePool(pool).withdrawAvailable(msg.sender);
+
+// 9. Or combine unstake and withdraw in one call
+uint256 withdrawn2 = IStakePool(pool).unstakeAndWithdraw(25 ether, msg.sender);
 ```
 
 ### Setting Up a DPOS Pool
@@ -900,7 +983,8 @@ address validatorPool = staking.createPool{value: minBond}(
 IStakePool(validatorPool).addStake{value: additionalBond}();
 
 // ValidatorManager queries the pool's voting power for consensus
-uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
+uint64 now_ = timestamp.nowMicroseconds();
+uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
 ```
 
 ---
@@ -916,37 +1000,52 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
    - createPool reverts if lockedUntil < now + minLockup
    - createPool allows same owner to create multiple pools
    - poolNonce increments correctly
+   - isPool returns true only for factory-created pools
 
 2. **StakePool**
 
-   - addStake increases stake and extends lockup (staker only)
+   - addStake increases activeStake and extends lockup (staker only)
    - addStake voting power increases immediately
-   - withdraw works only when lockup expired (staker only)
-   - withdraw sends to specified recipient
-   - withdraw reverts when locked
-   - getVotingPower returns stake when locked, 0 when unlocked
+   - unstake moves funds to pending bucket (staker only)
+   - unstake rejects if amount > activeStake
+   - unstake for validators checks activeStake remains >= minimum bond
+   - withdrawAvailable works when lockup + unbonding delay passed
+   - withdrawAvailable returns 0 when nothing claimable
+   - unstakeAndWithdraw combines both operations
+   - getVotingPower returns correct value with pending buckets
    - renewLockUntil extends by specified duration (staker only)
    - renewLockUntil validates result >= now + minLockupDuration
    - Role separation (owner/staker/operator/voter)
    - Ownable2Step transfer works correctly
 
-3. **Lockup Model**
-   - Voting power = stake when locked
-   - Voting power = 0 when lockup expires
+3. **Bucket Model**
+   - Multiple unstakes create separate buckets with increasing lockedUntil
+   - Same lockedUntil merges into existing bucket
+   - Binary search finds correct cumulative amount
+   - Claim pointer correctly tracks withdrawn amounts
+   - Voting power calculation handles partial effectiveness
+
+4. **Lockup Model**
+   - Voting power = effective stake when locked
+   - Effective stake decreases as pending buckets expire
    - Lockup extended on addStake
    - Lockup extended on renewLockUntil
+   - systemRenewLockup updates lockup for active validators
 
 ### Fuzz Tests
 
 1. Various stake amounts
 2. Various lockup durations
 3. Multiple pools with concurrent operations
+4. Random sequences of unstake/withdraw operations
 
 ### Invariant Tests
 
-1. `votingPower == (lockedUntil > now ? stake : 0)` for each pool
-2. Withdrawals only succeed when `lockedUntil <= now`
-3. Lockup only increases, never decreases (except by time passing)
+1. `activeStake + totalPending == contract.balance + claimedAmount`
+2. Pending buckets are always sorted by lockedUntil (strictly increasing)
+3. Cumulative amounts are always increasing (prefix sums)
+4. `claimedAmount` never exceeds total cumulative pending
+5. Effective stake <= activeStake + totalPending
 
 ---
 
@@ -960,11 +1059,47 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 6. **Two-Step Ownership** — Ownable2Step prevents accidental ownership transfers
 7. **Role Separation** — Clear separation between owner (admin) and staker (funds)
 8. **Immediate Effect Trade-off** — Stake changes are immediate; consumers must snapshot for epoch-based security
-9. **Queue-Based Withdrawals** — Withdrawals are queued; tokens only transferred when lockup expires
-10. **Minimum Bond Protection** — Active validators must maintain >= minimumBond effective stake
+9. **Bucket-Based Withdrawals** — O(log n) efficiency with prefix sums, no iteration needed
+10. **Minimum Bond Protection** — Active validators must maintain `activeStake >= minimumBond`
 11. **Lockup Auto-Renewal** — Active validators' lockups are auto-renewed at epoch boundaries
 12. **Time-Parameterized Voting Power** — Allows accurate voting power queries at any point in time
-13. **Pending Withdrawal Decay** — Pending withdrawals gradually reduce voting power as they approach claimable time
+13. **Unbonding Delay** — Additional wait period after lockup expires before withdrawal
+14. **Claim Pointer Model** — No bucket deletion needed, prevents storage slot manipulation attacks
+
+---
+
+## Changelog
+
+### 2026-01-04: Bucket-Based Withdrawal Model
+
+Updated specification to match the implemented O(log n) bucket-based withdrawal model:
+
+**Withdrawal Model Change**
+- Replaced queue-based nonce model with bucket-based prefix-sum model
+- `requestWithdrawal(amount)` → `unstake(amount)`
+- `claimWithdrawal(nonce, recipient)` → `withdrawAvailable(recipient)`
+- Added `unstakeAndWithdraw(amount, recipient)` convenience function
+
+**State Variable Changes**
+- `stake` → `activeStake` (only tracks non-pending stake)
+- `pendingWithdrawals` mapping → `_pendingBuckets` array
+- `withdrawalNonce` → removed
+- `totalPendingWithdrawals` → computed from buckets
+- Added `claimedAmount` as claim pointer
+
+**Struct Changes**
+- `PendingWithdrawal { amount, claimableTime }` → `PendingBucket { lockedUntil, cumulativeAmount }`
+
+**New Features**
+- O(log n) voting power queries via binary search
+- Buckets sorted by lockedUntil with prefix-sum cumulativeAmount
+- Claim pointer model (no bucket deletion needed)
+- Unbonding delay: additional wait after lockup expires
+
+**Interface Changes**
+- `getPoolStake()` → `getPoolActiveStake()`
+- Added `getPoolTotalPending()`
+- Added `getPendingBucketCount()`, `getPendingBucket()`, `getClaimedAmount()`, `getClaimableAmount()`
 
 ---
 
