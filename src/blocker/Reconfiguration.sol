@@ -8,28 +8,9 @@ import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 import { RandomnessConfig } from "../runtime/RandomnessConfig.sol";
+import { IDKG } from "../runtime/IDKG.sol";
+import { IRandomnessConfig } from "../runtime/IRandomnessConfig.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
-
-/// @notice Interface for DKG contract
-interface IDKG {
-    function start(
-        uint64 dealerEpoch,
-        RandomnessConfig.RandomnessConfigData calldata randomnessConfig,
-        ValidatorConsensusInfo[] calldata dealerValidatorSet,
-        ValidatorConsensusInfo[] calldata targetValidatorSet
-    ) external;
-    function finish(
-        bytes calldata transcript
-    ) external;
-    function tryClearIncompleteSession() external;
-    function isInProgress() external view returns (bool);
-}
-
-/// @notice Interface for RandomnessConfig contract
-interface IRandomnessConfig {
-    function getCurrentConfig() external view returns (RandomnessConfig.RandomnessConfigData memory);
-    function applyPendingConfig() external;
-}
 
 /// @title Reconfiguration
 /// @author Gravity Team
