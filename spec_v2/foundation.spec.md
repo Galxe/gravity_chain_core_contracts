@@ -64,18 +64,23 @@ pattern and are reserved at genesis.
 
 ### Address Table
 
-| Constant           | Address                                        | Description                       |
-| ------------------ | ---------------------------------------------- | --------------------------------- |
-| `SYSTEM_CALLER`    | `0x0000000000000000000000000001625F2000`       | VM/runtime system calls           |
-| `GENESIS`          | `0x0000000000000000000000000001625F2008`       | Genesis initialization contract   |
-| `EPOCH_MANAGER`    | `0x0000000000000000000000000001625F2010`       | Epoch lifecycle management        |
-| `STAKE_CONFIG`     | `0x0000000000000000000000000001625F2011`       | Staking configuration parameters  |
-| `VALIDATOR_MANAGER`| `0x0000000000000000000000000001625F2013`       | Validator set management          |
-| `BLOCK`            | `0x0000000000000000000000000001625F2016`       | Block prologue/epilogue handler   |
-| `TIMESTAMP`        | `0x0000000000000000000000000001625F2017`       | On-chain time oracle              |
-| `JWK_MANAGER`      | `0x0000000000000000000000000001625F2018`       | JWK management for keyless auth   |
-| `GOVERNANCE`       | `0x0000000000000000000000000001625F2014`       | Governance contract               |
-| `NATIVE_ORACLE`    | `0x0000000000000000000000000001625F2023`       | Native oracle                     |
+| Constant            | Address                                        | Description                       |
+| ------------------- | ---------------------------------------------- | --------------------------------- |
+| `SYSTEM_CALLER`     | `0x0000000000000000000000000001625F2000`       | VM/runtime system calls           |
+| `GENESIS`           | `0x0000000000000000000000000001625F2008`       | Genesis initialization contract   |
+| `EPOCH_MANAGER`     | `0x0000000000000000000000000001625F2010`       | Epoch lifecycle management        |
+| `STAKE_CONFIG`      | `0x0000000000000000000000000001625F2011`       | Staking configuration parameters  |
+| `STAKING`           | `0x0000000000000000000000000001625F2012`       | Governance staking factory        |
+| `VALIDATOR_MANAGER` | `0x0000000000000000000000000001625F2013`       | Validator set management          |
+| `GOVERNANCE`        | `0x0000000000000000000000000001625F2014`       | Governance contract               |
+| `VALIDATOR_CONFIG`  | `0x0000000000000000000000000001625F2015`       | Validator config parameters       |
+| `BLOCK`             | `0x0000000000000000000000000001625F2016`       | Block prologue/epilogue handler   |
+| `TIMESTAMP`         | `0x0000000000000000000000000001625F2017`       | On-chain time oracle              |
+| `JWK_MANAGER`       | `0x0000000000000000000000000001625F2018`       | JWK management for keyless auth   |
+| `NATIVE_ORACLE`     | `0x0000000000000000000000000001625F2023`       | Native oracle                     |
+| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F2024`       | DKG threshold configuration       |
+| `DKG`               | `0x0000000000000000000000000001625F2025`       | Distributed Key Generation        |
+| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F2026`       | Governance voting parameters      |
 
 ### Implementation
 
@@ -104,9 +109,21 @@ library SystemAddresses {
     /// @dev Stores staking parameters (lockup duration, minimum stake, etc.)
     address internal constant STAKE_CONFIG = 0x0000000000000000000000000001625F2011;
 
+    /// @notice Governance staking contract
+    /// @dev Anyone can stake tokens to participate in governance voting
+    address internal constant STAKING = 0x0000000000000000000000000001625F2012;
+
     /// @notice Validator set management contract
     /// @dev Manages validator registration, bonding, and set transitions
     address internal constant VALIDATOR_MANAGER = 0x0000000000000000000000000001625F2013;
+
+    /// @notice Governance contract
+    /// @dev Handles proposals, voting, and execution of governance decisions
+    address internal constant GOVERNANCE = 0x0000000000000000000000000001625F2014;
+
+    /// @notice Validator configuration contract
+    /// @dev Stores validator parameters (minimum/maximum bond, unbonding delay, etc.)
+    address internal constant VALIDATOR_CONFIG = 0x0000000000000000000000000001625F2015;
 
     /// @notice Block prologue/epilogue handler
     /// @dev Called by VM at start/end of each block
@@ -120,13 +137,23 @@ library SystemAddresses {
     /// @dev Manages JWKs for keyless account authentication
     address internal constant JWK_MANAGER = 0x0000000000000000000000000001625F2018;
 
-    /// @notice Governance contract
-    /// @dev Handles proposals, voting, and execution of governance decisions
-    address internal constant GOVERNANCE = 0x0000000000000000000000000001625F2014;
-
     /// @notice Native oracle contract
-    /// @dev Stores verified data from external sources
+    /// @dev Stores verified data from external sources (blockchains, JWK providers, DNS).
+    ///      Supports hash-only mode (storage-efficient) and data mode (direct access).
+    ///      Data is recorded by consensus engine via SYSTEM_CALLER.
     address internal constant NATIVE_ORACLE = 0x0000000000000000000000000001625F2023;
+
+    /// @notice Randomness configuration contract
+    /// @dev Stores DKG threshold parameters for on-chain randomness
+    address internal constant RANDOMNESS_CONFIG = 0x0000000000000000000000000001625F2024;
+
+    /// @notice DKG (Distributed Key Generation) contract
+    /// @dev Manages DKG session lifecycle for epoch transitions
+    address internal constant DKG = 0x0000000000000000000000000001625F2025;
+
+    /// @notice Governance configuration contract
+    /// @dev Stores governance parameters (voting threshold, proposal stake, etc.)
+    address internal constant GOVERNANCE_CONFIG = 0x0000000000000000000000000001625F2026;
 }
 ```
 
