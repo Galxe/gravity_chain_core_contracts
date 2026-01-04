@@ -6,6 +6,7 @@ import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 import { RandomnessConfig } from "./RandomnessConfig.sol";
+import { ITimestamp } from "./ITimestamp.sol";
 
 /// @title DKG
 /// @author Gravity Team
@@ -66,9 +67,6 @@ contract DKG {
     /// @notice Whether a last completed session exists
     bool public hasLastCompleted;
 
-    /// @notice Whether the contract has been initialized
-    bool private _initialized;
-
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -91,22 +89,6 @@ contract DKG {
     event DKGSessionCleared(uint64 indexed dealerEpoch);
 
     // ========================================================================
-    // INITIALIZATION
-    // ========================================================================
-
-    /// @notice Initialize the DKG contract
-    /// @dev Can only be called once by GENESIS
-    function initialize() external {
-        requireAllowed(SystemAddresses.GENESIS);
-
-        if (_initialized) {
-            revert Errors.AlreadyInitialized();
-        }
-
-        _initialized = true;
-    }
-
-    // ========================================================================
     // SESSION MANAGEMENT (EPOCH_MANAGER only)
     // ========================================================================
 
@@ -124,7 +106,6 @@ contract DKG {
         ValidatorConsensusInfo[] calldata targetValidatorSet
     ) external {
         requireAllowed(SystemAddresses.EPOCH_MANAGER);
-        _requireInitialized();
 
         // Cannot start if already in progress
         if (hasInProgress) {
@@ -164,7 +145,6 @@ contract DKG {
         bytes calldata transcript
     ) external {
         requireAllowed(SystemAddresses.EPOCH_MANAGER);
-        _requireInitialized();
 
         if (!hasInProgress) {
             revert Errors.DKGNotInProgress();
@@ -239,12 +219,6 @@ contract DKG {
         return info.dealerEpoch;
     }
 
-    /// @notice Check if the contract has been initialized
-    /// @return True if initialized
-    function isInitialized() external view returns (bool) {
-        return _initialized;
-    }
-
     // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
@@ -252,26 +226,12 @@ contract DKG {
     /// @notice Get current timestamp in microseconds from Timestamp contract
     /// @return Current time in microseconds
     function _getCurrentTimeMicros() internal view returns (uint64) {
-        // Call Timestamp contract
-        (bool success, bytes memory data) =
-            SystemAddresses.TIMESTAMP.staticcall(abi.encodeWithSignature("nowMicroseconds()"));
-        if (success && data.length >= 32) {
-            return uint64(abi.decode(data, (uint256)));
-        }
-        // Fallback: use block.timestamp converted to microseconds
-        return uint64(block.timestamp * 1_000_000);
+        return ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
     }
 
     /// @notice Clear the in-progress session storage
     function _clearInProgress() internal {
         delete _inProgress;
         hasInProgress = false;
-    }
-
-    /// @notice Require the contract to be initialized
-    function _requireInitialized() internal view {
-        if (!_initialized) {
-            revert Errors.DKGNotInitialized();
-        }
     }
 }

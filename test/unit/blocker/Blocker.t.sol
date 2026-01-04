@@ -74,10 +74,6 @@ contract BlockerTest is Test {
         vm.etch(SystemAddresses.RANDOMNESS_CONFIG, address(randomnessConfig).code);
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(validatorManagement).code);
 
-        // Initialize DKG
-        vm.prank(SystemAddresses.GENESIS);
-        DKG(SystemAddresses.DKG).initialize();
-
         // Initialize RandomnessConfig
         vm.prank(SystemAddresses.GENESIS);
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).initialize(_createV2Config());

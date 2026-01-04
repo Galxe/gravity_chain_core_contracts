@@ -4,6 +4,8 @@ pragma solidity ^0.8.30;
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
+import { ITimestamp } from "./ITimestamp.sol";
+import { ITimestampWriter } from "./ITimestampWriter.sol";
 
 /// @title Timestamp
 /// @author Gravity Team
@@ -11,7 +13,7 @@ import { Errors } from "../foundation/Errors.sol";
 /// @dev Updated by Block contract during block prologue. Supports NIL blocks.
 ///      - Normal blocks (proposer != SYSTEM_CALLER): time must strictly advance
 ///      - NIL blocks (proposer == SYSTEM_CALLER): time must stay the same
-contract Timestamp {
+contract Timestamp is ITimestamp, ITimestampWriter {
     // ========================================================================
     // CONSTANTS
     // ========================================================================

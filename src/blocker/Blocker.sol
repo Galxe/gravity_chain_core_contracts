@@ -3,20 +3,8 @@ pragma solidity ^0.8.30;
 
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
-
-/// @notice Interface for Timestamp contract
-interface ITimestampBlocker {
-    function updateGlobalTime(
-        address proposer,
-        uint64 timestamp
-    ) external;
-}
-
-/// @notice Interface for Reconfiguration contract
-interface IReconfigurationBlocker {
-    function checkAndStartTransition() external returns (bool);
-    function currentEpoch() external view returns (uint64);
-}
+import { ITimestampWriter } from "../runtime/ITimestampWriter.sol";
+import { IReconfiguration } from "./IReconfiguration.sol";
 
 /// @title Blocker
 /// @author Gravity Team
@@ -63,7 +51,7 @@ contract Blocker {
         _initialized = true;
 
         // Initialize timestamp to 0 for genesis
-        ITimestampBlocker(SystemAddresses.TIMESTAMP).updateGlobalTime(SystemAddresses.SYSTEM_CALLER, 0);
+        ITimestampWriter(SystemAddresses.TIMESTAMP).updateGlobalTime(SystemAddresses.SYSTEM_CALLER, 0);
 
         // Emit genesis block event
         emit BlockStarted(0, 0, SystemAddresses.SYSTEM_CALLER, 0);
@@ -100,15 +88,15 @@ contract Blocker {
         // 2. Update global timestamp
         //    - Normal blocks (validatorAddress != SYSTEM_CALLER): time must advance
         //    - NIL blocks (validatorAddress == SYSTEM_CALLER): time must stay the same
-        ITimestampBlocker(SystemAddresses.TIMESTAMP).updateGlobalTime(validatorAddress, timestampMicros);
+        ITimestampWriter(SystemAddresses.TIMESTAMP).updateGlobalTime(validatorAddress, timestampMicros);
 
         // 3. Check and potentially start epoch transition
         //    Reconfiguration handles all transition logic internally
         //    Returns true if DKG was started, but we don't need to act on this
-        IReconfigurationBlocker(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        IReconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
 
         // 4. Get current epoch for event emission
-        uint64 epoch = IReconfigurationBlocker(SystemAddresses.EPOCH_MANAGER).currentEpoch();
+        uint64 epoch = IReconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch();
 
         // 5. Emit block started event
         emit BlockStarted(block.number, epoch, validatorAddress, timestampMicros);

@@ -7,11 +7,7 @@ import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 import { RandomnessConfig } from "../runtime/RandomnessConfig.sol";
-
-/// @notice Interface for Timestamp contract
-interface ITimestamp {
-    function nowMicroseconds() external view returns (uint64);
-}
+import { ITimestamp } from "../runtime/ITimestamp.sol";
 
 /// @notice Interface for DKG contract
 interface IDKG {

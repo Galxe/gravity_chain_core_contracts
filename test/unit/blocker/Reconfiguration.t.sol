@@ -76,10 +76,6 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.BLOCK);
         Timestamp(SystemAddresses.TIMESTAMP).updateGlobalTime(address(0x1234), INITIAL_TIME);
 
-        // Initialize DKG
-        vm.prank(SystemAddresses.GENESIS);
-        DKG(SystemAddresses.DKG).initialize();
-
         // Initialize RandomnessConfig
         vm.prank(SystemAddresses.GENESIS);
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).initialize(_createV2Config());
