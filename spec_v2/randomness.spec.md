@@ -13,7 +13,7 @@ The Randomness layer provides on-chain infrastructure for Distributed Key Genera
 - **RandomnessConfig.sol** — Configuration parameters for DKG thresholds with pending config pattern
 - **DKG.sol** — DKG session lifecycle management for epoch transitions
 
-These contracts are **pure service contracts** that will be orchestrated by `EpochManager` during epoch transitions.
+These contracts are **pure service contracts** that will be orchestrated by `Reconfiguration` during epoch transitions.
 
 ## Design Goals
 
@@ -52,8 +52,8 @@ graph TD
     DKG --> RC
     DKG --> TS
     
-    subgraph Future[Future: EpochManager]
-        EM[EpochManager]
+    subgraph Future[Future: Reconfiguration]
+        EM[Reconfiguration]
     end
     
     EM -.-> RC
@@ -157,7 +157,7 @@ interface IRandomnessConfig {
     /// @notice Set config for next epoch
     function setForNextEpoch(RandomnessConfigData calldata newConfig) external;
     
-    // ========== Epoch Transition (EPOCH_MANAGER only) ==========
+    // ========== Epoch Transition (RECONFIGURATION only) ==========
     
     /// @notice Apply pending config at epoch boundary
     function applyPendingConfig() external;
@@ -196,7 +196,7 @@ event PendingRandomnessConfigCleared();
 | `getPendingConfig()` | Anyone | Read-only |
 | `isInitialized()` | Anyone | Read-only |
 | `setForNextEpoch()` | TIMELOCK | Governance only |
-| `applyPendingConfig()` | EPOCH_MANAGER | Epoch transition only |
+| `applyPendingConfig()` | RECONFIGURATION | Epoch transition only |
 | `newOff()`, `newV2()` | Anyone | Pure functions |
 
 ### Validation Rules
@@ -268,7 +268,7 @@ interface IDKG {
     /// @notice Initialize the DKG contract (genesis only)
     function initialize() external;
     
-    // ========== Session Management (EPOCH_MANAGER only) ==========
+    // ========== Session Management (RECONFIGURATION only) ==========
     
     /// @notice Start a new DKG session
     /// @dev Emits DKGStartEvent with full metadata for consensus engine
@@ -334,23 +334,23 @@ event DKGSessionCleared(uint64 indexed dealerEpoch);
 | Function | Caller | Rationale |
 |----------|--------|-----------|
 | `initialize()` | GENESIS | One-time initialization |
-| `start()` | EPOCH_MANAGER | Start transition |
-| `finish()` | EPOCH_MANAGER | Complete transition |
-| `tryClearIncompleteSession()` | EPOCH_MANAGER | Cleanup stale sessions |
+| `start()` | RECONFIGURATION | Start transition |
+| `finish()` | RECONFIGURATION | Complete transition |
+| `tryClearIncompleteSession()` | RECONFIGURATION | Cleanup stale sessions |
 | View functions | Anyone | Read-only |
 
 ### Session Lifecycle
 
 ```
                         start()
-                        (EPOCH_MANAGER)
+                        (RECONFIGURATION)
 ┌──────────────┐ ─────────────────────────────────▶ ┌──────────────┐
 │   No Active  │                                    │  In Progress │
 │   Session    │                                    │              │
 └──────────────┘                                    └──────┬───────┘
        ▲                                                   │
        │                                      finish(transcript)
-       │                                      (EPOCH_MANAGER)
+       │                                      (RECONFIGURATION)
        │                                                   │
        │         tryClearIncompleteSession()               ▼
        └──────────────────────────────────────────  ┌──────────────┐
@@ -360,12 +360,12 @@ event DKGSessionCleared(uint64 indexed dealerEpoch);
 
 ---
 
-## Coordination with EpochManager (Future)
+## Coordination with Reconfiguration (Future)
 
-These contracts will be called by `EpochManager` during epoch transitions:
+These contracts will be called by `Reconfiguration` during epoch transitions:
 
 ```
-EpochManager.checkAndStartTransition()
+Reconfiguration.checkAndStartTransition()
     │
     ├─► RandomnessConfig.getCurrentConfig()
     ├─► ValidatorManager.getCurrentConsensusInfos()
@@ -376,7 +376,7 @@ EpochManager.checkAndStartTransition()
 
 [OFF-CHAIN: Consensus engine runs DKG]
 
-EpochManager.finishTransition(dkgResult)
+Reconfiguration.finishTransition(dkgResult)
     │
     ├─► DKG.finish(dkgResult)
     ├─► DKG.tryClearIncompleteSession()
@@ -423,7 +423,7 @@ error DKGNotInitialized();
 ## Security Considerations
 
 1. **Access Control**: Only authorized contracts can modify state
-2. **Single Orchestrator**: Only EpochManager manages DKG sessions
+2. **Single Orchestrator**: Only Reconfiguration manages DKG sessions
 3. **Epoch Binding**: Sessions are tied to specific epochs
 4. **Threshold Validation**: Reconstruction >= secrecy enforced
 5. **Pending Pattern**: Config changes delayed to epoch boundary
@@ -436,7 +436,7 @@ error DKGNotInitialized();
 1. At most one DKG session in progress at any time
 2. `reconstructionThreshold >= secrecyThreshold` for V2 configs
 3. Config changes only take effect at epoch boundaries
-4. Only EPOCH_MANAGER can start/finish DKG sessions
+4. Only RECONFIGURATION can start/finish DKG sessions
 5. Completed sessions have non-empty transcripts
 
 ---

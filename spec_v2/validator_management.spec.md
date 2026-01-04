@@ -173,7 +173,7 @@ graph TD
     end
     
     subgraph Callers[System Callers]
-        EM[EPOCH_MANAGER]
+        EM[RECONFIGURATION]
     end
     
     VM --> SA
@@ -459,7 +459,7 @@ Request to leave the active validator set. Can also cancel a pending join reques
 
 Process epoch transition.
 
-**Access Control**: EPOCH_MANAGER only
+**Access Control**: RECONFIGURATION only
 
 **Parameters**:
 - `newEpoch` - The new epoch number to set
@@ -557,7 +557,7 @@ Set a new fee recipient address.
 | `leaveValidatorSet` | Validator's operator (verified via Staking) |
 | `rotateConsensusKey` | Validator's operator (verified via Staking) |
 | `setFeeRecipient` | Validator's operator (verified via Staking) |
-| `onNewEpoch` | EPOCH_MANAGER only |
+| `onNewEpoch` | RECONFIGURATION only |
 | All view functions | Anyone |
 
 ---

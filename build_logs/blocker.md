@@ -27,7 +27,7 @@ Implementation of the Blocker layer containing `Reconfiguration.sol` and `Blocke
 ## Design Decisions
 
 ### Contract Naming
-- Used `Reconfiguration.sol` (Aptos-style naming) instead of `EpochManager.sol`
+- Used `Reconfiguration.sol` for epoch lifecycle management
 
 ### Epoch Ownership
 - Both `Reconfiguration` and `ValidatorManagement` track `currentEpoch`

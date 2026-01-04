@@ -121,7 +121,7 @@ src/staking/
 - ✅ `test_onNewEpoch_updatesTotalVotingPower`
 - ✅ `test_onNewEpoch_capsVotingPowerAtMaxBond`
 - ✅ `test_onNewEpoch_emitsEpochProcessedEvent`
-- ✅ `test_RevertWhen_onNewEpoch_notEpochManager`
+- ✅ `test_RevertWhen_onNewEpoch_notReconfiguration`
 - ✅ `test_onNewEpoch_respectsVotingPowerLimit`
 - ✅ `test_onNewEpoch_activatesWithinLimit`
 
@@ -224,7 +224,7 @@ forge test --gas-report
 The Validator Management layer is complete. The following layers can now be built:
 
 1. **Layer 4 (Block)** - Block prologue/epilogue
-2. **Layer 5 (Epoch Manager)** - Epoch lifecycle and reconfiguration
+2. **Layer 5 (Reconfiguration)** - Epoch lifecycle and reconfiguration
 3. **Layer 6 (Governance)** - Full governance using Staking + Voting
 
 ---

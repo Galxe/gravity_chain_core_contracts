@@ -129,7 +129,7 @@ interface IValidatorManagement {
     // ========================================================================
 
     /// @notice Process epoch transition
-    /// @dev Only callable by EPOCH_MANAGER (Reconfiguration contract).
+    /// @dev Only callable by RECONFIGURATION contract.
     ///      - Processes PENDING_INACTIVE → INACTIVE transitions
     ///      - Processes PENDING_ACTIVE → ACTIVE transitions (respecting voting power limits)
     ///      - Reassigns validator indices

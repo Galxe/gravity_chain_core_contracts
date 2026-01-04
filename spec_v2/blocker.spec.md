@@ -88,7 +88,7 @@ flowchart TD
 | Constant | Address | Description |
 |----------|---------|-------------|
 | `BLOCK` | `0x0000000000000000000000000001625F2016` | Blocker contract |
-| `EPOCH_MANAGER` | `0x0000000000000000000000000001625F2010` | Reconfiguration contract |
+| `RECONFIGURATION` | `0x0000000000000000000000000001625F2010` | Reconfiguration contract |
 
 ---
 

@@ -112,7 +112,7 @@ graph TD
         Staking
         ValidatorRegistry
         Block
-        EpochManager
+        Reconfiguration
     end
     
     Staking --> TS
@@ -120,11 +120,11 @@ graph TD
     ValidatorRegistry --> TS
     ValidatorRegistry --> VC
     Block --> TS
-    EpochManager --> EC
-    EpochManager --> RC
-    EpochManager --> CC
-    EpochManager --> XC
-    EpochManager --> DKG
+    Reconfiguration --> EC
+    Reconfiguration --> RC
+    Reconfiguration --> CC
+    Reconfiguration --> XC
+    Reconfiguration --> DKG
 ```
 
 ---
@@ -461,7 +461,7 @@ contract RandomnessConfig {
 | View functions | Anyone |
 | `initialize()` | GENESIS only (once) |
 | `setForNextEpoch()` | GOVERNANCE only |
-| `applyPendingConfig()` | EPOCH_MANAGER only |
+| `applyPendingConfig()` | RECONFIGURATION only |
 
 ---
 
@@ -508,7 +508,7 @@ contract ConsensusConfig {
 | View functions | Anyone |
 | `initialize()` | GENESIS only (once) |
 | `setForNextEpoch()` | GOVERNANCE only |
-| `applyPendingConfig()` | EPOCH_MANAGER only |
+| `applyPendingConfig()` | RECONFIGURATION only |
 
 ### Validation Rules
 
@@ -559,7 +559,7 @@ contract ExecutionConfig {
 | View functions | Anyone |
 | `initialize()` | GENESIS only (once) |
 | `setForNextEpoch()` | GOVERNANCE only |
-| `applyPendingConfig()` | EPOCH_MANAGER only |
+| `applyPendingConfig()` | RECONFIGURATION only |
 
 ### Validation Rules
 
@@ -627,9 +627,9 @@ contract DKG {
 | Function | Allowed Callers |
 |----------|-----------------|
 | View functions | Anyone |
-| `start()` | EPOCH_MANAGER only |
-| `finish()` | EPOCH_MANAGER only |
-| `tryClearIncompleteSession()` | EPOCH_MANAGER only |
+| `start()` | RECONFIGURATION only |
+| `finish()` | RECONFIGURATION only |
+| `tryClearIncompleteSession()` | RECONFIGURATION only |
 
 ---
 
@@ -688,7 +688,7 @@ function setForNextEpoch(newConfig) external {
 
 // Apply at epoch boundary
 function applyPendingConfig() external {
-    requireAllowed(SystemAddresses.EPOCH_MANAGER);
+    requireAllowed(SystemAddresses.RECONFIGURATION);
     if (!hasPendingConfig) return; // No-op
     _currentConfig = _pendingConfig;
     hasPendingConfig = false;

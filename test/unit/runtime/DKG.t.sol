@@ -78,7 +78,7 @@ contract DKGTest is Test {
     function _startSession(
         uint64 epoch
     ) internal {
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.start(epoch, _createV2Config(), _createValidators(3), _createValidators(4));
     }
 
@@ -91,7 +91,7 @@ contract DKGTest is Test {
         ValidatorConsensusInfo[] memory targets = _createValidators(4);
         RandomnessConfig.RandomnessConfigData memory config = _createV2Config();
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.start(EPOCH_1, config, dealers, targets);
 
         assertTrue(dkg.hasInProgress());
@@ -109,15 +109,17 @@ contract DKGTest is Test {
     function test_RevertWhen_Start_AlreadyInProgress() public {
         _startSession();
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectRevert(Errors.DKGInProgress.selector);
         dkg.start(EPOCH_2, _createV2Config(), _createValidators(3), _createValidators(4));
     }
 
-    function test_RevertWhen_Start_NotEpochManager() public {
-        address notEpochManager = address(0x1234);
-        vm.prank(notEpochManager);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notEpochManager, SystemAddresses.EPOCH_MANAGER));
+    function test_RevertWhen_Start_NotReconfiguration() public {
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
         dkg.start(EPOCH_1, _createV2Config(), _createValidators(3), _createValidators(4));
     }
 
@@ -128,7 +130,7 @@ contract DKGTest is Test {
     function test_Finish() public {
         _startSession();
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.finish(SAMPLE_TRANSCRIPT);
 
         assertFalse(dkg.hasInProgress());
@@ -143,17 +145,19 @@ contract DKGTest is Test {
     }
 
     function test_RevertWhen_Finish_NotInProgress() public {
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectRevert(Errors.DKGNotInProgress.selector);
         dkg.finish(SAMPLE_TRANSCRIPT);
     }
 
-    function test_RevertWhen_Finish_NotEpochManager() public {
+    function test_RevertWhen_Finish_NotReconfiguration() public {
         _startSession();
 
-        address notEpochManager = address(0x1234);
-        vm.prank(notEpochManager);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notEpochManager, SystemAddresses.EPOCH_MANAGER));
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
         dkg.finish(SAMPLE_TRANSCRIPT);
     }
 
@@ -165,7 +169,7 @@ contract DKGTest is Test {
         _startSession();
         assertTrue(dkg.hasInProgress());
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.tryClearIncompleteSession();
 
         assertFalse(dkg.hasInProgress());
@@ -176,18 +180,20 @@ contract DKGTest is Test {
         assertFalse(dkg.hasInProgress());
 
         // Should be no-op
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.tryClearIncompleteSession();
 
         assertFalse(dkg.hasInProgress());
     }
 
-    function test_RevertWhen_TryClearIncompleteSession_NotEpochManager() public {
+    function test_RevertWhen_TryClearIncompleteSession_NotReconfiguration() public {
         _startSession();
 
-        address notEpochManager = address(0x1234);
-        vm.prank(notEpochManager);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notEpochManager, SystemAddresses.EPOCH_MANAGER));
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
         dkg.tryClearIncompleteSession();
     }
 
@@ -223,7 +229,7 @@ contract DKGTest is Test {
     function test_MultipleSessionLifecycle() public {
         // Session 1
         _startSession(EPOCH_1);
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.finish(hex"0001");
 
         // Verify session 1 completed
@@ -237,7 +243,7 @@ contract DKGTest is Test {
 
         // Session 2
         _startSession(EPOCH_2);
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.finish(hex"0002");
 
         // Verify session 2 is now last completed
@@ -254,7 +260,7 @@ contract DKGTest is Test {
         assertTrue(dkg.hasInProgress());
 
         // Clear it
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.tryClearIncompleteSession();
         assertFalse(dkg.hasInProgress());
 
@@ -274,7 +280,7 @@ contract DKGTest is Test {
     function test_Event_DKGStartEvent() public {
         // Note: We can't easily test the full event struct with expectEmit
         // due to the nested struct, but we verify indexed parameters
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(true, false, false, false);
         emit DKG.DKGStartEvent(EPOCH_1, INITIAL_TIME, _createDKGSessionMetadata());
         dkg.start(EPOCH_1, _createV2Config(), _createValidators(3), _createValidators(4));
@@ -285,7 +291,7 @@ contract DKGTest is Test {
 
         bytes32 expectedHash = keccak256(SAMPLE_TRANSCRIPT);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(true, false, false, true);
         emit DKG.DKGCompleted(EPOCH_1, expectedHash);
         dkg.finish(SAMPLE_TRANSCRIPT);
@@ -294,7 +300,7 @@ contract DKGTest is Test {
     function test_Event_DKGSessionCleared() public {
         _startSession();
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(true, false, false, false);
         emit DKG.DKGSessionCleared(EPOCH_1);
         dkg.tryClearIncompleteSession();
@@ -320,7 +326,7 @@ contract DKGTest is Test {
     ) public {
         vm.assume(transcript.length > 0);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.start(epoch, _createV2Config(), _createValidators(3), _createValidators(4));
 
         assertTrue(dkg.hasInProgress());
@@ -328,7 +334,7 @@ contract DKGTest is Test {
         assertTrue(hasSession);
         assertEq(info.dealerEpoch, epoch);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.finish(transcript);
 
         assertFalse(dkg.hasInProgress());
@@ -346,7 +352,7 @@ contract DKGTest is Test {
         vm.assume(dealerCount > 0 && dealerCount <= 10);
         vm.assume(targetCount > 0 && targetCount <= 10);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.start(EPOCH_1, _createV2Config(), _createValidators(dealerCount), _createValidators(targetCount));
 
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();

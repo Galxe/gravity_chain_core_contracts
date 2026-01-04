@@ -32,7 +32,7 @@ Key functions:
 - `initialize(config)` - Genesis only
 - `getCurrentConfig()` - Get active config
 - `setForNextEpoch(config)` - Governance sets pending
-- `applyPendingConfig()` - EpochManager applies at boundary
+- `applyPendingConfig()` - Reconfiguration applies at boundary
 
 **DKG.sol** (new)
 - DKG session lifecycle management
@@ -108,15 +108,15 @@ Key functions:
 
 ## Integration Points
 
-These contracts will be called by `EpochManager` (future):
+These contracts will be called by `Reconfiguration` (future):
 
 ```
-EpochManager.checkAndStartTransition()
+Reconfiguration.checkAndStartTransition()
     ├─► RandomnessConfig.getCurrentConfig()
     ├─► DKG.tryClearIncompleteSession()
     └─► DKG.start()
 
-EpochManager.finishTransition()
+Reconfiguration.finishTransition()
     ├─► DKG.finish()
     └─► RandomnessConfig.applyPendingConfig()
 ```
@@ -131,7 +131,7 @@ forge test --match-contract DKGTest -vvv
 
 ## Next Steps
 
-1. **EpochManager**: Implement epoch manager to orchestrate these contracts
+1. **Reconfiguration**: Implement reconfiguration to orchestrate these contracts
 2. **PerBlockRandomness**: Add per-block seed storage (updated in block prologue)
 3. **Randomness API**: Add random number generation functions (u64_range, etc.)
 4. **Integration Tests**: Full epoch transition flow tests

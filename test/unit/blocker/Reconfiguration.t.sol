@@ -66,7 +66,7 @@ contract ReconfigurationTest is Test {
         validatorManagement = new MockValidatorManagement();
 
         // Deploy at system addresses
-        vm.etch(SystemAddresses.EPOCH_MANAGER, address(reconfig).code);
+        vm.etch(SystemAddresses.RECONFIGURATION, address(reconfig).code);
         vm.etch(SystemAddresses.TIMESTAMP, address(timestamp).code);
         vm.etch(SystemAddresses.DKG, address(dkg).code);
         vm.etch(SystemAddresses.RANDOMNESS_CONFIG, address(randomnessConfig).code);
@@ -116,7 +116,7 @@ contract ReconfigurationTest is Test {
 
     function _initializeReconfiguration() internal {
         vm.prank(SystemAddresses.GENESIS);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
     }
 
     function _advanceTime(
@@ -129,14 +129,14 @@ contract ReconfigurationTest is Test {
 
     function _startTransition() internal returns (bool) {
         vm.prank(SystemAddresses.BLOCK);
-        return Reconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        return Reconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
     }
 
     function _finishTransition(
         bytes memory dkgResult
     ) internal {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(dkgResult);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(dkgResult);
     }
 
     // ========================================================================
@@ -147,14 +147,14 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectEmit(true, false, false, true);
         emit EpochTransitioned(0, INITIAL_TIME);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isInitialized());
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), TWO_HOURS);
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).lastReconfigurationTime(), INITIAL_TIME);
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isInitialized());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), TWO_HOURS);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).lastReconfigurationTime(), INITIAL_TIME);
         assertEq(
-            uint8(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getTransitionState()),
+            uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
         );
     }
@@ -163,7 +163,7 @@ contract ReconfigurationTest is Test {
         address notGenesis = address(0x1234);
         vm.prank(notGenesis);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGenesis, SystemAddresses.GENESIS));
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
     }
 
     function test_RevertWhen_initialize_alreadyInitialized() public {
@@ -171,7 +171,7 @@ contract ReconfigurationTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.AlreadyInitialized.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
     }
 
     // ========================================================================
@@ -185,7 +185,7 @@ contract ReconfigurationTest is Test {
         bool started = _startTransition();
         assertFalse(started);
         assertEq(
-            uint8(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getTransitionState()),
+            uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
         );
     }
@@ -199,14 +199,14 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.BLOCK);
         vm.expectEmit(true, false, false, false);
         emit EpochTransitionStarted(0);
-        bool started = Reconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        bool started = Reconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
 
         assertTrue(started);
         assertEq(
-            uint8(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getTransitionState()),
+            uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.DkgInProgress)
         );
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
     function test_checkAndStartTransition_returnsFalse_whenAlreadyInProgress() public {
@@ -228,13 +228,13 @@ contract ReconfigurationTest is Test {
         address notBlock = address(0x1234);
         vm.prank(notBlock);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notBlock, SystemAddresses.BLOCK));
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
     }
 
     function test_RevertWhen_checkAndStartTransition_notInitialized() public {
         vm.prank(SystemAddresses.BLOCK);
         vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
     }
 
     // ========================================================================
@@ -255,14 +255,14 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(true, false, false, true);
         emit EpochTransitioned(1, expectedTransitionTime);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(SAMPLE_TRANSCRIPT);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertEq(
-            uint8(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getTransitionState()),
+            uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
         );
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Check ValidatorManagement was notified with correct epoch
         assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), 1);
@@ -278,9 +278,9 @@ contract ReconfigurationTest is Test {
         // Finish with empty DKG result (force-end)
         _finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertEq(
-            uint8(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getTransitionState()),
+            uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
         );
     }
@@ -294,9 +294,9 @@ contract ReconfigurationTest is Test {
 
         // Finish via GOVERNANCE (governance force-end)
         vm.prank(SystemAddresses.GOVERNANCE);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition("");
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
     }
 
     function test_RevertWhen_finishTransition_notInProgress() public {
@@ -304,7 +304,7 @@ contract ReconfigurationTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectRevert(Errors.ReconfigurationNotInProgress.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(SAMPLE_TRANSCRIPT);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
     }
 
     function test_RevertWhen_finishTransition_notAuthorized() public {
@@ -321,13 +321,13 @@ contract ReconfigurationTest is Test {
 
         vm.prank(notAuthorized);
         vm.expectRevert(abi.encodeWithSelector(NotAllowedAny.selector, notAuthorized, allowed));
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(SAMPLE_TRANSCRIPT);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
     }
 
     function test_RevertWhen_finishTransition_notInitialized() public {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition(SAMPLE_TRANSCRIPT);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
     }
 
     // ========================================================================
@@ -342,9 +342,9 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
         emit EpochDurationUpdated(TWO_HOURS, newInterval);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(newInterval);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(newInterval);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), newInterval);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), newInterval);
     }
 
     function test_RevertWhen_setEpochIntervalMicros_notGovernance() public {
@@ -353,7 +353,7 @@ contract ReconfigurationTest is Test {
         address notGovernance = address(0x1234);
         vm.prank(notGovernance);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(ONE_HOUR);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(ONE_HOUR);
     }
 
     function test_RevertWhen_setEpochIntervalMicros_zeroInterval() public {
@@ -361,13 +361,13 @@ contract ReconfigurationTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidEpochInterval.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(0);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(0);
     }
 
     function test_RevertWhen_setEpochIntervalMicros_notInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(ONE_HOUR);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(ONE_HOUR);
     }
 
     // ========================================================================
@@ -375,13 +375,13 @@ contract ReconfigurationTest is Test {
     // ========================================================================
 
     function test_canTriggerEpochTransition_returnsFalse_whenNotInitialized() public view {
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).canTriggerEpochTransition());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
     }
 
     function test_canTriggerEpochTransition_returnsFalse_beforeInterval() public {
         _initializeReconfiguration();
 
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).canTriggerEpochTransition());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
     }
 
     function test_canTriggerEpochTransition_returnsTrue_afterInterval() public {
@@ -389,44 +389,44 @@ contract ReconfigurationTest is Test {
 
         _advanceTime(TWO_HOURS + 1);
 
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).canTriggerEpochTransition());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
     }
 
     function test_getRemainingTimeSeconds() public {
         _initializeReconfiguration();
 
         // Initially should be 2 hours (7200 seconds)
-        uint64 remaining = Reconfiguration(SystemAddresses.EPOCH_MANAGER).getRemainingTimeSeconds();
+        uint64 remaining = Reconfiguration(SystemAddresses.RECONFIGURATION).getRemainingTimeSeconds();
         assertEq(remaining, 7200);
 
         // After 1 hour, should be 1 hour remaining
         _advanceTime(ONE_HOUR);
-        remaining = Reconfiguration(SystemAddresses.EPOCH_MANAGER).getRemainingTimeSeconds();
+        remaining = Reconfiguration(SystemAddresses.RECONFIGURATION).getRemainingTimeSeconds();
         assertEq(remaining, 3600);
 
         // After 2 hours total, should be 0
         _advanceTime(ONE_HOUR + 1);
-        remaining = Reconfiguration(SystemAddresses.EPOCH_MANAGER).getRemainingTimeSeconds();
+        remaining = Reconfiguration(SystemAddresses.RECONFIGURATION).getRemainingTimeSeconds();
         assertEq(remaining, 0);
     }
 
     function test_getRemainingTimeSeconds_returnsZero_whenNotInitialized() public view {
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).getRemainingTimeSeconds(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).getRemainingTimeSeconds(), 0);
     }
 
     function test_isTransitionInProgress() public {
         _initializeReconfiguration();
 
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         _advanceTime(TWO_HOURS + 1);
         _startTransition();
 
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         _finishTransition("");
 
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
     // ========================================================================
@@ -437,8 +437,8 @@ contract ReconfigurationTest is Test {
         _initializeReconfiguration();
 
         // Epoch 0
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Wait for epoch interval to pass
         _advanceTime(TWO_HOURS + 1);
@@ -446,17 +446,17 @@ contract ReconfigurationTest is Test {
         // Start transition
         bool started = _startTransition();
         assertTrue(started);
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Still epoch 0 during transition
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
 
         // Finish transition
         _finishTransition(SAMPLE_TRANSCRIPT);
 
         // Now epoch 1
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // ValidatorManagement received the new epoch
         assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), 1);
@@ -466,13 +466,13 @@ contract ReconfigurationTest is Test {
         _initializeReconfiguration();
 
         for (uint64 i = 0; i < 5; i++) {
-            assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), i);
+            assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), i);
 
             _advanceTime(TWO_HOURS + 1);
             _startTransition();
             _finishTransition("");
 
-            assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), i + 1);
+            assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), i + 1);
             assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), i + 1);
         }
     }
@@ -488,9 +488,9 @@ contract ReconfigurationTest is Test {
         _initializeReconfiguration();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(newInterval);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(newInterval);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).epochIntervalMicros(), newInterval);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), newInterval);
     }
 
     function testFuzz_epochTransitionWithVariableInterval(
@@ -503,22 +503,22 @@ contract ReconfigurationTest is Test {
 
         // Update interval
         vm.prank(SystemAddresses.GOVERNANCE);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).setEpochIntervalMicros(interval);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(interval);
 
         // Should not be ready to transition yet
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).canTriggerEpochTransition());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
 
         // Advance time past interval
         _advanceTime(interval + 1);
 
         // Now should be ready
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).canTriggerEpochTransition());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
 
         // Complete transition
         _startTransition();
         _finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
     }
 }
 

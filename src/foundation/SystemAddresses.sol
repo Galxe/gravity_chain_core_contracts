@@ -16,9 +16,9 @@ library SystemAddresses {
     /// @dev Only active during chain initialization
     address internal constant GENESIS = address(0x0000000000000000000000000001625F2008);
 
-    /// @notice Epoch lifecycle manager
+    /// @notice Reconfiguration contract
     /// @dev Handles epoch transitions and reconfiguration
-    address internal constant EPOCH_MANAGER = address(0x0000000000000000000000000001625F2010);
+    address internal constant RECONFIGURATION = address(0x0000000000000000000000000001625F2010);
 
     /// @notice Staking configuration contract
     /// @dev Stores staking parameters (lockup duration, minimum stake, etc.)

@@ -13,7 +13,7 @@ import { ITimestamp } from "./ITimestamp.sol";
 /// @notice Distributed Key Generation on-chain state management
 /// @dev Manages DKG session lifecycle for epoch transitions.
 ///      The consensus engine listens for DKGStartEvent to begin off-chain DKG.
-///      Only EPOCH_MANAGER can start/finish sessions.
+///      Only RECONFIGURATION can start/finish sessions.
 ///      Note: Full validator arrays are emitted in events only (not stored in contract state)
 ///      to avoid storage limitations with dynamic arrays.
 contract DKG {
@@ -89,11 +89,11 @@ contract DKG {
     event DKGSessionCleared(uint64 indexed dealerEpoch);
 
     // ========================================================================
-    // SESSION MANAGEMENT (EPOCH_MANAGER only)
+    // SESSION MANAGEMENT (RECONFIGURATION only)
     // ========================================================================
 
     /// @notice Start a new DKG session
-    /// @dev Called by EPOCH_MANAGER during epoch transition start.
+    /// @dev Called by RECONFIGURATION during epoch transition start.
     ///      Emits DKGStartEvent with full metadata for consensus engine to listen.
     /// @param dealerEpoch Current epoch number
     /// @param randomnessConfig Randomness configuration for this session
@@ -105,7 +105,7 @@ contract DKG {
         ValidatorConsensusInfo[] calldata dealerValidatorSet,
         ValidatorConsensusInfo[] calldata targetValidatorSet
     ) external {
-        requireAllowed(SystemAddresses.EPOCH_MANAGER);
+        requireAllowed(SystemAddresses.RECONFIGURATION);
 
         // Cannot start if already in progress
         if (hasInProgress) {
@@ -139,12 +139,12 @@ contract DKG {
     }
 
     /// @notice Complete a DKG session with the generated transcript
-    /// @dev Called by EPOCH_MANAGER after DKG completes off-chain
+    /// @dev Called by RECONFIGURATION after DKG completes off-chain
     /// @param transcript The DKG transcript from consensus engine
     function finish(
         bytes calldata transcript
     ) external {
-        requireAllowed(SystemAddresses.EPOCH_MANAGER);
+        requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
             revert Errors.DKGNotInProgress();
@@ -164,10 +164,10 @@ contract DKG {
     }
 
     /// @notice Clear an incomplete DKG session
-    /// @dev Called by EPOCH_MANAGER to clean up stale sessions.
+    /// @dev Called by RECONFIGURATION to clean up stale sessions.
     ///      No-op if no session is in progress.
     function tryClearIncompleteSession() external {
-        requireAllowed(SystemAddresses.EPOCH_MANAGER);
+        requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
             // Nothing to clear

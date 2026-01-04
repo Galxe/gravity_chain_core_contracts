@@ -68,7 +68,7 @@ pattern and are reserved at genesis.
 | ------------------- | ---------------------------------------------- | --------------------------------- |
 | `SYSTEM_CALLER`     | `0x0000000000000000000000000001625F2000`       | VM/runtime system calls           |
 | `GENESIS`           | `0x0000000000000000000000000001625F2008`       | Genesis initialization contract   |
-| `EPOCH_MANAGER`     | `0x0000000000000000000000000001625F2010`       | Epoch lifecycle management        |
+| `RECONFIGURATION`   | `0x0000000000000000000000000001625F2010`       | Epoch lifecycle management        |
 | `STAKE_CONFIG`      | `0x0000000000000000000000000001625F2011`       | Staking configuration parameters  |
 | `STAKING`           | `0x0000000000000000000000000001625F2012`       | Governance staking factory        |
 | `VALIDATOR_MANAGER` | `0x0000000000000000000000000001625F2013`       | Validator set management          |
@@ -103,7 +103,7 @@ library SystemAddresses {
 
     /// @notice Epoch lifecycle manager
     /// @dev Handles epoch transitions and reconfiguration
-    address internal constant EPOCH_MANAGER = 0x0000000000000000000000000001625F2010;
+    address internal constant RECONFIGURATION = 0x0000000000000000000000000001625F2010;
 
     /// @notice Staking configuration contract
     /// @dev Stores staking parameters (lockup duration, minimum stake, etc.)
@@ -665,8 +665,8 @@ contract ValidatorManager {
     }
 
     // Allow multiple callers
-    modifier onlySystemOrEpochManager() {
-        requireAllowed(SystemAddresses.SYSTEM_CALLER, SystemAddresses.EPOCH_MANAGER);
+    modifier onlySystemOrReconfiguration() {
+        requireAllowed(SystemAddresses.SYSTEM_CALLER, SystemAddresses.RECONFIGURATION);
         _;
     }
 

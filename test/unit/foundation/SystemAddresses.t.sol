@@ -11,7 +11,7 @@ contract SystemAddressesTest is Test {
     function test_AddressValues() public pure {
         assertEq(SystemAddresses.SYSTEM_CALLER, address(0x0000000000000000000000000001625F2000));
         assertEq(SystemAddresses.GENESIS, address(0x0000000000000000000000000001625F2008));
-        assertEq(SystemAddresses.EPOCH_MANAGER, address(0x0000000000000000000000000001625F2010));
+        assertEq(SystemAddresses.RECONFIGURATION, address(0x0000000000000000000000000001625F2010));
         assertEq(SystemAddresses.STAKE_CONFIG, address(0x0000000000000000000000000001625F2011));
         assertEq(SystemAddresses.STAKING, address(0x0000000000000000000000000001625F2012));
         assertEq(SystemAddresses.VALIDATOR_MANAGER, address(0x0000000000000000000000000001625F2013));
@@ -30,7 +30,7 @@ contract SystemAddressesTest is Test {
     function test_AddressesNonZero() public pure {
         assertTrue(SystemAddresses.SYSTEM_CALLER != address(0), "SYSTEM_CALLER should not be zero");
         assertTrue(SystemAddresses.GENESIS != address(0), "GENESIS should not be zero");
-        assertTrue(SystemAddresses.EPOCH_MANAGER != address(0), "EPOCH_MANAGER should not be zero");
+        assertTrue(SystemAddresses.RECONFIGURATION != address(0), "RECONFIGURATION should not be zero");
         assertTrue(SystemAddresses.STAKE_CONFIG != address(0), "STAKE_CONFIG should not be zero");
         assertTrue(SystemAddresses.STAKING != address(0), "STAKING should not be zero");
         assertTrue(SystemAddresses.VALIDATOR_MANAGER != address(0), "VALIDATOR_MANAGER should not be zero");
@@ -50,7 +50,7 @@ contract SystemAddressesTest is Test {
         address[15] memory addresses = [
             SystemAddresses.SYSTEM_CALLER,
             SystemAddresses.GENESIS,
-            SystemAddresses.EPOCH_MANAGER,
+            SystemAddresses.RECONFIGURATION,
             SystemAddresses.STAKE_CONFIG,
             SystemAddresses.STAKING,
             SystemAddresses.VALIDATOR_MANAGER,
@@ -82,7 +82,7 @@ contract SystemAddressesTest is Test {
         // Verify all addresses follow pattern
         assertEq(uint160(SystemAddresses.SYSTEM_CALLER) >> shift, pattern);
         assertEq(uint160(SystemAddresses.GENESIS) >> shift, pattern);
-        assertEq(uint160(SystemAddresses.EPOCH_MANAGER) >> shift, pattern);
+        assertEq(uint160(SystemAddresses.RECONFIGURATION) >> shift, pattern);
         assertEq(uint160(SystemAddresses.STAKE_CONFIG) >> shift, pattern);
         assertEq(uint160(SystemAddresses.STAKING) >> shift, pattern);
         assertEq(uint160(SystemAddresses.VALIDATOR_MANAGER) >> shift, pattern);

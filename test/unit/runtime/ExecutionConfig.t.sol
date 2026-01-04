@@ -192,7 +192,7 @@ contract ExecutionConfigTest is Test {
         assertTrue(config.hasPendingConfig());
 
         // Apply pending config
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
 
         // Check that pending was applied
@@ -204,7 +204,7 @@ contract ExecutionConfigTest is Test {
         _initializeConfig();
 
         // Apply without pending config should be no-op
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
 
         // Config should remain unchanged
@@ -212,17 +212,19 @@ contract ExecutionConfigTest is Test {
         assertFalse(config.hasPendingConfig());
     }
 
-    function test_RevertWhen_ApplyPendingConfig_NotEpochManager() public {
+    function test_RevertWhen_ApplyPendingConfig_NotReconfiguration() public {
         _initializeConfig();
 
-        address notEpochManager = address(0x1234);
-        vm.prank(notEpochManager);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notEpochManager, SystemAddresses.EPOCH_MANAGER));
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
         config.applyPendingConfig();
     }
 
     function test_RevertWhen_ApplyPendingConfig_NotInitialized() public {
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectRevert(Errors.ExecutionConfigNotInitialized.selector);
         config.applyPendingConfig();
     }
@@ -233,7 +235,7 @@ contract ExecutionConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(NEW_CONFIG);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(true, false, false, false);
         emit ExecutionConfig.ExecutionConfigUpdated(keccak256(NEW_CONFIG));
         config.applyPendingConfig();
@@ -245,7 +247,7 @@ contract ExecutionConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(NEW_CONFIG);
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(false, false, false, false);
         emit ExecutionConfig.PendingExecutionConfigCleared();
         config.applyPendingConfig();
@@ -270,7 +272,7 @@ contract ExecutionConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(
-            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GOVERNANCE, SystemAddresses.EPOCH_MANAGER)
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GOVERNANCE, SystemAddresses.RECONFIGURATION)
         );
         config.applyPendingConfig();
     }
@@ -304,7 +306,7 @@ contract ExecutionConfigTest is Test {
         assertEq(config.getCurrentConfig(), INITIAL_CONFIG); // Still initial
 
         // Apply pending
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
         assertFalse(config.hasPendingConfig());
         assertEq(config.getCurrentConfig(), newConfigBytes);

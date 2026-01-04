@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { IReconfiguration } from "./IReconfiguration.sol";
+import { IValidatorManagement } from "../staking/IValidatorManagement.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
@@ -28,14 +29,6 @@ interface IDKG {
 interface IRandomnessConfig {
     function getCurrentConfig() external view returns (RandomnessConfig.RandomnessConfigData memory);
     function applyPendingConfig() external;
-}
-
-/// @notice Interface for ValidatorManagement contract
-interface IValidatorManagement {
-    function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
-    function onNewEpoch(
-        uint64 newEpoch
-    ) external;
 }
 
 /// @title Reconfiguration

@@ -93,10 +93,10 @@ contract Blocker {
         // 3. Check and potentially start epoch transition
         //    Reconfiguration handles all transition logic internally
         //    Returns true if DKG was started, but we don't need to act on this
-        IReconfiguration(SystemAddresses.EPOCH_MANAGER).checkAndStartTransition();
+        IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
 
         // 4. Get current epoch for event emission
-        uint64 epoch = IReconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch();
+        uint64 epoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
 
         // 5. Emit block started event
         emit BlockStarted(block.number, epoch, validatorAddress, timestampMicros);

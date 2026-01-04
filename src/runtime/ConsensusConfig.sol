@@ -118,14 +118,14 @@ contract ConsensusConfig {
     }
 
     // ========================================================================
-    // EPOCH TRANSITION (EPOCH_MANAGER only)
+    // EPOCH TRANSITION (RECONFIGURATION only)
     // ========================================================================
 
     /// @notice Apply pending configuration at epoch boundary
-    /// @dev Only callable by EPOCH_MANAGER during epoch transition.
+    /// @dev Only callable by RECONFIGURATION during epoch transition.
     ///      If no pending config exists, this is a no-op.
     function applyPendingConfig() external {
-        requireAllowed(SystemAddresses.EPOCH_MANAGER);
+        requireAllowed(SystemAddresses.RECONFIGURATION);
         _requireInitialized();
 
         if (!hasPendingConfig) {

@@ -250,7 +250,7 @@ contract RandomnessConfigTest is Test {
         assertTrue(config.hasPendingConfig());
 
         // Apply pending config
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
 
         // Check that pending was applied
@@ -265,7 +265,7 @@ contract RandomnessConfigTest is Test {
         _initializeWithV2();
 
         // Apply without pending config should be no-op
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
 
         // Config should remain unchanged
@@ -273,17 +273,19 @@ contract RandomnessConfigTest is Test {
         assertFalse(config.hasPendingConfig());
     }
 
-    function test_RevertWhen_ApplyPendingConfig_NotEpochManager() public {
+    function test_RevertWhen_ApplyPendingConfig_NotReconfiguration() public {
         _initializeWithV2();
 
-        address notEpochManager = address(0x1234);
-        vm.prank(notEpochManager);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notEpochManager, SystemAddresses.EPOCH_MANAGER));
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
         config.applyPendingConfig();
     }
 
     function test_RevertWhen_ApplyPendingConfig_NotInitialized() public {
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectRevert(Errors.RandomnessNotInitialized.selector);
         config.applyPendingConfig();
     }
@@ -338,7 +340,7 @@ contract RandomnessConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(true, true, false, false);
         emit RandomnessConfig.RandomnessConfigUpdated(
             RandomnessConfig.ConfigVariant.V2, RandomnessConfig.ConfigVariant.Off
@@ -352,7 +354,7 @@ contract RandomnessConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(_createOffConfig());
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(false, false, false, false);
         emit RandomnessConfig.PendingRandomnessConfigCleared();
         config.applyPendingConfig();
@@ -401,7 +403,7 @@ contract RandomnessConfigTest is Test {
         assertFalse(config.enabled()); // Still Off
 
         // Apply pending
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
         assertFalse(config.hasPendingConfig());
         assertTrue(config.enabled()); // Now V2

@@ -54,7 +54,7 @@ Added to `src/foundation/Errors.sol`:
 
 **Pending Config Pattern** (ConsensusConfig, ExecutionConfig):
 - Stage changes via `setForNextEpoch()` (GOVERNANCE)
-- Apply at epoch boundary via `applyPendingConfig()` (EPOCH_MANAGER)
+- Apply at epoch boundary via `applyPendingConfig()` (RECONFIGURATION)
 - No-op if no pending config exists
 
 ### Test Coverage

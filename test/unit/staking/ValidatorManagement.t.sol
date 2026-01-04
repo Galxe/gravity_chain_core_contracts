@@ -81,9 +81,9 @@ contract ValidatorManagementTest is Test {
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new ValidatorManagement()).code);
         validatorManager = ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
 
-        // Deploy mock Reconfiguration at EPOCH_MANAGER address
-        vm.etch(SystemAddresses.EPOCH_MANAGER, address(new MockReconfiguration()).code);
-        mockReconfiguration = MockReconfiguration(SystemAddresses.EPOCH_MANAGER);
+        // Deploy mock Reconfiguration at RECONFIGURATION address
+        vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration()).code);
+        mockReconfiguration = MockReconfiguration(SystemAddresses.RECONFIGURATION);
 
         // Initialize StakingConfig (with unbonding delay)
         vm.prank(SystemAddresses.GENESIS);
@@ -148,7 +148,7 @@ contract ValidatorManagementTest is Test {
     function _processEpoch() internal {
         // Get current epoch before pranking (view call doesn't need prank)
         uint64 newEpoch = validatorManager.getCurrentEpoch() + 1;
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         validatorManager.onNewEpoch(newEpoch);
     }
 
@@ -453,13 +453,13 @@ contract ValidatorManagementTest is Test {
     function test_onNewEpoch_emitsEpochProcessedEvent() public {
         _createRegisterAndJoin(alice, MIN_BOND, "alice");
 
-        vm.prank(SystemAddresses.EPOCH_MANAGER);
+        vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(false, false, false, true);
         emit IValidatorManagement.EpochProcessed(1, 1, MIN_BOND);
         validatorManager.onNewEpoch(1);
     }
 
-    function test_RevertWhen_onNewEpoch_notEpochManager() public {
+    function test_RevertWhen_onNewEpoch_notReconfiguration() public {
         vm.prank(alice);
         vm.expectRevert();
         validatorManager.onNewEpoch(1);

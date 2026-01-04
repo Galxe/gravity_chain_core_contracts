@@ -15,7 +15,7 @@ Added security checks to `ValidatorManagement.sol` to match Aptos's `stake.move`
 Added `whenNotReconfiguring` modifier that blocks operations during epoch transitions.
 
 **Implementation:**
-- Uses `IReconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress()`
+- Uses `IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()`
 - Mirrors Aptos's `assert_reconfig_not_in_progress()` pattern
 - Blocks during entire DKG period (from `checkAndStartTransition` to `finishTransition`)
 

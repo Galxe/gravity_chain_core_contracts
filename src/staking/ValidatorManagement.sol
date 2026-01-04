@@ -99,7 +99,7 @@ contract ValidatorManagement is IValidatorManagement {
     /// @notice Ensures no reconfiguration (epoch transition) is in progress
     /// @dev Mirrors Aptos's assert_reconfig_not_in_progress() - blocks during entire DKG period
     modifier whenNotReconfiguring() {
-        if (IReconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress()) {
+        if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) {
             revert Errors.ReconfigurationInProgress();
         }
         _;
@@ -317,7 +317,7 @@ contract ValidatorManagement is IValidatorManagement {
     function onNewEpoch(
         uint64 newEpoch
     ) external {
-        requireAllowed(SystemAddresses.EPOCH_MANAGER);
+        requireAllowed(SystemAddresses.RECONFIGURATION);
 
         // 1. Process PENDING_INACTIVE → INACTIVE (clear indices, remove from active)
         _processPendingInactive();

@@ -68,7 +68,7 @@ contract BlockerTest is Test {
 
         // Deploy at system addresses
         vm.etch(SystemAddresses.BLOCK, address(blocker).code);
-        vm.etch(SystemAddresses.EPOCH_MANAGER, address(reconfig).code);
+        vm.etch(SystemAddresses.RECONFIGURATION, address(reconfig).code);
         vm.etch(SystemAddresses.TIMESTAMP, address(timestamp).code);
         vm.etch(SystemAddresses.DKG, address(dkg).code);
         vm.etch(SystemAddresses.RANDOMNESS_CONFIG, address(randomnessConfig).code);
@@ -119,7 +119,7 @@ contract BlockerTest is Test {
 
     function _initializeReconfiguration() internal {
         vm.prank(SystemAddresses.GENESIS);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).initialize();
+        Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
     }
 
     function _initializeAll() internal {
@@ -214,7 +214,7 @@ contract BlockerTest is Test {
         _callOnBlockStart(PROPOSER_KEY, newTimestamp);
 
         // Check that epoch transition started
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
     function test_onBlockStart_noTransition_whenTimeNotElapsed() public {
@@ -226,7 +226,7 @@ contract BlockerTest is Test {
         _callOnBlockStart(PROPOSER_KEY, newTimestamp);
 
         // Transition should not have started
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
     function test_RevertWhen_onBlockStart_notSystemCaller() public {
@@ -301,28 +301,28 @@ contract BlockerTest is Test {
         uint64 timestamp1 = Timestamp(SystemAddresses.TIMESTAMP).nowMicroseconds() + 1_000_000;
         _callOnBlockStart(PROPOSER_KEY, timestamp1);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Block 2: After epoch interval, transition starts
         uint64 timestamp2 = timestamp1 + TWO_HOURS;
         _callOnBlockStart(PROPOSER_KEY, timestamp2);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
-        assertTrue(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Finish transition manually (normally consensus engine does this)
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        Reconfiguration(SystemAddresses.EPOCH_MANAGER).finishTransition("");
+        Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
 
         // Block 3: After transition, new epoch
         uint64 timestamp3 = timestamp2 + 1_000_000;
         _callOnBlockStart(PROPOSER_KEY, timestamp3);
 
-        assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 1);
-        assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
     function test_multipleBlocksWithoutTransition() public {
@@ -335,8 +335,8 @@ contract BlockerTest is Test {
             currentTimestamp += 1_000_000; // 1 second each
             _callOnBlockStart(PROPOSER_KEY, currentTimestamp);
 
-            assertEq(Reconfiguration(SystemAddresses.EPOCH_MANAGER).currentEpoch(), 0);
-            assertFalse(Reconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress());
+            assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+            assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
         }
     }
 
