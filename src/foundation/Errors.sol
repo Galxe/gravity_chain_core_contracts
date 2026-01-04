@@ -83,6 +83,14 @@ library Errors {
     /// @param minimumBond Minimum required bond
     error WithdrawalWouldBreachMinimumBond(uint256 effectiveAfter, uint256 minimumBond);
 
+    /// @notice Native token transfer failed
+    error TransferFailed();
+
+    /// @notice LockedUntil decreased unexpectedly (should never happen in normal operation)
+    /// @param current Current lockedUntil
+    /// @param proposed Proposed lockedUntil that is lower
+    error LockedUntilDecreased(uint64 current, uint64 proposed);
+
     // ========================================================================
     // VALIDATOR ERRORS
     // ========================================================================

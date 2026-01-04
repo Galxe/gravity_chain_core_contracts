@@ -85,9 +85,9 @@ contract ValidatorManagementTest is Test {
         vm.etch(SystemAddresses.EPOCH_MANAGER, address(new MockReconfiguration()).code);
         mockReconfiguration = MockReconfiguration(SystemAddresses.EPOCH_MANAGER);
 
-        // Initialize StakingConfig
+        // Initialize StakingConfig (with unbonding delay)
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, 10 ether);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, 10 ether);
 
         // Initialize ValidatorConfig
         vm.prank(SystemAddresses.GENESIS);
@@ -840,12 +840,12 @@ contract ValidatorManagementTest is Test {
     }
 
     // ========================================================================
-    // STAKE WITHDRAWAL PROTECTION TESTS (Queue-Based)
+    // STAKE WITHDRAWAL PROTECTION TESTS (Bucket-Based)
     // ========================================================================
 
-    /// @notice Test that active validators can request withdrawal but must maintain minimum bond
-    /// @dev With queue-based withdrawals, validators can request but effective stake must stay >= minBond
-    function test_RevertWhen_requestWithdrawal_wouldBreachMinBond() public {
+    /// @notice Test that active validators can unstake but must maintain minimum bond
+    /// @dev With bucket-based withdrawals, validators can unstake but effective stake must stay >= minBond
+    function test_RevertWhen_unstake_wouldBreachMinBond() public {
         // Create validator with exact minimum bond
         address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         _processEpoch();
@@ -853,16 +853,16 @@ contract ValidatorManagementTest is Test {
         // Verify validator is active
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
 
-        // Attempting to withdraw any amount should fail (would breach min bond)
+        // Attempting to unstake any amount should fail (would breach min bond)
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(Errors.WithdrawalWouldBreachMinimumBond.selector, MIN_BOND - 1, MIN_BOND)
         );
-        IStakePool(pool).requestWithdrawal(1);
+        IStakePool(pool).unstake(1);
     }
 
-    /// @notice Test that active validators can withdraw excess above minimum bond
-    function test_requestWithdrawal_activeValidator_excessStake() public {
+    /// @notice Test that active validators can unstake excess above minimum bond
+    function test_unstake_activeValidator_excessStake() public {
         // Create validator with extra stake above minimum bond
         uint256 stakeAmount = MIN_BOND * 2; // 20 ether
         address pool = _createRegisterAndJoin(alice, stakeAmount, "alice");
@@ -871,28 +871,28 @@ contract ValidatorManagementTest is Test {
         // Verify validator is active
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
 
-        // Can request withdrawal of excess stake (keeping >= minBond)
+        // Can unstake excess stake (keeping >= minBond)
         uint256 excessAmount = stakeAmount - MIN_BOND; // 10 ether
         vm.prank(alice);
-        uint256 nonce = IStakePool(pool).requestWithdrawal(excessAmount);
+        IStakePool(pool).unstake(excessAmount);
 
-        // Verify withdrawal is queued
-        assertEq(IStakePool(pool).getTotalPendingWithdrawals(), excessAmount);
+        // Verify unstake is in pending bucket
+        assertEq(IStakePool(pool).getTotalPending(), excessAmount);
 
-        // Advance time past lockup
+        // Advance time past lockup + unbonding delay
         vm.prank(SystemAddresses.BLOCK);
-        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
-        // Claim the withdrawal
+        // Withdraw available
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        IStakePool(pool).claimWithdrawal(nonce, alice);
+        IStakePool(pool).withdrawAvailable(alice);
 
         assertEq(alice.balance, balanceBefore + excessAmount);
     }
 
-    /// @notice Test that PENDING_INACTIVE validators can request withdrawals
-    function test_requestWithdrawal_pendingInactiveValidator() public {
+    /// @notice Test that PENDING_INACTIVE validators can unstake
+    function test_unstake_pendingInactiveValidator() public {
         // Setup: two validators so one can leave
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND * 2, "alice");
         _createRegisterAndJoin(bob, MIN_BOND, "bob");
@@ -903,26 +903,26 @@ contract ValidatorManagementTest is Test {
         validatorManager.leaveValidatorSet(pool1);
         assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
 
-        // PENDING_INACTIVE can request withdrawal of excess (must still maintain min bond)
+        // PENDING_INACTIVE can unstake excess (must still maintain min bond)
         uint256 excessAmount = MIN_BOND; // Can withdraw half
         vm.prank(alice);
-        uint256 nonce = IStakePool(pool1).requestWithdrawal(excessAmount);
+        IStakePool(pool1).unstake(excessAmount);
 
-        // Advance time past lockup
+        // Advance time past lockup + unbonding delay
         vm.prank(SystemAddresses.BLOCK);
-        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
-        // Claim the withdrawal
+        // Withdraw available
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        IStakePool(pool1).claimWithdrawal(nonce, alice);
+        IStakePool(pool1).withdrawAvailable(alice);
 
         assertEq(alice.balance, balanceBefore + excessAmount);
     }
 
     /// @notice Test that validators can withdraw all stake after leaving and epoch processes
-    /// @dev Complete flow: ACTIVE -> PENDING_INACTIVE -> INACTIVE -> withdraw all
-    function test_requestWithdrawal_afterLeavingValidatorSet() public {
+    /// @dev Complete flow: ACTIVE -> PENDING_INACTIVE -> INACTIVE -> unstake -> withdraw
+    function test_unstake_afterLeavingValidatorSet() public {
         // Setup: two validators so one can leave
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         _createRegisterAndJoin(bob, MIN_BOND, "bob");
@@ -936,67 +936,67 @@ contract ValidatorManagementTest is Test {
         _processEpoch();
         assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.INACTIVE));
 
-        // INACTIVE validators can request full withdrawal
+        // INACTIVE validators can unstake full amount
         vm.prank(alice);
-        uint256 nonce = IStakePool(pool1).requestWithdrawal(MIN_BOND);
+        IStakePool(pool1).unstake(MIN_BOND);
 
-        // Advance time past lockup
+        // Advance time past lockup + unbonding delay
         vm.prank(SystemAddresses.BLOCK);
-        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
-        // Claim the withdrawal
+        // Withdraw available
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        IStakePool(pool1).claimWithdrawal(nonce, alice);
+        IStakePool(pool1).withdrawAvailable(alice);
 
         assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
-        assertEq(IStakePool(pool1).getStake(), 0, "Pool stake should be zero");
+        assertEq(IStakePool(pool1).getActiveStake(), 0, "Pool active stake should be zero");
     }
 
     /// @notice Test that non-validator pools (registered but INACTIVE) can withdraw
-    function test_requestWithdrawal_inactiveValidator() public {
+    function test_unstake_inactiveValidator() public {
         // Create and register validator but don't join the active set
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
 
         // Verify validator is INACTIVE (registered but not in active set)
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
 
-        // INACTIVE validators can request full withdrawal
+        // INACTIVE validators can unstake full amount
         vm.prank(alice);
-        uint256 nonce = IStakePool(pool).requestWithdrawal(MIN_BOND);
+        IStakePool(pool).unstake(MIN_BOND);
 
-        // Advance time past lockup
+        // Advance time past lockup + unbonding delay
         vm.prank(SystemAddresses.BLOCK);
-        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
-        // Claim the withdrawal
+        // Withdraw available
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        IStakePool(pool).claimWithdrawal(nonce, alice);
+        IStakePool(pool).withdrawAvailable(alice);
 
         assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
     }
 
-    /// @notice Test that non-validator pools (not registered) can request and claim withdrawal
-    function test_requestWithdrawal_nonValidatorPool() public {
+    /// @notice Test that non-validator pools (not registered) can unstake and withdraw
+    function test_unstake_nonValidatorPool() public {
         // Create a stake pool but don't register as validator
         address pool = _createStakePool(alice, MIN_BOND);
 
         // Pool is not a validator
         assertFalse(validatorManager.isValidator(pool), "Pool should not be a validator");
 
-        // Request withdrawal
+        // Unstake
         vm.prank(alice);
-        uint256 nonce = IStakePool(pool).requestWithdrawal(MIN_BOND);
+        IStakePool(pool).unstake(MIN_BOND);
 
-        // Advance time past lockup
+        // Advance time past lockup + unbonding delay
         vm.prank(SystemAddresses.BLOCK);
-        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
-        // Non-validator pools can claim withdrawal
+        // Non-validator pools can withdraw
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        IStakePool(pool).claimWithdrawal(nonce, alice);
+        IStakePool(pool).withdrawAvailable(alice);
 
         assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
     }

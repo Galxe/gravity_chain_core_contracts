@@ -90,11 +90,19 @@ interface IStaking {
         uint64 atTime
     ) external view returns (uint256);
 
-    /// @notice Get stake amount of a specific pool (total including pending withdrawals)
+    /// @notice Get active stake amount of a specific pool (not including pending withdrawals)
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
-    /// @return Stake amount in wei
-    function getPoolStake(
+    /// @return Active stake amount in wei
+    function getPoolActiveStake(
+        address pool
+    ) external view returns (uint256);
+
+    /// @notice Get total pending withdrawal amount of a specific pool
+    /// @dev Reverts if pool is not valid
+    /// @param pool Address of the pool
+    /// @return Total pending withdrawal amount in wei
+    function getPoolTotalPending(
         address pool
     ) external view returns (uint256);
 

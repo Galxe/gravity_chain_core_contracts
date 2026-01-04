@@ -12,6 +12,9 @@ interface IStakingConfig {
     /// @notice Lockup duration in microseconds
     function lockupDurationMicros() external view returns (uint64);
 
+    /// @notice Unbonding delay in microseconds (additional wait after lockedUntil before withdrawal)
+    function unbondingDelayMicros() external view returns (uint64);
+
     /// @notice Minimum stake required to create governance proposals
     function minimumProposalStake() external view returns (uint256);
 }

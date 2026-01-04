@@ -10,9 +10,24 @@ import { StakePool } from "src/staking/StakePool.sol";
 import { IStakePool } from "src/staking/IStakePool.sol";
 import { Timestamp } from "src/runtime/Timestamp.sol";
 import { StakingConfig } from "src/runtime/StakingConfig.sol";
-import { Proposal, ProposalState } from "src/foundation/Types.sol";
+import { Proposal, ProposalState, ValidatorStatus } from "src/foundation/Types.sol";
 import { SystemAddresses } from "src/foundation/SystemAddresses.sol";
 import { Errors } from "src/foundation/Errors.sol";
+
+/// @notice Mock ValidatorManagement for testing - all pools are non-validators
+contract MockValidatorManagement {
+    function isValidator(
+        address
+    ) external pure returns (bool) {
+        return false;
+    }
+
+    function getValidatorStatus(
+        address
+    ) external pure returns (ValidatorStatus) {
+        return ValidatorStatus.INACTIVE;
+    }
+}
 
 /// @title GovernanceTest
 /// @notice Unit tests for Governance contract
@@ -36,6 +51,7 @@ contract GovernanceTest is Test {
 
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION_MICROS = 30 days * 1_000_000; // 30 days
+    uint64 constant UNBONDING_DELAY_MICROS = 7 days * 1_000_000; // 7 days
 
     // Test target contract for execution
     MockTarget public mockTarget;
@@ -55,11 +71,14 @@ contract GovernanceTest is Test {
 
         // Initialize StakingConfig
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION_MICROS, REQUIRED_PROPOSER_STAKE);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION_MICROS, UNBONDING_DELAY_MICROS, REQUIRED_PROPOSER_STAKE);
 
         // Deploy Staking
         vm.etch(SystemAddresses.STAKING, address(new Staking()).code);
         staking = Staking(SystemAddresses.STAKING);
+
+        // Deploy mock ValidatorManagement - returns false for isValidator()
+        vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
 
         // Deploy GovernanceConfig
         vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);

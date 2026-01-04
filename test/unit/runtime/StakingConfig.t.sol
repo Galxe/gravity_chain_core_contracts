@@ -15,6 +15,7 @@ contract StakingConfigTest is Test {
     // Common test values (microseconds)
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION = 30 days * 1_000_000; // 30 days in microseconds
+    uint64 constant UNBONDING_DELAY = 7 days * 1_000_000; // 7 days in microseconds
     uint256 constant MIN_PROPOSAL_STAKE = 10 ether;
 
     function setUp() public {
@@ -28,6 +29,7 @@ contract StakingConfigTest is Test {
     function test_InitialState() public view {
         assertEq(config.minimumStake(), 0);
         assertEq(config.lockupDurationMicros(), 0);
+        assertEq(config.unbondingDelayMicros(), 0);
         assertEq(config.minimumProposalStake(), 0);
     }
 
@@ -37,17 +39,18 @@ contract StakingConfigTest is Test {
 
     function test_Initialize() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
 
         assertEq(config.minimumStake(), MIN_STAKE);
         assertEq(config.lockupDurationMicros(), LOCKUP_DURATION);
+        assertEq(config.unbondingDelayMicros(), UNBONDING_DELAY);
         assertEq(config.minimumProposalStake(), MIN_PROPOSAL_STAKE);
     }
 
     function test_Initialize_ZeroMinimumStake() public {
         // minimumStake can be 0
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(0, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(0, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
 
         assertEq(config.minimumStake(), 0);
     }
@@ -55,7 +58,7 @@ contract StakingConfigTest is Test {
     function test_Initialize_ZeroMinimumProposalStake() public {
         // minimumProposalStake can be 0
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, 0);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, 0);
 
         assertEq(config.minimumProposalStake(), 0);
     }
@@ -63,23 +66,29 @@ contract StakingConfigTest is Test {
     function test_RevertWhen_Initialize_ZeroLockupDuration() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidLockupDuration.selector);
-        config.initialize(MIN_STAKE, 0, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE, 0, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
+    }
+
+    function test_RevertWhen_Initialize_ZeroUnbondingDelay() public {
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, 0, MIN_PROPOSAL_STAKE);
     }
 
     function test_RevertWhen_Initialize_AlreadyInitialized() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.AlreadyInitialized.selector);
-        config.initialize(MIN_STAKE * 2, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE * 2, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
     }
 
     function test_RevertWhen_Initialize_NotGenesis() public {
         address notGenesis = address(0x1234);
         vm.prank(notGenesis);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGenesis, SystemAddresses.GENESIS));
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
     }
 
     // ========================================================================
@@ -166,6 +175,47 @@ contract StakingConfigTest is Test {
     }
 
     // ========================================================================
+    // SETTER TESTS - setUnbondingDelayMicros
+    // ========================================================================
+
+    function test_SetUnbondingDelayMicros() public {
+        _initializeConfig();
+
+        uint64 newDelay = 14 days * 1_000_000; // 14 days in microseconds
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setUnbondingDelayMicros(newDelay);
+
+        assertEq(config.unbondingDelayMicros(), newDelay);
+    }
+
+    function test_RevertWhen_SetUnbondingDelayMicros_Zero() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
+        config.setUnbondingDelayMicros(0);
+    }
+
+    function test_RevertWhen_SetUnbondingDelayMicros_NotTimelock() public {
+        _initializeConfig();
+
+        address notTimelock = address(0x1234);
+        vm.prank(notTimelock);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
+        config.setUnbondingDelayMicros(14 days * 1_000_000);
+    }
+
+    function test_Event_SetUnbondingDelayMicros() public {
+        _initializeConfig();
+
+        uint64 newDelay = 14 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectEmit(true, false, false, true);
+        emit StakingConfig.ConfigUpdated("unbondingDelayMicros", UNBONDING_DELAY, newDelay);
+        config.setUnbondingDelayMicros(newDelay);
+    }
+
+    // ========================================================================
     // SETTER TESTS - setMinimumProposalStake
     // ========================================================================
 
@@ -248,15 +298,18 @@ contract StakingConfigTest is Test {
     function testFuzz_Initialize(
         uint256 minStake,
         uint64 lockupDuration,
+        uint64 unbondingDelay,
         uint256 minProposalStake
     ) public {
         vm.assume(lockupDuration > 0);
+        vm.assume(unbondingDelay > 0);
 
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(minStake, lockupDuration, minProposalStake);
+        config.initialize(minStake, lockupDuration, unbondingDelay, minProposalStake);
 
         assertEq(config.minimumStake(), minStake);
         assertEq(config.lockupDurationMicros(), lockupDuration);
+        assertEq(config.unbondingDelayMicros(), unbondingDelay);
         assertEq(config.minimumProposalStake(), minProposalStake);
     }
 
@@ -283,6 +336,18 @@ contract StakingConfigTest is Test {
         assertEq(config.lockupDurationMicros(), newValue);
     }
 
+    function testFuzz_SetUnbondingDelayMicros(
+        uint64 newValue
+    ) public {
+        vm.assume(newValue > 0);
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setUnbondingDelayMicros(newValue);
+
+        assertEq(config.unbondingDelayMicros(), newValue);
+    }
+
     function testFuzz_SetMinimumProposalStake(
         uint256 newValue
     ) public {
@@ -300,7 +365,7 @@ contract StakingConfigTest is Test {
 
     function _initializeConfig() internal {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, MIN_PROPOSAL_STAKE);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
     }
 }
 

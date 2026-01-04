@@ -113,10 +113,17 @@ contract Staking is IStaking {
     }
 
     /// @inheritdoc IStaking
-    function getPoolStake(
+    function getPoolActiveStake(
         address pool
     ) external view onlyValidPool(pool) returns (uint256) {
-        return IStakePool(pool).getStake();
+        return IStakePool(pool).getActiveStake();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolTotalPending(
+        address pool
+    ) external view onlyValidPool(pool) returns (uint256) {
+        return IStakePool(pool).getTotalPending();
     }
 
     /// @inheritdoc IStaking
