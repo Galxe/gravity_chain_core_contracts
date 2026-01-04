@@ -527,14 +527,16 @@ contract StakePool is IStakePool, Ownable2Step {
         uint64 unbondingDelay = IStakingConfig(SystemAddresses.STAKE_CONFIG).unbondingDelayMicros();
 
         // Calculate the threshold: lockedUntil must be such that now > lockedUntil + unbondingDelay
-        // i.e., lockedUntil < now - unbondingDelay
-        // But be careful of underflow
+        // i.e., lockedUntil < now - unbondingDelay (strict inequality)
+        // Since binary search finds lockedUntil <= threshold, we use threshold = now - unbondingDelay - 1
+        // to enforce the strict inequality.
+        // Early return: if now <= unbondingDelay, nothing can be claimable yet (return 0, don't revert)
         if (now_ <= unbondingDelay) {
             return 0;
         }
-        uint64 threshold = now_ - unbondingDelay;
+        uint64 threshold = now_ - unbondingDelay - 1;
 
-        // Find cumulative amount where lockedUntil <= threshold
+        // Find cumulative amount where lockedUntil <= threshold (i.e., lockedUntil < now - unbondingDelay)
         uint256 claimableCumulative = _getCumulativeAmountAtTime(threshold);
 
         // Subtract already claimed

@@ -558,6 +558,33 @@ contract StakingTest is Test {
         assertEq(claimed, 0, "Should return 0 when nothing claimable");
     }
 
+    function test_withdrawAvailable_notClaimableAtExactBoundary() public {
+        // Tests that stake is NOT claimable when now == lockedUntil + unbondingDelay (strict inequality)
+        vm.prank(alice);
+        address pool = _createPool(alice, 10 ether);
+
+        vm.prank(alice);
+        IStakePool(pool).unstake(5 ether);
+
+        // Advance to exactly lockedUntil + unbondingDelay
+        _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY);
+
+        // At exact boundary, should NOT be claimable (spec requires now > lockedUntil + unbondingDelay)
+        assertEq(IStakePool(pool).getClaimableAmount(), 0, "Should not be claimable at exact boundary");
+        vm.prank(alice);
+        uint256 claimed = IStakePool(pool).withdrawAvailable(bob);
+        assertEq(claimed, 0, "Should return 0 at exact boundary");
+
+        // Advance 1 more microsecond
+        _advanceTime(1);
+
+        // Now should be claimable (now > lockedUntil + unbondingDelay)
+        assertEq(IStakePool(pool).getClaimableAmount(), 5 ether, "Should be claimable 1 microsecond after boundary");
+        vm.prank(alice);
+        claimed = IStakePool(pool).withdrawAvailable(bob);
+        assertEq(claimed, 5 ether, "Should claim 5 ether 1 microsecond after boundary");
+    }
+
     function test_withdrawAvailable_partialClaim_withMultipleBuckets() public {
         vm.prank(alice);
         address pool = _createPool(alice, 10 ether);
