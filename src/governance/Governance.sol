@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { IGovernance } from "./IGovernance.sol";
-import { GovernanceConfig } from "./GovernanceConfig.sol";
+import { GovernanceConfig } from "../runtime/GovernanceConfig.sol";
 import { Proposal, ProposalState } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
