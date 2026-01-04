@@ -307,5 +307,49 @@ library Errors {
 
     /// @notice Oracle contract has not been initialized
     error OracleNotInitialized();
+
+    // ========================================================================
+    // VERSION CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Version must increase (monotonic)
+    /// @param current Current version
+    /// @param proposed Proposed version that is not greater
+    error VersionMustIncrease(uint64 current, uint64 proposed);
+
+    /// @notice Version config has not been initialized
+    error VersionNotInitialized();
+
+    /// @notice Version config has already been initialized
+    error VersionAlreadyInitialized();
+
+    // ========================================================================
+    // EPOCH CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Epoch config has not been initialized
+    error EpochConfigNotInitialized();
+
+    /// @notice Epoch config has already been initialized
+    error EpochConfigAlreadyInitialized();
+
+    // ========================================================================
+    // CONSENSUS/EXECUTION CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Config has not been initialized
+    error ConsensusConfigNotInitialized();
+
+    /// @notice Config has already been initialized
+    error ConsensusConfigAlreadyInitialized();
+
+    /// @notice Config has not been initialized
+    error ExecutionConfigNotInitialized();
+
+    /// @notice Config has already been initialized
+    error ExecutionConfigAlreadyInitialized();
+
+    /// @notice Config bytes cannot be empty
+    error EmptyConfig();
 }
 

@@ -69,5 +69,21 @@ library SystemAddresses {
     /// @notice Governance configuration contract
     /// @dev Stores governance parameters (voting threshold, proposal stake, etc.)
     address internal constant GOVERNANCE_CONFIG = address(0x0000000000000000000000000001625F2026);
+
+    /// @notice Epoch configuration contract
+    /// @dev Stores epoch interval duration
+    address internal constant EPOCH_CONFIG = address(0x0000000000000000000000000001625F2027);
+
+    /// @notice Version configuration contract
+    /// @dev Stores protocol major version (monotonically increasing)
+    address internal constant VERSION_CONFIG = address(0x0000000000000000000000000001625F2028);
+
+    /// @notice Consensus configuration contract
+    /// @dev Stores consensus parameters as opaque bytes (BCS-serialized)
+    address internal constant CONSENSUS_CONFIG = address(0x0000000000000000000000000001625F2029);
+
+    /// @notice Execution configuration contract
+    /// @dev Stores VM execution parameters as opaque bytes (BCS-serialized)
+    address internal constant EXECUTION_CONFIG = address(0x0000000000000000000000000001625F202A);
 }
 
