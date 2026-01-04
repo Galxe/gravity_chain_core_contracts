@@ -145,4 +145,17 @@ interface IStaking {
         address voter,
         uint64 lockedUntil
     ) external payable returns (address pool);
+
+    // ========================================================================
+    // SYSTEM FUNCTIONS
+    // ========================================================================
+
+    /// @notice Renew lockup for an active validator's stake pool
+    /// @dev Only callable by VALIDATOR_MANAGER during epoch transitions.
+    ///      Implements Aptos-style auto-renewal for active validators.
+    ///      Sets pool's lockedUntil = now + lockupDurationMicros.
+    /// @param pool Address of the pool to renew
+    function renewPoolLockup(
+        address pool
+    ) external;
 }

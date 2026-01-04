@@ -134,4 +134,13 @@ interface IStakePool {
     function renewLockUntil(
         uint64 durationMicros
     ) external;
+
+    // ========================================================================
+    // SYSTEM FUNCTIONS
+    // ========================================================================
+
+    /// @notice Renew lockup for active validators (called by Staking factory during epoch transitions)
+    /// @dev Only callable by the Staking factory. Sets lockedUntil = now + lockupDurationMicros.
+    ///      This implements Aptos-style auto-renewal for active validators.
+    function systemRenewLockup() external;
 }

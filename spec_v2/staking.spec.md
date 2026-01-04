@@ -331,6 +331,9 @@ interface IStaking {
         address voter,
         uint64 lockedUntil
     ) external payable returns (address pool);
+
+    // === System Functions ===
+    function renewPoolLockup(address pool) external;
 }
 ```
 
@@ -386,6 +389,22 @@ All pool status query functions revert with `InvalidPool(pool)` if the pool addr
 | `getPoolOperator(pool)`   | Pool's operator address                           |
 | `getPoolLockedUntil(pool)`| Pool's lockup expiration (microseconds)           |
 | `isPoolLocked(pool)`      | Whether pool's stake is locked                    |
+
+#### `renewPoolLockup(pool)` — System Function
+
+Renew lockup for an active validator's stake pool.
+
+**Access Control:** VALIDATOR_MANAGER only
+
+**Behavior:**
+1. Verify pool is valid via `_isPool[pool]`
+2. Call `StakePool.systemRenewLockup()` on the pool
+3. Pool sets `lockedUntil = now + lockupDurationMicros`
+
+**Notes:**
+- Called by ValidatorManagement during `onNewEpoch()` for each active validator
+- Implements Aptos-style auto-renewal for active validators
+- Ensures voting power never drops to zero due to lockup expiration
 
 ---
 
@@ -448,6 +467,9 @@ interface IStakePool {
     function addStake() external payable;
     function withdraw(uint256 amount, address recipient) external;
     function renewLockUntil(uint64 durationMicros) external;
+
+    // === System Functions ===
+    function systemRenewLockup() external;
 }
 ```
 
@@ -495,18 +517,22 @@ Add native tokens to the stake pool. Voting power increases immediately.
 
 #### `withdraw(uint256 amount, address recipient)` — Staker Only
 
-Withdraw stake to a specified recipient. Only allowed when lockup has expired.
+Withdraw stake to a specified recipient. Only allowed when lockup has expired and pool is not an active validator.
 
 **Access Control:** Only `staker`
 
 **Behavior:**
 
-1. Revert if `lockedUntil > now` (lockup not expired)
-2. Revert if `amount == 0`
-3. Revert if `amount > stake`
-4. Decrease `stake` by `amount`
-5. Emit `StakeWithdrawn` event with recipient
-6. Transfer `amount` to `recipient`
+1. **Check validator status** via `ValidatorManagement.isValidator(pool)` and `getValidatorStatus(pool)`
+2. Revert if pool is ACTIVE or PENDING_INACTIVE (must leave validator set first)
+3. Revert if `lockedUntil > now` (lockup not expired)
+4. Revert if `amount == 0`
+5. Revert if `amount > stake`
+6. Decrease `stake` by `amount`
+7. Emit `StakeWithdrawn` event with recipient
+8. Transfer `amount` to `recipient`
+
+**Security Note:** Active validators cannot withdraw ANY stake, including amounts exceeding `maximumBond`. This ensures validators cannot reduce their stake while participating in consensus.
 
 #### `renewLockUntil(uint64 durationMicros)` — Staker Only
 
@@ -528,6 +554,24 @@ Extend lockup by a specified duration to maintain or restore voting power.
 - The **resulting** `newLockedUntil` must be `>= now + minLockupDuration`
 - This allows small extensions when lockup is already far in the future
 - Can be used to restore voting power if lockup has expired
+
+#### `systemRenewLockup()` — System Function
+
+Renew lockup for active validators (called by Staking factory during epoch transitions).
+
+**Access Control:** Only Staking factory
+
+**Behavior:**
+
+1. Get current time and lockup duration from config
+2. Calculate `newLockedUntil = now + lockupDurationMicros`
+3. If `newLockedUntil > lockedUntil`, update lockup and emit `LockupRenewed` event
+
+**Notes:**
+
+- Called by `Staking.renewPoolLockup()` which is called by ValidatorManagement
+- Implements Aptos-style auto-renewal for active validators
+- Ensures voting power never drops to zero due to lockup expiration while validating
 
 #### `setOperator(address newOperator)` — Owner Only
 
@@ -627,8 +671,10 @@ Lockup parameters are configured in `StakingConfig`:
 ### Lockup and Withdrawals
 
 - Withdrawals require `lockedUntil <= now` (lockup expired)
+- Withdrawals also require pool is NOT an active validator (ACTIVE or PENDING_INACTIVE status)
 - Staker can re-lock by calling `renewLockUntil()` to restore voting power
-- No automatic lockup renewal — staker must explicitly extend
+- **For active validators**: Lockups are auto-renewed at each epoch boundary via `systemRenewLockup()`
+- **For non-validators**: No automatic lockup renewal — staker must explicitly extend
 
 ---
 
@@ -637,8 +683,10 @@ Lockup parameters are configured in `StakingConfig`:
 | Contract  | Function                         | Allowed Callers         |
 | --------- | -------------------------------- | ----------------------- |
 | Staking   | createPool                       | Anyone (with min stake) |
+| Staking   | renewPoolLockup                  | VALIDATOR_MANAGER only  |
 | Staking   | view functions                   | Anyone                  |
 | StakePool | addStake/withdraw/renewLockUntil | Staker only             |
+| StakePool | systemRenewLockup                | Staking factory only    |
 | StakePool | setOperator/setVoter/setStaker   | Owner only              |
 | StakePool | transferOwnership                | Owner only              |
 | StakePool | acceptOwnership                  | Pending owner only      |
@@ -677,6 +725,8 @@ The following errors from `Errors.sol` are used:
 | `LockupDurationTooShort(uint64 provided, uint64 minimum)` | renewLockUntil result < now + minLockupDuration |
 | `LockupOverflow(uint64 current, uint64 addition)`         | renewLockUntil would overflow lockedUntil       |
 | `InsufficientStake(uint256 requested, uint256 available)` | Withdraw more than available                    |
+| `CannotWithdrawWhileActiveValidator(address pool)`        | Withdraw from active/pending_inactive validator |
+| `OnlyStakingFactory(address caller)`                      | systemRenewLockup called by non-factory         |
 
 ---
 
@@ -811,6 +861,9 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 6. **Two-Step Ownership** — Ownable2Step prevents accidental ownership transfers
 7. **Role Separation** — Clear separation between owner (admin) and staker (funds)
 8. **Immediate Effect Trade-off** — Stake changes are immediate; consumers must snapshot for epoch-based security
+9. **Validator Withdrawal Protection** — Active validators cannot withdraw stake (enforced in StakePool.withdraw)
+10. **Lockup Auto-Renewal** — Active validators' lockups are auto-renewed at epoch boundaries
+11. **Excessive Stake Protection** — Even stake exceeding maximumBond cannot be withdrawn while active
 
 ---
 

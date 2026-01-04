@@ -2,9 +2,11 @@
 pragma solidity ^0.8.30;
 
 import { IStakePool } from "./IStakePool.sol";
+import { IValidatorManagement } from "./IValidatorManagement.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
+import { ValidatorStatus } from "../foundation/Types.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
 import { IStakingConfig } from "../runtime/IStakingConfig.sol";
 
@@ -50,6 +52,14 @@ contract StakePool is IStakePool, Ownable2Step {
     modifier onlyStaker() {
         if (msg.sender != staker) {
             revert Errors.NotStaker(msg.sender, staker);
+        }
+        _;
+    }
+
+    /// @notice Restricts function to the Staking factory only
+    modifier onlyFactory() {
+        if (msg.sender != FACTORY) {
+            revert Errors.OnlyStakingFactory(msg.sender);
         }
         _;
     }
@@ -203,6 +213,16 @@ contract StakePool is IStakePool, Ownable2Step {
         uint256 amount,
         address recipient
     ) external onlyStaker {
+        // Check if this pool is an active validator (ACTIVE or PENDING_INACTIVE)
+        // Active validators must leave the validator set before withdrawing
+        IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+        if (validatorMgmt.isValidator(address(this))) {
+            ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
+            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+                revert Errors.CannotWithdrawWhileActiveValidator(address(this));
+            }
+        }
+
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
         // Check lockup expired
@@ -248,5 +268,24 @@ contract StakePool is IStakePool, Ownable2Step {
         lockedUntil = newLockedUntil;
 
         emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);
+    }
+
+    // ========================================================================
+    // SYSTEM FUNCTIONS
+    // ========================================================================
+
+    /// @inheritdoc IStakePool
+    function systemRenewLockup() external onlyFactory {
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 lockupDuration = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        uint64 newLockedUntil = now_ + lockupDuration;
+
+        // Only renew if lockup has expired or would expire soon
+        // This matches Aptos behavior: auto-renew at epoch boundary if expired
+        if (newLockedUntil > lockedUntil) {
+            uint64 oldLockedUntil = lockedUntil;
+            lockedUntil = newLockedUntil;
+            emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);
+        }
     }
 }

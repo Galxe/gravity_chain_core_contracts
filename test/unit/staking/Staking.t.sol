@@ -10,8 +10,24 @@ import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
 import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
+import { ValidatorStatus } from "../../../src/foundation/Types.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/access/Ownable2Step.sol";
+
+/// @notice Mock ValidatorManagement for testing - all pools are non-validators
+contract MockValidatorManagement {
+    function isValidator(
+        address /* stakePool */
+    ) external pure returns (bool) {
+        return false;
+    }
+
+    function getValidatorStatus(
+        address /* stakePool */
+    ) external pure returns (ValidatorStatus) {
+        return ValidatorStatus.INACTIVE;
+    }
+}
 
 /// @title StakingTest
 /// @notice Unit tests for Staking factory and StakePool contracts with two-role separation
@@ -41,6 +57,9 @@ contract StakingTest is Test {
 
         vm.etch(SystemAddresses.STAKING, address(new Staking()).code);
         staking = Staking(SystemAddresses.STAKING);
+
+        // Deploy mock ValidatorManagement - returns false for isValidator() so pools can withdraw
+        vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
 
         // Initialize StakingConfig
         vm.prank(SystemAddresses.GENESIS);

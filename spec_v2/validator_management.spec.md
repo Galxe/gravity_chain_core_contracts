@@ -343,11 +343,15 @@ Process epoch transition.
    - Validators exceeding limit remain pending
    - Validators below minimum revert to INACTIVE
    - Emit `ValidatorActivated` event
-3. Apply pending fee recipient changes
-4. Sync owner/operator from stake pools
-5. Reassign indices (0 to n-1) for all active validators
-6. Update epoch counter and total voting power
-7. Emit `EpochProcessed` event
+3. **Auto-renew lockups for active validators** (Aptos-style):
+   - Call `Staking.renewPoolLockup(pool)` for each active validator
+   - Ensures voting power never drops to zero due to lockup expiration
+   - Matches Aptos `stake.move` lines 1435-1449
+4. Apply pending fee recipient changes
+5. Sync owner/operator from stake pools
+6. Reassign indices (0 to n-1) for all active validators
+7. Update epoch counter and total voting power
+8. Emit `EpochProcessed` event
 
 **Voting Power Limit**:
 - New validators can only add up to `votingPowerIncreaseLimitPct`% of current total
@@ -540,10 +544,39 @@ validatorManager.leaveValidatorSet(pool);
 7. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
 8. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
 9. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
+10. **Withdrawal Protection**: Active validators (ACTIVE or PENDING_INACTIVE) cannot withdraw stake from their StakePool
+11. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style)
+12. **Excessive Stake Protection**: Even stake exceeding maximumBond cannot be withdrawn while active
 
 ---
 
 ## Changelog
+
+### 2026-01-03: Staking Security Enhancements
+
+Added security mechanisms to protect active validators and match Aptos's staking behavior:
+
+**Withdrawal Protection**
+- Active validators (ACTIVE or PENDING_INACTIVE) cannot withdraw stake from their StakePool
+- Enforced in `StakePool.withdraw()` by checking `ValidatorManagement.getValidatorStatus()`
+- Validators must call `leaveValidatorSet()` and wait for epoch transition to become INACTIVE
+- Error: `CannotWithdrawWhileActiveValidator(pool)`
+
+**Lockup Auto-Renewal (Aptos-style)**
+- Added `_renewActiveValidatorLockups()` called in `onNewEpoch()`
+- Calls `Staking.renewPoolLockup(pool)` for each active validator
+- Sets `lockedUntil = now + lockupDurationMicros`
+- Ensures voting power never drops to zero due to lockup expiration
+- Matches Aptos `stake.move` lines 1435-1449
+
+**Excessive Stake Protection**
+- Even stake amounts exceeding `maximumBond` cannot be withdrawn while active
+- The entire stake is locked, not just the portion contributing to voting power
+- Validators must leave the active set before any withdrawal
+
+**New Functions Added**
+- `Staking.renewPoolLockup(pool)` - Called by ValidatorManagement to renew lockups
+- `StakePool.systemRenewLockup()` - Called by Staking factory for auto-renewal
 
 ### 2026-01-03: Aptos Security Parity
 

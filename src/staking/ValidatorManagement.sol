@@ -16,6 +16,24 @@ import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 /// @dev Validators must have a StakePool with sufficient voting power to register.
 ///      ValidatorManager only interacts with the Staking factory contract, never StakePool directly.
 ///      Validator indices are assigned at each epoch boundary like Aptos.
+///
+/// ## Security Properties (Aptos Parity)
+///
+/// 1. **Withdrawal Protection**: Active validators (status ACTIVE or PENDING_INACTIVE) cannot
+///    withdraw stake from their StakePool. This is enforced by StakePool.withdraw() checking
+///    validator status. Validators must call leaveValidatorSet() and wait for epoch transition
+///    to become INACTIVE before withdrawing.
+///
+/// 2. **Lockup Auto-Renewal**: Active validators have their lockup automatically renewed at
+///    each epoch boundary via _renewActiveValidatorLockups(). This ensures voting power never
+///    drops to zero due to lockup expiration while actively participating in consensus.
+///
+/// 3. **Excessive Stake Protection**: Even stake amounts exceeding maximumBond cannot be
+///    withdrawn while the validator is active. The entire stake is locked, not just the portion
+///    contributing to voting power.
+///
+/// 4. **Default Status**: Unregistered pools return false for isValidator(). Querying status
+///    of an unregistered pool via getValidatorStatus() reverts with ValidatorNotFound.
 contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
     // CONSTANTS
@@ -136,8 +154,8 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InsufficientBond(minimumBond, votingPower);
         }
 
-        // TODO(yxia): what if the stake drop below the minimum bond?
-        // TODO(yxia): shall we check the lockup duration?
+        // Note: Stake drops below minimum are handled in _processPendingActive()
+        // Lockup is auto-renewed for active validators via _renewActiveValidatorLockups()
 
         // Verify moniker length
         if (bytes(moniker).length > MAX_MONIKER_LENGTH) {
@@ -303,16 +321,19 @@ contract ValidatorManagement is IValidatorManagement {
         // 2. Process PENDING_ACTIVE → ACTIVE (with voting power limit check)
         _processPendingActive();
 
-        // 3. Apply pending fee recipient changes for all active validators
+        // 3. Auto-renew lockups for active validators (Aptos-style)
+        _renewActiveValidatorLockups();
+
+        // 4. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 4. Update owner/operator from stake pool for all active validators
+        // 5. Update owner/operator from stake pool for all active validators
         _syncValidatorRoles();
 
-        // 5. Reassign indices for all active validators
+        // 6. Reassign indices for all active validators
         _reassignValidatorIndices();
 
-        // 6. Update epoch state (epoch provided by Reconfiguration contract)
+        // 7. Update epoch state (epoch provided by Reconfiguration contract)
         currentEpoch = newEpoch;
         totalVotingPower = _calculateTotalVotingPower();
 
@@ -402,6 +423,19 @@ contract ValidatorManagement is IValidatorManagement {
 
             // Index will be assigned in _reassignValidatorIndices
             emit ValidatorActivated(pool, 0, validator.bond); // Index updated after reassignment
+        }
+    }
+
+    /// @notice Auto-renew lockups for active validators (Aptos-style)
+    /// @dev Calls Staking.renewPoolLockup() for each active validator.
+    ///      This ensures active validators always have valid lockups for voting power.
+    ///      Matches Aptos behavior in stake.move lines 1435-1449.
+    function _renewActiveValidatorLockups() internal {
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _activeValidators[i];
+            // Renew lockup via Staking factory (which calls StakePool.systemRenewLockup)
+            IStaking(SystemAddresses.STAKING).renewPoolLockup(pool);
         }
     }
 
@@ -555,6 +589,8 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
+    /// @dev Returns false for pools that have never registered as validators.
+    ///      This is the correct way to check if a pool can be queried for validator info.
     function isValidator(
         address stakePool
     ) external view returns (bool) {
@@ -562,6 +598,8 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
+    /// @dev Reverts for unregistered pools. Use isValidator() to check registration first.
+    ///      Registered validators default to INACTIVE status until they join the validator set.
     function getValidatorStatus(
         address stakePool
     ) external view returns (ValidatorStatus) {

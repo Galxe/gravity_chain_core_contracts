@@ -56,6 +56,14 @@ library Errors {
     /// @param staker Address that has no stake
     error NoStakePosition(address staker);
 
+    /// @notice Cannot withdraw stake while pool is an active validator
+    /// @param pool The stake pool address
+    error CannotWithdrawWhileActiveValidator(address pool);
+
+    /// @notice Caller is not the Staking factory
+    /// @param caller The actual caller address
+    error OnlyStakingFactory(address caller);
+
     // ========================================================================
     // VALIDATOR ERRORS
     // ========================================================================

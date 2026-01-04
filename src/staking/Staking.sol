@@ -6,6 +6,7 @@ import { IStakePool } from "./IStakePool.sol";
 import { StakePool } from "./StakePool.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStakingConfig } from "../runtime/IStakingConfig.sol";
 
@@ -175,5 +176,19 @@ contract Staking is IStaking {
         _isPool[pool] = true;
 
         emit PoolCreated(msg.sender, pool, owner, staker, _allPools.length - 1);
+    }
+
+    // ========================================================================
+    // SYSTEM FUNCTIONS
+    // ========================================================================
+
+    /// @inheritdoc IStaking
+    function renewPoolLockup(
+        address pool
+    ) external onlyValidPool(pool) {
+        requireAllowed(SystemAddresses.VALIDATOR_MANAGER);
+
+        // Call the pool's system renewal function
+        IStakePool(pool).systemRenewLockup();
     }
 }

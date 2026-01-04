@@ -838,5 +838,175 @@ contract ValidatorManagementTest is Test {
         vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
         validatorManager.leaveValidatorSet(pool1);
     }
+
+    // ========================================================================
+    // STAKE WITHDRAWAL PROTECTION TESTS
+    // ========================================================================
+
+    /// @notice Test that active validators cannot withdraw stake
+    /// @dev This prevents validators from reducing their stake while actively participating in consensus
+    function test_RevertWhen_withdraw_activeValidator() public {
+        // Create validator with extra stake above minimum bond
+        uint256 stakeAmount = MIN_BOND * 2; // 20 ether
+        address pool = _createRegisterAndJoin(alice, stakeAmount, "alice");
+        _processEpoch();
+
+        // Verify validator is active
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+
+        // Advance time past lockup (lockup normally allows withdrawal)
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // Attempt to withdraw - should revert even though lockup has expired
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotWithdrawWhileActiveValidator.selector, pool));
+        IStakePool(pool).withdraw(1 ether, alice);
+    }
+
+    /// @notice Test that validators in PENDING_INACTIVE status cannot withdraw
+    /// @dev Validators must wait until they become INACTIVE at epoch boundary
+    function test_RevertWhen_withdraw_pendingInactiveValidator() public {
+        // Setup: two validators so one can leave
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        // Alice requests to leave - becomes PENDING_INACTIVE
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // Advance time past lockup
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // Attempt to withdraw - should revert (still PENDING_INACTIVE until epoch processes)
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotWithdrawWhileActiveValidator.selector, pool1));
+        IStakePool(pool1).withdraw(1 ether, alice);
+    }
+
+    /// @notice Test that active validators cannot withdraw even excessive stake above max bond
+    /// @dev The entire stake is locked, not just the portion contributing to voting power
+    function test_RevertWhen_withdraw_excessiveStakeWhileActive() public {
+        // Create validator with stake well above MAX_BOND (1000 ether)
+        uint256 excessiveStake = MAX_BOND * 2; // 2000 ether
+        address pool = _createRegisterAndJoin(alice, excessiveStake, "alice");
+        _processEpoch();
+
+        // Verify validator is active with capped voting power
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(uint8(record.status), uint8(ValidatorStatus.ACTIVE));
+        assertEq(record.bond, MAX_BOND, "Voting power should be capped at MAX_BOND");
+
+        // Verify the pool actually has more stake than MAX_BOND
+        assertEq(IStakePool(pool).getStake(), excessiveStake, "Pool should have full stake amount");
+
+        // Advance time past lockup
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // Attempt to withdraw excessive amount (above MAX_BOND) - should still revert
+        uint256 excessAmount = excessiveStake - MAX_BOND; // 1000 ether excess
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotWithdrawWhileActiveValidator.selector, pool));
+        IStakePool(pool).withdraw(excessAmount, alice);
+
+        // Even trying to withdraw 1 wei should fail
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotWithdrawWhileActiveValidator.selector, pool));
+        IStakePool(pool).withdraw(1, alice);
+    }
+
+    /// @notice Test that validators can withdraw after leaving and epoch processes
+    /// @dev Complete flow: ACTIVE -> PENDING_INACTIVE -> INACTIVE -> withdraw
+    function test_withdraw_afterLeavingValidatorSet() public {
+        // Setup: two validators so one can leave
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        // Alice requests to leave
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // Process epoch - Alice becomes INACTIVE
+        _processEpoch();
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.INACTIVE));
+
+        // Advance time past lockup
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // Now Alice can withdraw
+        uint256 balanceBefore = alice.balance;
+        vm.prank(alice);
+        IStakePool(pool1).withdraw(MIN_BOND, alice);
+
+        assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
+        assertEq(IStakePool(pool1).getStake(), 0, "Pool stake should be zero");
+    }
+
+    /// @notice Test that non-validator pools (registered but INACTIVE) can withdraw
+    function test_withdraw_inactiveValidator() public {
+        // Create and register validator but don't join the active set
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Verify validator is INACTIVE (registered but not in active set)
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+
+        // Advance time past lockup
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // INACTIVE validators can withdraw
+        uint256 balanceBefore = alice.balance;
+        vm.prank(alice);
+        IStakePool(pool).withdraw(MIN_BOND, alice);
+
+        assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
+    }
+
+    /// @notice Test that non-validator pools (not registered) can withdraw
+    function test_withdraw_nonValidatorPool() public {
+        // Create a stake pool but don't register as validator
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Pool is not a validator
+        assertFalse(validatorManager.isValidator(pool), "Pool should not be a validator");
+
+        // Advance time past lockup
+        vm.prank(SystemAddresses.BLOCK);
+        timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP + LOCKUP_DURATION + 1);
+
+        // Non-validator pools can withdraw
+        uint256 balanceBefore = alice.balance;
+        vm.prank(alice);
+        IStakePool(pool).withdraw(MIN_BOND, alice);
+
+        assertEq(alice.balance, balanceBefore + MIN_BOND, "Alice should receive withdrawn stake");
+    }
+
+    /// @notice Test that isValidator returns false for unregistered pools
+    function test_isValidator_returnsFalseForUnregisteredPool() public {
+        // Create a stake pool but don't register as validator
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // isValidator should return false
+        assertFalse(validatorManager.isValidator(pool), "Unregistered pool should not be a validator");
+    }
+
+    /// @notice Test that getValidatorStatus reverts for unregistered pools
+    function test_RevertWhen_getValidatorStatus_unregisteredPool() public {
+        // Create a stake pool but don't register as validator
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // getValidatorStatus should revert with ValidatorNotFound
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, pool));
+        validatorManager.getValidatorStatus(pool);
+    }
 }
 
