@@ -6,6 +6,7 @@ import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 import { RandomnessConfig } from "./RandomnessConfig.sol";
+import { IDKG } from "./IDKG.sol";
 import { ITimestamp } from "./ITimestamp.sol";
 
 /// @title DKG
@@ -16,27 +17,10 @@ import { ITimestamp } from "./ITimestamp.sol";
 ///      Only RECONFIGURATION can start/finish sessions.
 ///      Note: Full validator arrays are emitted in events only (not stored in contract state)
 ///      to avoid storage limitations with dynamic arrays.
-contract DKG {
+contract DKG is IDKG {
     // ========================================================================
     // TYPES
     // ========================================================================
-
-    /// @notice Essential DKG session info stored on-chain
-    /// @dev Full metadata including validator sets is emitted in events
-    struct DKGSessionInfo {
-        /// @notice Epoch number of the dealers (current validators)
-        uint64 dealerEpoch;
-        /// @notice Randomness configuration variant
-        RandomnessConfig.ConfigVariant configVariant;
-        /// @notice Number of dealers
-        uint64 dealerCount;
-        /// @notice Number of targets
-        uint64 targetCount;
-        /// @notice When the session started (microseconds)
-        uint64 startTimeUs;
-        /// @notice DKG transcript (output, set on completion)
-        bytes transcript;
-    }
 
     /// @notice Full DKG session metadata for events
     /// @dev Emitted in DKGStartEvent for consensus engine
@@ -56,10 +40,10 @@ contract DKG {
     // ========================================================================
 
     /// @notice In-progress DKG session info (if any)
-    DKGSessionInfo private _inProgress;
+    IDKG.DKGSessionInfo private _inProgress;
 
     /// @notice Last completed DKG session info (if any)
-    DKGSessionInfo private _lastCompleted;
+    IDKG.DKGSessionInfo private _lastCompleted;
 
     /// @notice Whether an in-progress session exists
     bool public hasInProgress;
@@ -104,7 +88,7 @@ contract DKG {
         RandomnessConfig.RandomnessConfigData calldata randomnessConfig,
         ValidatorConsensusInfo[] calldata dealerValidatorSet,
         ValidatorConsensusInfo[] calldata targetValidatorSet
-    ) external {
+    ) external override {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         // Cannot start if already in progress
@@ -116,7 +100,7 @@ contract DKG {
         uint64 startTimeUs = _getCurrentTimeMicros();
 
         // Store essential session info on-chain
-        _inProgress = DKGSessionInfo({
+        _inProgress = IDKG.DKGSessionInfo({
             dealerEpoch: dealerEpoch,
             configVariant: randomnessConfig.variant,
             dealerCount: uint64(dealerValidatorSet.length),
@@ -143,7 +127,7 @@ contract DKG {
     /// @param transcript The DKG transcript from consensus engine
     function finish(
         bytes calldata transcript
-    ) external {
+    ) external override {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
@@ -166,7 +150,7 @@ contract DKG {
     /// @notice Clear an incomplete DKG session
     /// @dev Called by RECONFIGURATION to clean up stale sessions.
     ///      No-op if no session is in progress.
-    function tryClearIncompleteSession() external {
+    function tryClearIncompleteSession() external override {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
@@ -186,14 +170,19 @@ contract DKG {
 
     /// @notice Check if a DKG session is in progress
     /// @return True if a session is in progress
-    function isInProgress() external view returns (bool) {
+    function isInProgress() external view override returns (bool) {
         return hasInProgress;
     }
 
     /// @notice Get the incomplete session info if any
     /// @return hasSession Whether an in-progress session exists
     /// @return info Session info (only valid if hasSession is true)
-    function getIncompleteSession() external view returns (bool hasSession, DKGSessionInfo memory info) {
+    function getIncompleteSession()
+        external
+        view
+        override
+        returns (bool hasSession, IDKG.DKGSessionInfo memory info)
+    {
         if (hasInProgress) {
             return (true, _inProgress);
         }
@@ -203,7 +192,12 @@ contract DKG {
     /// @notice Get the last completed session info if any
     /// @return hasSession Whether a completed session exists
     /// @return info Session info (only valid if hasSession is true)
-    function getLastCompletedSession() external view returns (bool hasSession, DKGSessionInfo memory info) {
+    function getLastCompletedSession()
+        external
+        view
+        override
+        returns (bool hasSession, IDKG.DKGSessionInfo memory info)
+    {
         if (hasLastCompleted) {
             return (true, _lastCompleted);
         }
@@ -214,8 +208,8 @@ contract DKG {
     /// @param info Session info to query
     /// @return The dealer epoch
     function sessionDealerEpoch(
-        DKGSessionInfo calldata info
-    ) external pure returns (uint64) {
+        IDKG.DKGSessionInfo calldata info
+    ) external pure override returns (uint64) {
         return info.dealerEpoch;
     }
 
