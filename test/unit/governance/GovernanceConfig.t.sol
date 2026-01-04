@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { GovernanceConfig } from "src/governance/GovernanceConfig.sol";
+import { GovernanceConfig } from "src/runtime/GovernanceConfig.sol";
 import { SystemAddresses } from "src/foundation/SystemAddresses.sol";
 import { Errors } from "src/foundation/Errors.sol";
 

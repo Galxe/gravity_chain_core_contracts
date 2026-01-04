@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { Governance } from "src/governance/Governance.sol";
 import { IGovernance } from "src/governance/IGovernance.sol";
-import { GovernanceConfig } from "src/governance/GovernanceConfig.sol";
+import { GovernanceConfig } from "src/runtime/GovernanceConfig.sol";
 import { Staking } from "src/staking/Staking.sol";
 import { StakePool } from "src/staking/StakePool.sol";
 import { IStakePool } from "src/staking/IStakePool.sol";

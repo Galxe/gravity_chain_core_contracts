@@ -36,7 +36,9 @@ interface IDKG {
     ) external;
 
     /// @notice Complete DKG session with transcript
-    function finish(bytes calldata transcript) external;
+    function finish(
+        bytes calldata transcript
+    ) external;
 
     /// @notice Clear incomplete session (no-op if none)
     function tryClearIncompleteSession() external;
@@ -53,5 +55,7 @@ interface IDKG {
     function getLastCompletedSession() external view returns (bool hasSession, DKGSessionInfo memory info);
 
     /// @notice Get dealer epoch from session info
-    function sessionDealerEpoch(DKGSessionInfo calldata info) external pure returns (uint64);
+    function sessionDealerEpoch(
+        DKGSessionInfo calldata info
+    ) external pure returns (uint64);
 }

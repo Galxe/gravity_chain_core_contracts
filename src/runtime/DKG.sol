@@ -177,12 +177,7 @@ contract DKG is IDKG {
     /// @notice Get the incomplete session info if any
     /// @return hasSession Whether an in-progress session exists
     /// @return info Session info (only valid if hasSession is true)
-    function getIncompleteSession()
-        external
-        view
-        override
-        returns (bool hasSession, IDKG.DKGSessionInfo memory info)
-    {
+    function getIncompleteSession() external view override returns (bool hasSession, IDKG.DKGSessionInfo memory info) {
         if (hasInProgress) {
             return (true, _inProgress);
         }
