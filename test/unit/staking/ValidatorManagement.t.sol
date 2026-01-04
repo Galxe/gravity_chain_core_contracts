@@ -94,8 +94,9 @@ contract ValidatorManagementTest is Test {
         address owner,
         uint256 stakeAmount
     ) internal returns (address pool) {
+        uint64 lockedUntil = timestamp.nowMicroseconds() + LOCKUP_DURATION;
         vm.prank(owner);
-        pool = staking.createPool{ value: stakeAmount }(owner);
+        pool = staking.createPool{ value: stakeAmount }(owner, owner, owner, owner, lockedUntil);
     }
 
     /// @notice Create a stake pool and register as validator

@@ -14,18 +14,17 @@ management** — anyone can create a StakePool for any purpose (governance votin
 This design is inspired by Aptos's `stake.move` module but adapted for EVM with the following key differences:
 
 - Individual StakePool contracts deployed via CREATE2 (not resources under addresses)
-- Hook callback system for extensibility (delegation pools, custom logic)
+- Two-role separation (Owner/Staker) enables composable staking logic (DPOS, LSD, etc.)
 - Staking is NOT validator-specific — validators use staking as a building block
 
 ### Contracts
 
-| Contract           | Purpose                                       |
-| ------------------ | --------------------------------------------- |
-| `IStaking.sol`     | Factory interface                             |
-| `Staking.sol`      | Factory that creates StakePools via CREATE2   |
-| `IStakePool.sol`   | Individual pool interface                     |
-| `StakePool.sol`    | Individual pool implementation                |
-| `IStakingHook.sol` | Optional callback interface for extensibility |
+| Contract         | Purpose                                     |
+| ---------------- | ------------------------------------------- |
+| `IStaking.sol`   | Factory interface                           |
+| `Staking.sol`    | Factory that creates StakePools via CREATE2 |
+| `IStakePool.sol` | Individual pool interface                   |
+| `StakePool.sol`  | Individual pool implementation              |
 
 ---
 
@@ -36,15 +35,15 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 1. **Anyone Can Create a Pool** — No permission required to create a StakePool
 2. **Simple Lockup Model** — Single stake amount + lockup timestamp; immediate effect on voting power
 3. **No Epoch Processing** — Staking layer is stateless w.r.t. epochs; consumers (e.g., ValidatorManager) snapshot if needed
-4. **Role Separation** — Owner / Operator / Voter (like Aptos)
-5. **Hook Extensibility** — Optional callbacks for delegation pools, rewards, etc.
+4. **Two-Role Separation** — Owner (admin) / Staker (funds) / Operator / Voter
+5. **Composable Staking** — Staker role can be a smart contract for DPOS, LSD, etc.
 
 ### What This Layer Does
 
 - Creates and manages individual StakePool contracts
 - Tracks stake with lockup-based voting power (immediate effect)
 - Provides voting power queries based on locked stake
-- Enables extensibility via hook callbacks
+- Enables composable staking via the staker role
 
 ### What Consumers Do (Not This Layer)
 
@@ -58,7 +57,7 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 - Validator management (handled by ValidatorManager in Layer 3)
 - Governance voting logic (handled by Voting contract separately)
 - Rewards distribution (consensus layer responsibility)
-- Delegation accounting (external hook implementations)
+- Delegation accounting (external staker contract implementations)
 
 ---
 
@@ -69,8 +68,7 @@ src/staking/
 ├── IStaking.sol       # Factory interface
 ├── Staking.sol        # Factory implementation
 ├── IStakePool.sol     # Individual pool interface
-├── StakePool.sol      # Individual pool implementation
-└── IStakingHook.sol   # Optional callback interface
+└── StakePool.sol      # Individual pool implementation (inherits Ownable2Step)
 ```
 
 ### Dependency Graph
@@ -79,8 +77,6 @@ src/staking/
 graph TD
     subgraph Foundation[Layer 0: Foundation]
         SA[SystemAddresses]
-        SAC[SystemAccessControl]
-        T[Types]
         E[Errors]
     end
 
@@ -89,12 +85,15 @@ graph TD
         SC[StakingConfig]
     end
 
+    subgraph OpenZeppelin[OpenZeppelin]
+        OZ[Ownable2Step]
+    end
+
     subgraph Staking[Layer 2: Staking]
         IS[IStaking]
         S[Staking]
         ISP[IStakePool]
         SP[StakePool]
-        ISH[IStakingHook]
     end
 
     subgraph Consumers[Consumers - snapshot for epoch security]
@@ -102,26 +101,25 @@ graph TD
         GOV[Governance]
     end
 
-    subgraph ExternalHooks[External Hooks]
-        DP[DelegationPool]
+    subgraph ExternalStakers[External Staker Contracts]
+        DPOS[DPOS Contract]
+        LSD[LSD Contract]
     end
 
     S --> SA
-    S --> SAC
-    S --> T
     S --> E
 
     SP --> SA
-    SP --> T
     SP --> E
     SP --> TS
     SP --> SC
+    SP --> OZ
 
     VM -.->|queries voting power| SP
     GOV -.->|queries voting power| SP
 
-    DP -.->|implements| ISH
-    SP -.->|calls| ISH
+    DPOS -.->|acts as staker| SP
+    LSD -.->|acts as staker| SP
 ```
 
 ---
@@ -131,6 +129,75 @@ graph TD
 | Constant  | Address                                  | Description                |
 | --------- | ---------------------------------------- | -------------------------- |
 | `STAKING` | `0x0000000000000000000000000001625F2012` | StakePool factory contract |
+
+---
+
+## Two-Role Separation
+
+Each StakePool implements a two-role separation pattern:
+
+```mermaid
+graph TD
+    subgraph StakePool
+        Owner[Owner - via Ownable2Step]
+        Staker[Staker]
+        Operator[Operator]
+        Voter[Voter]
+    end
+    
+    Owner -->|setVoter, setOperator, setStaker| StakePool
+    Owner -->|transferOwnership, acceptOwnership| StakePool
+    Staker -->|addStake, withdraw, renewLockUntil| StakePool
+    Operator -.->|reserved for validator ops| StakePool
+    Voter -.->|used for governance voting| StakePool
+```
+
+### Role Definitions
+
+| Role       | Controlled By      | Can Do                                                          |
+| ---------- | ------------------ | --------------------------------------------------------------- |
+| **Owner**  | `Ownable2Step`     | Set voter/operator/staker, transfer ownership (2-step process)  |
+| **Staker** | `staker` address   | Add stake, withdraw, renew lockup (can be a smart contract)     |
+| **Operator** | `operator` address | Reserved for validator operations (future integration)          |
+| **Voter**  | `voter` address    | Cast governance votes using pool's voting power                 |
+
+### Ownership Transfer (Ownable2Step)
+
+StakePool inherits from OpenZeppelin's `Ownable2Step` for secure ownership transfers:
+
+1. Current owner calls `transferOwnership(newOwner)` — sets pending owner
+2. New owner calls `acceptOwnership()` — completes transfer
+
+This prevents accidental transfers to wrong addresses.
+
+### Staker as Smart Contract
+
+The staker role enables composable staking:
+
+```solidity
+// Example: DPOS contract as staker
+contract DPOSStaker {
+    IStakePool public pool;
+    
+    function delegatedStake() external payable {
+        // Track delegator shares
+        shares[msg.sender] += msg.value;
+        totalShares += msg.value;
+        
+        // Forward to pool (this contract is the staker)
+        pool.addStake{value: msg.value}();
+    }
+    
+    function delegatedWithdraw(uint256 amount) external {
+        // Burn delegator shares
+        shares[msg.sender] -= amount;
+        totalShares -= amount;
+        
+        // Withdraw from pool to delegator
+        pool.withdraw(amount, msg.sender);
+    }
+}
+```
 
 ---
 
@@ -150,32 +217,28 @@ Each StakePool uses a simple lockup-based model with **immediate effect** on vot
                               └──────┬───────┘
                                      │
                     ┌────────────────┼────────────────┐
-                    │                │                │
-                    ▼                ▼                ▼
-             ┌───────────┐    ┌───────────┐    ┌───────────┐
-             │  LOCKED   │    │ UNLOCKING │    │ UNLOCKED  │
-             │           │    │           │    │           │
-             │ lockedUntil│    │ lockedUntil│    │ lockedUntil│
-             │  > now    │    │ > now but  │    │  <= now   │
-             │           │    │ unlock     │    │           │
-             │           │    │ requested  │    │           │
-             └───────────┘    └───────────┘    └───────────┘
-                    │                │                │
-                    │                │                │
-            Voting Power:     Voting Power:    Voting Power:
-               stake            stake               0
-                                                    │
-                                                    ▼
-                                              withdraw()
+                    │                                 │
+                    ▼                                 ▼
+             ┌───────────┐                     ┌───────────┐
+             │  LOCKED   │                     │ UNLOCKED  │
+             │           │                     │           │
+             │ lockedUntil│                    │ lockedUntil│
+             │  > now    │                     │  <= now   │
+             └───────────┘                     └───────────┘
+                    │                                 │
+            Voting Power:                     Voting Power:
+               stake                               0
+                                                   │
+                                                   ▼
+                                             withdraw()
 ```
 
 ### State Variables
 
-| Variable          | Type    | Description                            |
-| ----------------- | ------- | -------------------------------------- |
-| `stake`           | uint256 | Total staked amount                    |
-| `lockedUntil`     | uint64  | Lockup expiration (microseconds)       |
-| `unlockRequested` | uint256 | Amount requested to unlock (optional)  |
+| Variable      | Type    | Description                      |
+| ------------- | ------- | -------------------------------- |
+| `stake`       | uint256 | Total staked amount              |
+| `lockedUntil` | uint64  | Lockup expiration (microseconds) |
 
 ### Voting Power Calculation
 
@@ -189,27 +252,22 @@ votingPower = (lockedUntil > now) ? stake : 0
 
 ### State Transitions
 
-**On `addStake(amount)`:**
+**On `addStake(amount)` (staker only):**
 
 - Increases `stake` by `amount` immediately
 - Extends `lockedUntil` to `max(current, now + minLockupDuration)`
 - Voting power increases immediately
 
-**On `unlock(amount)`:**
-
-- Sets `unlockRequested = amount` (marks intent to withdraw)
-- Voting power unchanged until lockup expires
-- Does NOT move stake to a separate bucket
-
-**On `withdraw(amount)`:**
+**On `withdraw(amount, recipient)` (staker only):**
 
 - Requires `lockedUntil <= now` (lockup expired)
 - Decreases `stake` by `amount`
-- Transfers tokens to owner
+- Transfers tokens to specified `recipient`
 
-**On `increaseLockup(duration)`:**
+**On `renewLockUntil(duration)` (staker only):**
 
 - Extends `lockedUntil` by `duration`
+- Validates result: `newLockedUntil >= now + minLockupDuration`
 - Voting power restored if it was zero (lockup was expired)
 
 ---
@@ -239,12 +297,17 @@ uint256 public poolNonce;
 ```solidity
 interface IStaking {
     // === Events ===
-    event PoolCreated(address indexed creator, address indexed pool, address indexed owner, uint256 poolIndex);
+    event PoolCreated(
+        address indexed creator,
+        address indexed pool,
+        address indexed owner,
+        address staker,
+        uint256 poolIndex
+    );
 
     // === Pool Registry (View) ===
     function isPool(address pool) external view returns (bool);
     function getPool(uint256 index) external view returns (address);
-    function computePoolAddress(uint256 nonce) external view returns (address);
     function getAllPools() external view returns (address[] memory);
     function getPoolCount() external view returns (uint256);
     function getPoolNonce() external view returns (uint256);
@@ -254,13 +317,20 @@ interface IStaking {
     function getPoolVotingPower(address pool) external view returns (uint256);
     function getPoolStake(address pool) external view returns (uint256);
     function getPoolOwner(address pool) external view returns (address);
+    function getPoolStaker(address pool) external view returns (address);
     function getPoolVoter(address pool) external view returns (address);
     function getPoolOperator(address pool) external view returns (address);
     function getPoolLockedUntil(address pool) external view returns (uint64);
     function isPoolLocked(address pool) external view returns (bool);
 
     // === State-Changing Functions ===
-    function createPool(address owner) external payable returns (address pool);
+    function createPool(
+        address owner,
+        address staker,
+        address operator,
+        address voter,
+        uint64 lockedUntil
+    ) external payable returns (address pool);
 }
 ```
 
@@ -278,51 +348,44 @@ Check if an address is a valid pool created by this factory.
 **Security Note:** Validators MUST use this function to verify pools before trusting their voting power.
 Only pools that return `true` should be used in consensus calculations.
 
-#### `createPool(address owner)`
+#### `createPool(owner, staker, operator, voter, lockedUntil)`
 
-Create a new StakePool with specified owner. Anyone can create multiple pools.
+Create a new StakePool with all parameters specified explicitly.
 
 **Behavior:**
 
 1. Revert if `msg.value < minimumStake` (prevents spam)
 2. Increment `poolNonce`
 3. Compute deterministic address via CREATE2 (salt = `poolNonce`)
-4. Deploy new StakePool contract with `owner` and initial stake (`msg.value`)
-5. Add to `_allPools` array
-6. Set `_isPool[pool] = true` (registers as valid pool)
-7. Emit `PoolCreated` event with creator, pool, owner, and pool index
-8. Return pool address
+4. Deploy new StakePool contract with all parameters and initial stake (`msg.value`)
+5. Pool constructor validates `lockedUntil >= now + minLockupDuration`
+6. Add to `_allPools` array
+7. Set `_isPool[pool] = true` (registers as valid pool)
+8. Emit `PoolCreated` event
+9. Return pool address
 
 **Notes:**
 
 - Anyone can call this function (no restriction on caller)
 - Anyone can create multiple pools (no limit per address)
-- The `owner` parameter sets who controls the pool
+- All parameters must be explicitly provided (no defaults)
+- `lockedUntil` must be valid: `>= now + minLockupDuration`
 - Initial stake (`msg.value`) becomes the pool's stake immediately
-- `minimumStake` is configured in `StakingConfig`
-
-#### `computePoolAddress(uint256 nonce)`
-
-Compute the deterministic address for a pool at given nonce without deploying.
-
-**Behavior:**
-
-- Uses CREATE2 address calculation with `nonce` as salt
-- Returns the address that would be deployed for that nonce
 
 #### Pool Status Query Functions
 
 All pool status query functions revert with `InvalidPool(pool)` if the pool address is not valid.
 
-| Function | Returns |
-| --- | --- |
-| `getPoolVotingPower(pool)` | Pool's voting power (stake if locked, 0 if unlocked) |
-| `getPoolStake(pool)` | Pool's total staked amount |
-| `getPoolOwner(pool)` | Pool's owner address |
-| `getPoolVoter(pool)` | Pool's delegated voter address |
-| `getPoolOperator(pool)` | Pool's operator address |
-| `getPoolLockedUntil(pool)` | Pool's lockup expiration (microseconds) |
-| `isPoolLocked(pool)` | Whether pool's stake is locked |
+| Function                  | Returns                                           |
+| ------------------------- | ------------------------------------------------- |
+| `getPoolVotingPower(pool)`| Pool's voting power (stake if locked, 0 if unlocked) |
+| `getPoolStake(pool)`      | Pool's total staked amount                        |
+| `getPoolOwner(pool)`      | Pool's owner address (from Ownable2Step)          |
+| `getPoolStaker(pool)`     | Pool's staker address                             |
+| `getPoolVoter(pool)`      | Pool's delegated voter address                    |
+| `getPoolOperator(pool)`   | Pool's operator address                           |
+| `getPoolLockedUntil(pool)`| Pool's lockup expiration (microseconds)           |
+| `isPoolLocked(pool)`      | Whether pool's stake is locked                    |
 
 ---
 
@@ -330,7 +393,7 @@ All pool status query functions revert with `InvalidPool(pool)` if the pool addr
 
 ### Purpose
 
-Individual stake pool contract. Each user who wants to stake creates their own StakePool.
+Individual stake pool contract with two-role separation. Inherits from OpenZeppelin's `Ownable2Step` for ownership.
 
 ### State Variables
 
@@ -338,10 +401,10 @@ Individual stake pool contract. Each user who wants to stake creates their own S
 /// @notice Address of the Staking factory
 address public immutable FACTORY;
 
-/// @notice Owner address (controls funds, can set operator/voter)
-address public owner;
+/// @notice Staker address (manages funds: stake/unstake/renewLockUntil)
+address public staker;
 
-/// @notice Operator address (can operate pool for validator integration)
+/// @notice Operator address (reserved for validator operations)
 address public operator;
 
 /// @notice Delegated voter address (votes in governance using this pool's stake)
@@ -352,9 +415,6 @@ uint256 public stake;
 
 /// @notice Lockup expiration timestamp (microseconds)
 uint64 public lockedUntil;
-
-/// @notice Optional hook contract for callbacks
-address public hook;
 ```
 
 ### Interface
@@ -363,14 +423,14 @@ address public hook;
 interface IStakePool {
     // === Events ===
     event StakeAdded(address indexed pool, uint256 amount);
-    event StakeWithdrawn(address indexed pool, uint256 amount);
-    event LockupIncreased(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
+    event StakeWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
+    event LockupRenewed(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
     event OperatorChanged(address indexed pool, address oldOperator, address newOperator);
     event VoterChanged(address indexed pool, address oldVoter, address newVoter);
-    event HookChanged(address indexed pool, address oldHook, address newHook);
+    event StakerChanged(address indexed pool, address oldStaker, address newStaker);
 
     // === View Functions ===
-    function getOwner() external view returns (address);
+    function getStaker() external view returns (address);
     function getOperator() external view returns (address);
     function getVoter() external view returns (address);
     function getStake() external view returns (uint256);
@@ -378,51 +438,66 @@ interface IStakePool {
     function getLockedUntil() external view returns (uint64);
     function getRemainingLockup() external view returns (uint64);
     function isLocked() external view returns (bool);
-    function getHook() external view returns (address);
 
-    // === Owner Functions ===
-    function addStake() external payable;
-    function withdraw(uint256 amount) external;
-    function increaseLockup(uint64 durationMicros) external;
+    // === Owner Functions (via Ownable2Step) ===
     function setOperator(address newOperator) external;
     function setVoter(address newVoter) external;
-    function setHook(address newHook) external;
+    function setStaker(address newStaker) external;
+
+    // === Staker Functions ===
+    function addStake() external payable;
+    function withdraw(uint256 amount, address recipient) external;
+    function renewLockUntil(uint64 durationMicros) external;
 }
 ```
 
-### Role Separation
+### Constructor
 
-Following Aptos's design, three roles control different aspects of a StakePool:
+All parameters must be explicitly provided at pool creation:
 
-| Role         | Controlled By      | Can Do                                                              |
-| ------------ | ------------------ | ------------------------------------------------------------------- |
-| **Owner**    | `owner` address    | Add/unlock/withdraw stake, set operator/voter/hook, increase lockup |
-| **Operator** | `operator` address | Reserved for validator operations (future integration)              |
-| **Voter**    | `voter` address    | Cast governance votes using pool's voting power                     |
-
-Initially, all three roles default to the pool creator (owner).
+```solidity
+constructor(
+    address _owner,
+    address _staker,
+    address _operator,
+    address _voter,
+    uint64 _lockedUntil
+) payable Ownable(_owner) {
+    // Validate lockedUntil >= now + minLockup
+    uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+    uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+    if (_lockedUntil < now_ + minLockup) {
+        revert Errors.LockupDurationTooShort(_lockedUntil, now_ + minLockup);
+    }
+    
+    staker = _staker;
+    operator = _operator;
+    voter = _voter;
+    lockedUntil = _lockedUntil;
+    stake = msg.value;
+}
+```
 
 ### Function Specifications
 
-#### `addStake()`
+#### `addStake()` — Staker Only
 
 Add native tokens to the stake pool. Voting power increases immediately.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `staker`
 
 **Behavior:**
 
 1. Revert if `msg.value == 0`
 2. Increase `stake` by `msg.value`
 3. Update lockup: `lockedUntil = max(lockedUntil, now + minLockupDuration)`
-4. Call hook if set: `hook.onStakeAdded(msg.value)`
-5. Emit `StakeAdded` event
+4. Emit `StakeAdded` event
 
-#### `withdraw(uint256 amount)`
+#### `withdraw(uint256 amount, address recipient)` — Staker Only
 
-Withdraw stake. Only allowed when lockup has expired.
+Withdraw stake to a specified recipient. Only allowed when lockup has expired.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `staker`
 
 **Behavior:**
 
@@ -430,37 +505,35 @@ Withdraw stake. Only allowed when lockup has expired.
 2. Revert if `amount == 0`
 3. Revert if `amount > stake`
 4. Decrease `stake` by `amount`
-5. Call hook if set: `hook.onStakeWithdrawn(amount)`
-6. Transfer `amount` to `owner`
-7. Emit `StakeWithdrawn` event
+5. Emit `StakeWithdrawn` event with recipient
+6. Transfer `amount` to `recipient`
 
-#### `increaseLockup(uint64 durationMicros)`
+#### `renewLockUntil(uint64 durationMicros)` — Staker Only
 
 Extend lockup by a specified duration to maintain or restore voting power.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `staker`
 
 **Behavior:**
 
-1. Revert if `durationMicros < minLockupDuration` (from StakingConfig)
-2. Calculate `newLockedUntil = lockedUntil + durationMicros`
-3. Revert if `newLockedUntil <= lockedUntil` (overflow protection)
+1. Calculate `newLockedUntil = lockedUntil + durationMicros`
+2. Revert if `newLockedUntil <= lockedUntil` (overflow protection)
+3. Revert if `newLockedUntil < now + minLockupDuration` (result must be valid)
 4. Update `lockedUntil = newLockedUntil`
-5. Call hook if set: `hook.onLockupIncreased(newLockedUntil)`
-6. Emit `LockupIncreased` event
+5. Emit `LockupRenewed` event
 
 **Notes:**
 
 - The `durationMicros` parameter specifies how much time to ADD to the current lockup
-- Must be at least `minLockupDuration` (configured in StakingConfig)
-- This is additive: extends from current `lockedUntil`, not from `now`
+- The **resulting** `newLockedUntil` must be `>= now + minLockupDuration`
+- This allows small extensions when lockup is already far in the future
 - Can be used to restore voting power if lockup has expired
 
-#### `setOperator(address newOperator)`
+#### `setOperator(address newOperator)` — Owner Only
 
 Change the operator address.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `owner` (via Ownable2Step)
 
 **Behavior:**
 
@@ -468,11 +541,11 @@ Change the operator address.
 2. Set `operator = newOperator`
 3. Emit `OperatorChanged` event
 
-#### `setVoter(address newVoter)`
+#### `setVoter(address newVoter)` — Owner Only
 
 Change the delegated voter address.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `owner` (via Ownable2Step)
 
 **Behavior:**
 
@@ -480,17 +553,17 @@ Change the delegated voter address.
 2. Set `voter = newVoter`
 3. Emit `VoterChanged` event
 
-#### `setHook(address newHook)`
+#### `setStaker(address newStaker)` — Owner Only
 
-Set or change the hook contract for callbacks.
+Change the staker address.
 
-**Access Control:** Only `owner`
+**Access Control:** Only `owner` (via Ownable2Step)
 
 **Behavior:**
 
-1. Store old hook
-2. Set `hook = newHook`
-3. Emit `HookChanged` event
+1. Store old staker
+2. Set `staker = newStaker`
+3. Emit `StakerChanged` event
 
 #### `getVotingPower()`
 
@@ -500,51 +573,6 @@ Returns current voting power. Immediate effect based on lockup status.
 
 - Returns `stake` if `lockedUntil > now` (locked)
 - Returns `0` if `lockedUntil <= now` (unlocked)
-
-#### `isLocked()`
-
-Check if pool's stake is currently locked.
-
-**Behavior:**
-
-- Returns `true` if `lockedUntil > now`
-- Returns `false` otherwise
-
----
-
-## Contract: `IStakingHook.sol`
-
-### Purpose
-
-Optional callback interface for extensibility. Hook contracts can implement custom logic that executes during stake
-lifecycle events.
-
-### Interface
-
-```solidity
-interface IStakingHook {
-    /// @notice Called when stake is added to the pool
-    /// @param amount Amount of stake added
-    function onStakeAdded(uint256 amount) external;
-
-    /// @notice Called when stake is withdrawn
-    /// @param amount Amount of stake withdrawn
-    function onStakeWithdrawn(uint256 amount) external;
-
-    /// @notice Called when lockup is increased
-    /// @param newLockedUntil New lockup expiration timestamp
-    function onLockupIncreased(uint64 newLockedUntil) external;
-}
-```
-
-### Use Cases
-
-Hooks are set by pool owners for their own custom logic:
-
-1. **Delegation Pool** — Pool owner runs a delegation service; hook tracks delegator shares and distributes rewards proportionally among delegators
-2. **Staking Vault** — DeFi protocol uses hook to mint/burn liquid staking tokens when users stake/withdraw
-3. **Notification Service** — Pool owner wants external contract notified of stake changes for analytics or integrations
-4. **Vesting Contract** — Employer creates pool for employee; hook enforces vesting schedule on withdrawals
 
 ---
 
@@ -588,33 +616,33 @@ For epoch-based security (e.g., preventing flash-loan attacks on consensus), **c
 
 Lockup parameters are configured in `StakingConfig`:
 
-- `minLockupDuration` — Minimum lockup extension allowed (e.g., 14 days in microseconds)
-- `maxLockupDuration` — Maximum total lockup allowed (e.g., 365 days in microseconds)
+- `lockupDurationMicros` — Minimum lockup duration (e.g., 14 days in microseconds)
 
 ### Lockup Behavior
 
-1. **On createPool**: `lockedUntil = now + minLockupDuration` (initial lockup)
+1. **On createPool**: `lockedUntil` is provided by caller (must be `>= now + minLockupDuration`)
 2. **On addStake**: `lockedUntil = max(current, now + minLockupDuration)` (extends if needed)
-3. **On increaseLockup(duration)**: `lockedUntil = lockedUntil + duration` (additive, duration >= minLockupDuration)
+3. **On renewLockUntil(duration)**: `lockedUntil = lockedUntil + duration` (result must be `>= now + minLockupDuration`)
 
 ### Lockup and Withdrawals
 
 - Withdrawals require `lockedUntil <= now` (lockup expired)
-- Owner can re-lock by calling `increaseLockup()` to restore voting power
-- No automatic lockup renewal — owner must explicitly extend
+- Staker can re-lock by calling `renewLockUntil()` to restore voting power
+- No automatic lockup renewal — staker must explicitly extend
 
 ---
 
 ## Access Control
 
-| Contract  | Function                     | Allowed Callers         |
-| --------- | ---------------------------- | ----------------------- |
-| Staking   | createPool                   | Anyone (with min stake) |
-| Staking   | view functions               | Anyone                  |
-| StakePool | addStake/withdraw            | Owner only              |
-| StakePool | increaseLockup               | Owner only              |
-| StakePool | setOperator/setVoter/setHook | Owner only              |
-| StakePool | view functions               | Anyone                  |
+| Contract  | Function                         | Allowed Callers         |
+| --------- | -------------------------------- | ----------------------- |
+| Staking   | createPool                       | Anyone (with min stake) |
+| Staking   | view functions                   | Anyone                  |
+| StakePool | addStake/withdraw/renewLockUntil | Staker only             |
+| StakePool | setOperator/setVoter/setStaker   | Owner only              |
+| StakePool | transferOwnership                | Owner only              |
+| StakePool | acceptOwnership                  | Pending owner only      |
+| StakePool | view functions                   | Anyone                  |
 
 ---
 
@@ -633,22 +661,22 @@ The following errors from `Errors.sol` are used:
 
 ### Staking Factory Errors
 
-| Error                                                   | When                                     |
-| ------------------------------------------------------- | ---------------------------------------- |
+| Error                                                              | When                                   |
+| ------------------------------------------------------------------ | -------------------------------------- |
 | `InsufficientStakeForPoolCreation(uint256 sent, uint256 required)` | msg.value < minimumStake on createPool |
-| `PoolIndexOutOfBounds(uint256 index, uint256 total)`    | Querying pool at invalid index           |
-| `InvalidPool(address pool)`                              | Pool status query on non-factory pool   |
+| `PoolIndexOutOfBounds(uint256 index, uint256 total)`               | Querying pool at invalid index         |
+| `InvalidPool(address pool)`                                        | Pool status query on non-factory pool  |
 
 ### StakePool Errors
 
-| Error                                                     | When                                        |
-| --------------------------------------------------------- | ------------------------------------------- |
-| `ZeroAmount()`                                            | addStake/withdraw with 0                    |
-| `NotOwner(address caller, address owner)`                 | Non-owner calling owner-only function       |
-| `LockupNotExpired(uint64 lockedUntil, uint64 now)`        | Withdraw while still locked                 |
-| `LockupDurationTooShort(uint64 provided, uint64 minimum)` | increaseLockup duration < minLockupDuration |
-| `LockupOverflow(uint64 current, uint64 addition)`         | increaseLockup would overflow lockedUntil   |
-| `InsufficientStake(uint256 requested, uint256 available)` | Withdraw more than available                |
+| Error                                                     | When                                            |
+| --------------------------------------------------------- | ----------------------------------------------- |
+| `ZeroAmount()`                                            | addStake/withdraw with 0                        |
+| `NotStaker(address caller, address staker)`               | Non-staker calling staker-only function         |
+| `LockupNotExpired(uint64 lockedUntil, uint64 now)`        | Withdraw while still locked                     |
+| `LockupDurationTooShort(uint64 provided, uint64 minimum)` | renewLockUntil result < now + minLockupDuration |
+| `LockupOverflow(uint64 current, uint64 addition)`         | renewLockUntil would overflow lockedUntil       |
+| `InsufficientStake(uint256 requested, uint256 available)` | Withdraw more than available                    |
 
 ---
 
@@ -657,61 +685,69 @@ The following errors from `Errors.sol` are used:
 ### Creating a StakePool and Staking
 
 ```solidity
-// 1. Create a stake pool with initial stake (must meet minimum)
-address pool = staking.createPool{value: 100 ether}(msg.sender);
+// 1. Create a stake pool with all parameters (owner is also staker in this example)
+uint64 lockUntil = uint64(block.timestamp * 1_000_000) + 30 days * 1_000_000;
+address pool = staking.createPool{value: 100 ether}(
+    msg.sender,  // owner
+    msg.sender,  // staker
+    msg.sender,  // operator
+    msg.sender,  // voter
+    lockUntil
+);
 
-// 2. Add more stake later (voting power increases immediately)
+// 2. Add more stake later (as staker, voting power increases immediately)
 IStakePool(pool).addStake{value: 50 ether}();
 
 // 3. Check voting power (150 ether if locked)
 uint256 power = IStakePool(pool).getVotingPower();
 
-// 4. Delegate voting to another address
+// 4. Delegate voting to another address (as owner)
 IStakePool(pool).setVoter(delegatee);
 
-// 5. Extend lockup by 30 days (must be >= minLockupDuration)
-IStakePool(pool).increaseLockup(30 days * 1_000_000); // microseconds
+// 5. Extend lockup by 30 days (as staker)
+IStakePool(pool).renewLockUntil(30 days * 1_000_000); // microseconds
 
-// 6. Wait for lockup to expire, then withdraw
-// (voting power becomes 0 when lockup expires)
-IStakePool(pool).withdraw(50 ether);
+// 6. Wait for lockup to expire, then withdraw to self (as staker)
+IStakePool(pool).withdraw(50 ether, msg.sender);
 ```
 
-### Creating Multiple Pools
+### Setting Up a DPOS Pool
 
 ```solidity
-// Anyone can create multiple pools
-address pool1 = staking.createPool{value: 100 ether}(msg.sender);
-address pool2 = staking.createPool{value: 100 ether}(msg.sender);
-address pool3 = staking.createPool{value: 100 ether}(someOtherOwner);
+// 1. Deploy DPOS staker contract
+DPOSStaker dposContract = new DPOSStaker();
 
-// Each pool has a unique address based on poolNonce
-// Pool addresses are deterministic: computePoolAddress(nonce)
-```
+// 2. Create stake pool with DPOS contract as staker
+uint64 lockUntil = uint64(block.timestamp * 1_000_000) + 30 days * 1_000_000;
+address pool = staking.createPool{value: 100 ether}(
+    msg.sender,           // owner (admin control)
+    address(dposContract), // staker (DPOS contract manages funds)
+    msg.sender,           // operator
+    address(dposContract), // voter (DPOS contract votes)
+    lockUntil
+);
 
-### Setting Up a Delegation Pool
+// 3. Initialize DPOS contract with pool
+dposContract.initialize(pool);
 
-```solidity
-// 1. Create stake pool with initial stake
-address pool = staking.createPool{value: 100 ether}(msg.sender);
-
-// 2. Deploy delegation hook
-DelegationHook hook = new DelegationHook(pool);
-
-// 3. Set hook on pool
-IStakePool(pool).setHook(address(hook));
-
-// 4. Now delegators interact with hook contract
-hook.delegate{value: 10 ether}();
+// 4. Delegators interact with DPOS contract
+dposContract.delegate{value: 10 ether}();
 ```
 
 ### Validator Creating a Pool for Bonding
 
 ```solidity
 // Validator creates their own pool for bonding
-address validatorPool = staking.createPool{value: minBond}(msg.sender);
+uint64 lockUntil = uint64(block.timestamp * 1_000_000) + 30 days * 1_000_000;
+address validatorPool = staking.createPool{value: minBond}(
+    msg.sender, // owner
+    msg.sender, // staker
+    msg.sender, // operator
+    msg.sender, // voter
+    lockUntil
+);
 
-// Validator can add more stake later
+// Validator can add more stake later (as staker)
 IStakePool(validatorPool).addStake{value: additionalBond}();
 
 // ValidatorManager queries the pool's voting power for consensus
@@ -726,29 +762,30 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 
 1. **Staking Factory**
 
-   - createPool creates new pool with initial stake
+   - createPool creates new pool with all parameters
    - createPool reverts if msg.value < minimumStake
+   - createPool reverts if lockedUntil < now + minLockup
    - createPool allows same owner to create multiple pools
-   - computePoolAddress matches deployed address for given nonce
    - poolNonce increments correctly
 
 2. **StakePool**
 
-   - addStake increases stake and extends lockup
+   - addStake increases stake and extends lockup (staker only)
    - addStake voting power increases immediately
-   - withdraw works only when lockup expired
+   - withdraw works only when lockup expired (staker only)
+   - withdraw sends to specified recipient
    - withdraw reverts when locked
    - getVotingPower returns stake when locked, 0 when unlocked
-   - increaseLockup extends by specified duration
-   - increaseLockup reverts if duration < minLockupDuration
-   - Role separation (owner/operator/voter)
-   - Hook callbacks fire correctly
+   - renewLockUntil extends by specified duration (staker only)
+   - renewLockUntil validates result >= now + minLockupDuration
+   - Role separation (owner/staker/operator/voter)
+   - Ownable2Step transfer works correctly
 
 3. **Lockup Model**
    - Voting power = stake when locked
    - Voting power = 0 when lockup expires
    - Lockup extended on addStake
-   - Lockup extended on increaseLockup
+   - Lockup extended on renewLockUntil
 
 ### Fuzz Tests
 
@@ -771,8 +808,8 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 3. **Epoch Security** — ValidatorManager snapshots voting power at epoch boundaries for consensus
 4. **Integer Overflow** — Solidity 0.8+ built-in protection
 5. **CREATE2 Collision** — Salt is poolNonce, deterministic and unique
-6. **Hook Trust** — Hooks are set by owner; malicious hooks can't steal funds (only receive callbacks)
-7. **Role Separation** — Clear separation prevents unauthorized operations
+6. **Two-Step Ownership** — Ownable2Step prevents accidental ownership transfers
+7. **Role Separation** — Clear separation between owner (admin) and staker (funds)
 8. **Immediate Effect Trade-off** — Stake changes are immediate; consumers must snapshot for epoch-based security
 
 ---
@@ -781,5 +818,4 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 
 - **Operator Functions** — Expose operator-callable functions for validator integration
 - **Partial Voting** — Split voting power across multiple votes
-- **Commission** — Built-in commission support for delegation pools via hooks
 - **Time-Weighted Voting** — Bonus voting power for longer lockup periods

@@ -96,8 +96,9 @@ contract GovernanceTest is Test {
         address owner,
         uint256 amount
     ) internal returns (address) {
+        uint64 lockedUntil = timestamp.nowMicroseconds() + LOCKUP_DURATION_MICROS;
         vm.prank(owner);
-        return staking.createPool{ value: amount }(owner);
+        return staking.createPool{ value: amount }(owner, owner, owner, owner, lockedUntil);
     }
 
     function _computeExecutionHash(

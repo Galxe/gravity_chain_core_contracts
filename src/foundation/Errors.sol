@@ -93,6 +93,11 @@ library Errors {
     /// @param actual Actual caller address
     error NotOperator(address expected, address actual);
 
+    /// @notice Caller is not the pool staker
+    /// @param caller Actual caller address
+    /// @param staker Expected staker address
+    error NotStaker(address caller, address staker);
+
     /// @notice Validator set changes are disabled
     error ValidatorSetChangesDisabled();
 

@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IStaking } from "./IStaking.sol";
 import { IStakePool } from "./IStakePool.sol";
 import { StakePool } from "./StakePool.sol";
+import { Ownable } from "@openzeppelin/access/Ownable.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 
@@ -68,24 +69,6 @@ contract Staking is IStaking {
     }
 
     /// @inheritdoc IStaking
-    function computePoolAddress(
-        uint256 nonce
-    ) public view returns (address) {
-        // TODO(yxia): revisit our pool address computation design.
-        bytes32 salt = bytes32(nonce);
-        bytes32 bytecodeHash = keccak256(
-            abi.encodePacked(type(StakePool).creationCode, abi.encode(address(0))) // placeholder owner
-        );
-
-        // CREATE2 address = keccak256(0xff ++ factory ++ salt ++ keccak256(bytecode))[12:]
-        // But since owner is encoded in constructor args, we need the actual bytecode hash
-        // For deterministic addresses, we compute based on init code without args
-        // The actual address depends on the owner, so this is a preview only
-
-        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, bytecodeHash)))));
-    }
-
-    /// @inheritdoc IStaking
     function getAllPools() external view returns (address[] memory) {
         return _allPools;
     }
@@ -127,7 +110,15 @@ contract Staking is IStaking {
     function getPoolOwner(
         address pool
     ) external view onlyValidPool(pool) returns (address) {
-        return IStakePool(pool).getOwner();
+        // StakePool inherits Ownable2Step which has owner() from Ownable
+        return Ownable(pool).owner();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolStaker(
+        address pool
+    ) external view onlyValidPool(pool) returns (address) {
+        return IStakePool(pool).getStaker();
     }
 
     /// @inheritdoc IStaking
@@ -155,7 +146,6 @@ contract Staking is IStaking {
     function isPoolLocked(
         address pool
     ) external view onlyValidPool(pool) returns (bool) {
-        // TODO(yxia): Do we need this function?
         return IStakePool(pool).isLocked();
     }
 
@@ -165,7 +155,11 @@ contract Staking is IStaking {
 
     /// @inheritdoc IStaking
     function createPool(
-        address owner
+        address owner,
+        address staker,
+        address operator,
+        address voter,
+        uint64 lockedUntil
     ) external payable returns (address pool) {
         // Check minimum stake
         uint256 minStake = IStakingConfigFactory(SystemAddresses.STAKE_CONFIG).minimumStake();
@@ -177,13 +171,13 @@ contract Staking is IStaking {
         uint256 nonce = poolNonce++;
         bytes32 salt = bytes32(nonce);
 
-        // Deploy StakePool via CREATE2 with initial stake
-        pool = address(new StakePool{ salt: salt, value: msg.value }(owner));
+        // Deploy StakePool via CREATE2 with initial stake and all parameters
+        pool = address(new StakePool{ salt: salt, value: msg.value }(owner, staker, operator, voter, lockedUntil));
 
         // Register pool in both array and mapping
         _allPools.push(pool);
         _isPool[pool] = true;
 
-        emit PoolCreated(msg.sender, pool, owner, _allPools.length - 1);
+        emit PoolCreated(msg.sender, pool, owner, staker, _allPools.length - 1);
     }
 }

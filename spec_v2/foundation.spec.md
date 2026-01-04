@@ -532,6 +532,9 @@ library Errors {
     /// @notice Caller is not the validator operator
     error NotOperator(address expected, address actual);
 
+    /// @notice Caller is not the pool staker
+    error NotStaker(address caller, address staker);
+
     /// @notice Validator set changes are disabled
     error ValidatorSetChangesDisabled();
 

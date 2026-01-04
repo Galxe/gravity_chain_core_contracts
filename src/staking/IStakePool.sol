@@ -5,7 +5,9 @@ pragma solidity ^0.8.30;
 /// @author Gravity Team
 /// @notice Interface for individual stake pool contracts
 /// @dev Each user who wants to stake creates their own StakePool via the Staking factory.
-///      Follows Aptos's role separation: Owner / Operator / Voter
+///      Implements two-role separation:
+///      - Owner: Administrative control (set voter/operator/staker, ownership via Ownable2Step)
+///      - Staker: Fund management (stake/unstake/renewLockUntil) - can be a contract for DPOS, LSD, etc.
 interface IStakePool {
     // ========================================================================
     // EVENTS
@@ -19,13 +21,14 @@ interface IStakePool {
     /// @notice Emitted when stake is withdrawn
     /// @param pool Address of this pool
     /// @param amount Amount of stake withdrawn
-    event StakeWithdrawn(address indexed pool, uint256 amount);
+    /// @param recipient Address that received the withdrawn funds
+    event StakeWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
 
-    /// @notice Emitted when lockup is increased
+    /// @notice Emitted when lockup is renewed/extended
     /// @param pool Address of this pool
     /// @param oldLockedUntil Previous lockup expiration (microseconds)
     /// @param newLockedUntil New lockup expiration (microseconds)
-    event LockupIncreased(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
+    event LockupRenewed(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
 
     /// @notice Emitted when operator is changed
     /// @param pool Address of this pool
@@ -39,19 +42,19 @@ interface IStakePool {
     /// @param newVoter New voter address
     event VoterChanged(address indexed pool, address oldVoter, address newVoter);
 
-    /// @notice Emitted when hook is changed
+    /// @notice Emitted when staker is changed
     /// @param pool Address of this pool
-    /// @param oldHook Previous hook address
-    /// @param newHook New hook address
-    event HookChanged(address indexed pool, address oldHook, address newHook);
+    /// @param oldStaker Previous staker address
+    /// @param newStaker New staker address
+    event StakerChanged(address indexed pool, address oldStaker, address newStaker);
 
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @notice Get the owner address (controls funds, can set operator/voter/hook)
-    /// @return Owner address
-    function getOwner() external view returns (address);
+    /// @notice Get the staker address (manages funds: stake/unstake/renewLockUntil)
+    /// @return Staker address
+    function getStaker() external view returns (address);
 
     /// @notice Get the operator address (reserved for validator operations)
     /// @return Operator address
@@ -82,33 +85,9 @@ interface IStakePool {
     /// @return True if lockedUntil > now
     function isLocked() external view returns (bool);
 
-    /// @notice Get the hook contract address
-    /// @return Hook address (address(0) if none)
-    function getHook() external view returns (address);
-
     // ========================================================================
-    // OWNER FUNCTIONS
+    // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
-
-    /// @notice Add native tokens to the stake pool
-    /// @dev Only callable by owner. Voting power increases immediately.
-    ///      Extends lockup to max(current, now + minLockupDuration)
-    function addStake() external payable;
-
-    /// @notice Withdraw stake (only when lockup expired)
-    /// @dev Only callable by owner. Reverts if lockup not expired.
-    /// @param amount Amount to withdraw
-    function withdraw(
-        uint256 amount
-    ) external;
-
-    /// @notice Extend lockup by a specified duration
-    /// @dev Only callable by owner. Duration must be >= minLockupDuration.
-    ///      This is additive: extends from current lockedUntil, not from now.
-    /// @param durationMicros Duration to add in microseconds
-    function increaseLockup(
-        uint64 durationMicros
-    ) external;
 
     /// @notice Change the operator address
     /// @dev Only callable by owner
@@ -124,11 +103,35 @@ interface IStakePool {
         address newVoter
     ) external;
 
-    /// @notice Set or change the hook contract
+    /// @notice Change the staker address
     /// @dev Only callable by owner
-    /// @param newHook New hook address (or address(0) to remove)
-    function setHook(
-        address newHook
+    /// @param newStaker New staker address
+    function setStaker(
+        address newStaker
+    ) external;
+
+    // ========================================================================
+    // STAKER FUNCTIONS
+    // ========================================================================
+
+    /// @notice Add native tokens to the stake pool
+    /// @dev Only callable by staker. Voting power increases immediately.
+    function addStake() external payable;
+
+    /// @notice Withdraw stake (only when lockup expired)
+    /// @dev Only callable by staker. Reverts if lockup not expired.
+    /// @param amount Amount to withdraw
+    /// @param recipient Address to receive the withdrawn funds
+    function withdraw(
+        uint256 amount,
+        address recipient
+    ) external;
+
+    /// @notice Extend lockup by a specified duration
+    /// @dev Only callable by staker. The resulting lockedUntil must be >= now + minLockupDuration.
+    ///      This is additive: extends from current lockedUntil, not from now.
+    /// @param durationMicros Duration to add in microseconds
+    function renewLockUntil(
+        uint64 durationMicros
     ) external;
 }
-

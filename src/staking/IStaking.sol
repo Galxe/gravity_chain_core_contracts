@@ -16,8 +16,11 @@ interface IStaking {
     /// @param creator Address that called createPool
     /// @param pool Address of the new StakePool
     /// @param owner Address set as the pool owner
+    /// @param staker Address set as the pool staker
     /// @param poolIndex Index of the pool in the registry
-    event PoolCreated(address indexed creator, address indexed pool, address indexed owner, uint256 poolIndex);
+    event PoolCreated(
+        address indexed creator, address indexed pool, address indexed owner, address staker, uint256 poolIndex
+    );
 
     // ========================================================================
     // VIEW FUNCTIONS - Pool Registry
@@ -36,14 +39,6 @@ interface IStaking {
     /// @return Pool address
     function getPool(
         uint256 index
-    ) external view returns (address);
-
-    /// @notice Compute deterministic pool address for a given nonce
-    /// @dev Uses CREATE2 address calculation
-    /// @param nonce Pool nonce (salt for CREATE2)
-    /// @return The address that would be deployed for that nonce
-    function computePoolAddress(
-        uint256 nonce
     ) external view returns (address);
 
     /// @notice Get all pool addresses
@@ -90,6 +85,14 @@ interface IStaking {
         address pool
     ) external view returns (address);
 
+    /// @notice Get staker of a specific pool
+    /// @dev Reverts if pool is not valid
+    /// @param pool Address of the pool
+    /// @return Staker address
+    function getPoolStaker(
+        address pool
+    ) external view returns (address);
+
     /// @notice Get delegated voter of a specific pool
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
@@ -126,12 +129,20 @@ interface IStaking {
     // STATE-CHANGING FUNCTIONS
     // ========================================================================
 
-    /// @notice Create a new StakePool with specified owner
+    /// @notice Create a new StakePool with all parameters specified
     /// @dev Anyone can create multiple pools. msg.value becomes initial stake.
-    ///      Reverts if msg.value < minimumStake.
-    /// @param owner Address to set as pool owner
+    ///      Reverts if msg.value < minimumStake or if lockedUntil is invalid.
+    /// @param owner Address to set as pool owner (administrative control)
+    /// @param staker Address to set as pool staker (fund management)
+    /// @param operator Address to set as pool operator (validator operations)
+    /// @param voter Address to set as pool voter (governance voting)
+    /// @param lockedUntil Initial lockup expiration timestamp (must be >= now + minLockup)
     /// @return pool Address of the newly created pool
     function createPool(
-        address owner
+        address owner,
+        address staker,
+        address operator,
+        address voter,
+        uint64 lockedUntil
     ) external payable returns (address pool);
 }

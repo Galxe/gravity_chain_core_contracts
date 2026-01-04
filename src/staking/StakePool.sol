@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { IStakePool } from "./IStakePool.sol";
-import { IStakingHook } from "./IStakingHook.sol";
+import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 
@@ -18,10 +18,12 @@ interface IStakingConfigPool {
 
 /// @title StakePool
 /// @author Gravity Team
-/// @notice Individual stake pool contract for a single owner
+/// @notice Individual stake pool contract with two-role separation
 /// @dev Created via CREATE2 by the Staking factory. Each user creates their own pool.
-///      Implements role separation: Owner / Operator / Voter (like Aptos)
-contract StakePool is IStakePool {
+///      Implements two-role separation:
+///      - Owner: Administrative control (set voter/operator/staker, ownership via Ownable2Step)
+///      - Staker: Fund management (stake/unstake/renewLockUntil) - can be a contract for DPOS, LSD, etc.
+contract StakePool is IStakePool, Ownable2Step {
     // ========================================================================
     // IMMUTABLES
     // ========================================================================
@@ -33,8 +35,8 @@ contract StakePool is IStakePool {
     // STATE
     // ========================================================================
 
-    /// @notice Owner address (controls funds, can set operator/voter/hook)
-    address public owner;
+    /// @notice Staker address (manages funds: stake/unstake/renewLockUntil)
+    address public staker;
 
     /// @notice Operator address (reserved for validator operations)
     address public operator;
@@ -48,17 +50,14 @@ contract StakePool is IStakePool {
     /// @notice Lockup expiration timestamp (microseconds)
     uint64 public lockedUntil;
 
-    /// @notice Optional hook contract for callbacks
-    address public hook;
-
     // ========================================================================
     // MODIFIERS
     // ========================================================================
 
-    /// @notice Restricts function to owner only
-    modifier onlyOwner() {
-        if (msg.sender != owner) {
-            revert Errors.NotOwner(msg.sender, owner);
+    /// @notice Restricts function to staker only
+    modifier onlyStaker() {
+        if (msg.sender != staker) {
+            revert Errors.NotStaker(msg.sender, staker);
         }
         _;
     }
@@ -67,24 +66,34 @@ contract StakePool is IStakePool {
     // CONSTRUCTOR
     // ========================================================================
 
-    /// @notice Initialize the stake pool with owner and initial stake
-    /// @param _owner Owner address for this pool
+    /// @notice Initialize the stake pool with all parameters
+    /// @param _owner Owner address for this pool (administrative control)
+    /// @param _staker Staker address for this pool (fund management)
+    /// @param _operator Operator address (for validator operations)
+    /// @param _voter Voter address (for governance voting)
+    /// @param _lockedUntil Initial lockup expiration (must be >= now + minLockup)
     /// @dev Called by factory during CREATE2 deployment
     constructor(
-        address _owner
-    ) payable {
+        address _owner,
+        address _staker,
+        address _operator,
+        address _voter,
+        uint64 _lockedUntil
+    ) payable Ownable(_owner) {
         FACTORY = msg.sender;
-        owner = _owner;
-        operator = _owner; // Default: owner is also operator
-        voter = _owner; // Default: owner is also voter
 
-        // Set initial stake from constructor value
-        stake = msg.value;
-
-        // Set initial lockup
+        // Validate lockedUntil >= now + minLockup
         uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
         uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        lockedUntil = now_ + minLockup;
+        if (_lockedUntil < now_ + minLockup) {
+            revert Errors.LockupDurationTooShort(_lockedUntil, now_ + minLockup);
+        }
+
+        staker = _staker;
+        operator = _operator;
+        voter = _voter;
+        lockedUntil = _lockedUntil;
+        stake = msg.value;
 
         emit StakeAdded(address(this), msg.value);
     }
@@ -94,8 +103,8 @@ contract StakePool is IStakePool {
     // ========================================================================
 
     /// @inheritdoc IStakePool
-    function getOwner() external view returns (address) {
-        return owner;
+    function getStaker() external view returns (address) {
+        return staker;
     }
 
     /// @inheritdoc IStakePool
@@ -142,100 +151,9 @@ contract StakePool is IStakePool {
         return lockedUntil > now_;
     }
 
-    /// @inheritdoc IStakePool
-    function getHook() external view returns (address) {
-        return hook;
-    }
-
     // ========================================================================
-    // OWNER FUNCTIONS
+    // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
-
-    /// @inheritdoc IStakePool
-    function addStake() external payable onlyOwner {
-        if (msg.value == 0) {
-            revert Errors.ZeroAmount();
-        }
-
-        stake += msg.value;
-
-        // Extend lockup if needed: lockedUntil = max(current, now + minLockupDuration)
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        uint64 newLockedUntil = now_ + minLockup;
-
-        if (newLockedUntil > lockedUntil) {
-            lockedUntil = newLockedUntil;
-        }
-
-        // Call hook if set
-        if (hook != address(0)) {
-            IStakingHook(hook).onStakeAdded(msg.value);
-        }
-
-        emit StakeAdded(address(this), msg.value);
-    }
-
-    /// @inheritdoc IStakePool
-    function withdraw(
-        uint256 amount
-    ) external onlyOwner {
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-        // Check lockup expired
-        if (lockedUntil > now_) {
-            revert Errors.LockupNotExpired(lockedUntil, now_);
-        }
-
-        if (amount == 0) {
-            revert Errors.ZeroAmount();
-        }
-
-        if (amount > stake) {
-            revert Errors.InsufficientStake(amount, stake);
-        }
-
-        stake -= amount;
-
-        // Call hook if set
-        if (hook != address(0)) {
-            IStakingHook(hook).onStakeWithdrawn(amount);
-        }
-
-        emit StakeWithdrawn(address(this), amount);
-
-        // Transfer tokens to owner (CEI pattern - effects before interactions)
-        (bool success,) = payable(owner).call{ value: amount }("");
-        require(success, "StakePool: transfer failed");
-    }
-
-    /// @inheritdoc IStakePool
-    function increaseLockup(
-        uint64 durationMicros
-    ) external onlyOwner {
-        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-
-        // Duration must be at least minLockupDuration
-        if (durationMicros < minLockup) {
-            revert Errors.LockupDurationTooShort(durationMicros, minLockup);
-        }
-
-        // Check for overflow
-        uint64 newLockedUntil = lockedUntil + durationMicros;
-        if (newLockedUntil <= lockedUntil) {
-            revert Errors.LockupOverflow(lockedUntil, durationMicros);
-        }
-
-        uint64 oldLockedUntil = lockedUntil;
-        lockedUntil = newLockedUntil;
-
-        // Call hook if set
-        if (hook != address(0)) {
-            IStakingHook(hook).onLockupIncreased(newLockedUntil);
-        }
-
-        emit LockupIncreased(address(this), oldLockedUntil, newLockedUntil);
-    }
 
     /// @inheritdoc IStakePool
     function setOperator(
@@ -256,12 +174,87 @@ contract StakePool is IStakePool {
     }
 
     /// @inheritdoc IStakePool
-    function setHook(
-        address newHook
+    function setStaker(
+        address newStaker
     ) external onlyOwner {
-        address oldHook = hook;
-        hook = newHook;
-        emit HookChanged(address(this), oldHook, newHook);
+        address oldStaker = staker;
+        staker = newStaker;
+        emit StakerChanged(address(this), oldStaker, newStaker);
+    }
+
+    // ========================================================================
+    // STAKER FUNCTIONS
+    // ========================================================================
+
+    /// @inheritdoc IStakePool
+    function addStake() external payable onlyStaker {
+        if (msg.value == 0) {
+            revert Errors.ZeroAmount();
+        }
+
+        stake += msg.value;
+
+        // Extend lockup if needed: lockedUntil = max(current, now + minLockupDuration)
+        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        uint64 newLockedUntil = now_ + minLockup;
+
+        if (newLockedUntil > lockedUntil) {
+            lockedUntil = newLockedUntil;
+        }
+
+        emit StakeAdded(address(this), msg.value);
+    }
+
+    /// @inheritdoc IStakePool
+    function withdraw(
+        uint256 amount,
+        address recipient
+    ) external onlyStaker {
+        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+
+        // Check lockup expired
+        if (lockedUntil > now_) {
+            revert Errors.LockupNotExpired(lockedUntil, now_);
+        }
+
+        if (amount == 0) {
+            revert Errors.ZeroAmount();
+        }
+
+        if (amount > stake) {
+            revert Errors.InsufficientStake(amount, stake);
+        }
+
+        stake -= amount;
+
+        emit StakeWithdrawn(address(this), amount, recipient);
+
+        // Transfer tokens to recipient (CEI pattern - effects before interactions)
+        (bool success,) = payable(recipient).call{ value: amount }("");
+        require(success, "StakePool: transfer failed");
+    }
+
+    /// @inheritdoc IStakePool
+    function renewLockUntil(
+        uint64 durationMicros
+    ) external onlyStaker {
+        // Check for overflow
+        uint64 newLockedUntil = lockedUntil + durationMicros;
+        if (newLockedUntil <= lockedUntil) {
+            revert Errors.LockupOverflow(lockedUntil, durationMicros);
+        }
+
+        // Validate result >= now + minLockup
+        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        if (newLockedUntil < now_ + minLockup) {
+            revert Errors.LockupDurationTooShort(newLockedUntil, now_ + minLockup);
+        }
+
+        uint64 oldLockedUntil = lockedUntil;
+        lockedUntil = newLockedUntil;
+
+        emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);
     }
 }
-
