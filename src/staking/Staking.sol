@@ -91,9 +91,25 @@ contract Staking is IStaking {
 
     /// @inheritdoc IStaking
     function getPoolVotingPower(
+        address pool,
+        uint64 atTime
+    ) external view onlyValidPool(pool) returns (uint256) {
+        return IStakePool(pool).getVotingPower(atTime);
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolVotingPowerNow(
         address pool
     ) external view onlyValidPool(pool) returns (uint256) {
-        return IStakePool(pool).getVotingPower();
+        return IStakePool(pool).getVotingPowerNow();
+    }
+
+    /// @inheritdoc IStaking
+    function getPoolEffectiveStake(
+        address pool,
+        uint64 atTime
+    ) external view onlyValidPool(pool) returns (uint256) {
+        return IStakePool(pool).getEffectiveStake(atTime);
     }
 
     /// @inheritdoc IStaking

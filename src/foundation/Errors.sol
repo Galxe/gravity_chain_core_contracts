@@ -64,6 +64,25 @@ library Errors {
     /// @param caller The actual caller address
     error OnlyStakingFactory(address caller);
 
+    /// @notice Withdrawal request not found
+    /// @param nonce The nonce that was not found
+    error WithdrawalNotFound(uint256 nonce);
+
+    /// @notice Withdrawal is not yet claimable
+    /// @param claimableTime When the withdrawal becomes claimable (microseconds)
+    /// @param currentTime Current timestamp (microseconds)
+    error WithdrawalNotClaimable(uint64 claimableTime, uint64 currentTime);
+
+    /// @notice Insufficient available stake for withdrawal request
+    /// @param requested Amount requested to withdraw
+    /// @param available Amount available (stake - totalPendingWithdrawals)
+    error InsufficientAvailableStake(uint256 requested, uint256 available);
+
+    /// @notice Withdrawal would breach minimum bond for active validator
+    /// @param effectiveAfter Effective stake after withdrawal
+    /// @param minimumBond Minimum required bond
+    error WithdrawalWouldBreachMinimumBond(uint256 effectiveAfter, uint256 minimumBond);
+
     // ========================================================================
     // VALIDATOR ERRORS
     // ========================================================================

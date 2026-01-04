@@ -14,6 +14,10 @@ interface IStakingGov {
         address pool
     ) external view returns (bool);
     function getPoolVotingPower(
+        address pool,
+        uint64 atTime
+    ) external view returns (uint256);
+    function getPoolVotingPowerNow(
         address pool
     ) external view returns (uint256);
     function getPoolVoter(
@@ -193,7 +197,8 @@ contract Governance is IGovernance {
         address stakePool,
         uint64 proposalId
     ) public view returns (uint128) {
-        uint256 poolPower = _staking().getPoolVotingPower(stakePool);
+        uint64 now_ = _now();
+        uint256 poolPower = _staking().getPoolVotingPower(stakePool, now_);
         bytes32 key = _votingKey(stakePool, proposalId);
         uint128 used = usedVotingPower[key];
 
@@ -267,7 +272,8 @@ contract Governance is IGovernance {
         _requireVoter(stakePool);
 
         // Get pool's voting power
-        uint256 votingPower = _staking().getPoolVotingPower(stakePool);
+        uint64 now_ = _now();
+        uint256 votingPower = _staking().getPoolVotingPower(stakePool, now_);
         uint256 requiredStake = _config().requiredProposerStake();
 
         if (votingPower < requiredStake) {
@@ -275,7 +281,6 @@ contract Governance is IGovernance {
         }
 
         // Verify lockup covers voting period
-        uint64 now_ = _now();
         uint64 votingDuration = _config().votingDurationMicros();
         uint64 expirationTime = now_ + votingDuration;
 

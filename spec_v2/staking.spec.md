@@ -33,10 +33,11 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 ### Key Principles
 
 1. **Anyone Can Create a Pool** — No permission required to create a StakePool
-2. **Simple Lockup Model** — Single stake amount + lockup timestamp; immediate effect on voting power
-3. **No Epoch Processing** — Staking layer is stateless w.r.t. epochs; consumers (e.g., ValidatorManager) snapshot if needed
-4. **Two-Role Separation** — Owner (admin) / Staker (funds) / Operator / Voter
-5. **Composable Staking** — Staker role can be a smart contract for DPOS, LSD, etc.
+2. **Queue-Based Withdrawals** — Withdrawals are queued and become claimable when lockup expires
+3. **Time-Parameterized Voting Power** — Voting power can be queried at any time T
+4. **No Epoch Processing** — Staking layer is stateless w.r.t. epochs; consumers (e.g., ValidatorManager) snapshot if needed
+5. **Two-Role Separation** — Owner (admin) / Staker (funds) / Operator / Voter
+6. **Composable Staking** — Staker role can be a smart contract for DPOS, LSD, etc.
 
 ### What This Layer Does
 
@@ -175,39 +176,45 @@ This prevents accidental transfers to wrong addresses.
 The staker role enables composable staking:
 
 ```solidity
-// Example: DPOS contract as staker
+// Example: DPOS contract as staker (queue-based withdrawals)
 contract DPOSStaker {
     IStakePool public pool;
+    mapping(address => uint256) public shares;
+    mapping(address => uint256[]) public delegatorWithdrawals; // nonces
     
     function delegatedStake() external payable {
         // Track delegator shares
         shares[msg.sender] += msg.value;
-        totalShares += msg.value;
         
         // Forward to pool (this contract is the staker)
         pool.addStake{value: msg.value}();
     }
     
-    function delegatedWithdraw(uint256 amount) external {
-        // Burn delegator shares
+    function requestDelegatedWithdraw(uint256 amount) external returns (uint256 nonce) {
+        require(shares[msg.sender] >= amount);
         shares[msg.sender] -= amount;
-        totalShares -= amount;
         
-        // Withdraw from pool to delegator
-        pool.withdraw(amount, msg.sender);
+        // Request withdrawal (queued until lockup expires)
+        nonce = pool.requestWithdrawal(amount);
+        delegatorWithdrawals[msg.sender].push(nonce);
+    }
+    
+    function claimDelegatedWithdraw(uint256 nonce) external {
+        // Claim and transfer to delegator
+        pool.claimWithdrawal(nonce, msg.sender);
     }
 }
 ```
 
 ---
 
-## Simple Lockup Model
+## Queue-Based Withdrawal Model
 
-Each StakePool uses a simple lockup-based model with **immediate effect** on voting power:
+Each StakePool uses a queue-based withdrawal model with time-parameterized voting power:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         STAKE STATE MODEL                                    │
+│                      STAKE STATE MODEL (Queue-Based)                         │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                               ┌──────────────┐
@@ -219,36 +226,55 @@ Each StakePool uses a simple lockup-based model with **immediate effect** on vot
                     ┌────────────────┼────────────────┐
                     │                                 │
                     ▼                                 ▼
-             ┌───────────┐                     ┌───────────┐
-             │  LOCKED   │                     │ UNLOCKED  │
-             │           │                     │           │
-             │ lockedUntil│                    │ lockedUntil│
-             │  > now    │                     │  <= now   │
-             └───────────┘                     └───────────┘
-                    │                                 │
-            Voting Power:                     Voting Power:
-               stake                               0
-                                                   │
-                                                   ▼
-                                             withdraw()
+             ┌───────────┐                     ┌───────────────┐
+             │  LOCKED   │ requestWithdrawal  │   PENDING     │
+             │           │ ─────────────────▶ │  WITHDRAWALS  │
+             │ lockedUntil│                   │  (queue)      │
+             │  > now    │                    └───────────────┘
+             └───────────┘                           │
+                    │                                │
+            Voting Power:                    claimWithdrawal (when claimableTime <= now)
+    stake - ineffectivePending                       │
+                                                     ▼
+                                              Tokens transferred
 ```
 
 ### State Variables
 
-| Variable      | Type    | Description                      |
-| ------------- | ------- | -------------------------------- |
-| `stake`       | uint256 | Total staked amount              |
-| `lockedUntil` | uint64  | Lockup expiration (microseconds) |
+| Variable                  | Type                              | Description                                 |
+| ------------------------- | --------------------------------- | ------------------------------------------- |
+| `stake`                   | uint256                           | Total staked amount (includes pending)      |
+| `lockedUntil`             | uint64                            | Lockup expiration (microseconds)            |
+| `pendingWithdrawals`      | mapping(uint256 => PendingWithdrawal) | Pending withdrawal queue by nonce      |
+| `withdrawalNonce`         | uint256                           | Next nonce to assign                        |
+| `totalPendingWithdrawals` | uint256                           | Sum of all pending amounts                  |
+
+### PendingWithdrawal Struct
+
+```solidity
+struct PendingWithdrawal {
+    uint256 amount;       // Amount to withdraw
+    uint64 claimableTime; // = lockedUntil at request time
+}
+```
 
 ### Voting Power Calculation
 
-```
-votingPower = (lockedUntil > now) ? stake : 0
+```solidity
+function getVotingPower(uint64 atTime) returns (uint256) {
+    if (lockedUntil <= atTime) return 0;
+    
+    // Calculate ineffective pending (where claimableTime - atTime < minLockupDuration)
+    uint256 ineffective = _getIneffectivePendingAmountAt(atTime, minLockupDuration);
+    
+    if (ineffective >= stake) return 0;
+    return stake - ineffective;
+}
 ```
 
-- **Immediate effect**: Stake changes affect voting power immediately
-- **Lockup protection**: Only locked stake counts for voting power
-- **Consumers snapshot**: ValidatorManager/Governance can snapshot at epoch/proposal creation for security
+- **Time-parameterized**: Can query voting power at any time T
+- **Pending withdrawals**: Reduce effective voting power when nearing claimable time
+- **Lockup protection**: Main stake must be locked for any voting power
 
 ### State Transitions
 
@@ -258,17 +284,27 @@ votingPower = (lockedUntil > now) ? stake : 0
 - Extends `lockedUntil` to `max(current, now + minLockupDuration)`
 - Voting power increases immediately
 
-**On `withdraw(amount, recipient)` (staker only):**
+**On `requestWithdrawal(amount)` (staker only):**
 
-- Requires `lockedUntil <= now` (lockup expired)
-- Decreases `stake` by `amount`
+- Creates pending withdrawal entry with `claimableTime = lockedUntil`
+- For validators: verifies effective stake after withdrawal >= minimumBond
+- Increments `withdrawalNonce` and returns nonce
+- Increases `totalPendingWithdrawals`
+- Does NOT reduce `stake` until claimed
+
+**On `claimWithdrawal(nonce, recipient)` (staker only):**
+
+- Requires `claimableTime <= now` for the pending withdrawal
+- Decreases `stake` by pending amount
+- Decreases `totalPendingWithdrawals`
+- Deletes pending entry
 - Transfers tokens to specified `recipient`
 
 **On `renewLockUntil(duration)` (staker only):**
 
 - Extends `lockedUntil` by `duration`
 - Validates result: `newLockedUntil >= now + minLockupDuration`
-- Voting power restored if it was zero (lockup was expired)
+- Does NOT affect existing pending withdrawals
 
 ---
 
@@ -314,7 +350,9 @@ interface IStaking {
     function getMinimumStake() external view returns (uint256);
 
     // === Pool Status Queries (for Validators) ===
-    function getPoolVotingPower(address pool) external view returns (uint256);
+    function getPoolVotingPower(address pool, uint64 atTime) external view returns (uint256);
+    function getPoolVotingPowerNow(address pool) external view returns (uint256);
+    function getPoolEffectiveStake(address pool, uint64 atTime) external view returns (uint256);
     function getPoolStake(address pool) external view returns (uint256);
     function getPoolOwner(address pool) external view returns (address);
     function getPoolStaker(address pool) external view returns (address);
@@ -379,16 +417,18 @@ Create a new StakePool with all parameters specified explicitly.
 
 All pool status query functions revert with `InvalidPool(pool)` if the pool address is not valid.
 
-| Function                  | Returns                                           |
-| ------------------------- | ------------------------------------------------- |
-| `getPoolVotingPower(pool)`| Pool's voting power (stake if locked, 0 if unlocked) |
-| `getPoolStake(pool)`      | Pool's total staked amount                        |
-| `getPoolOwner(pool)`      | Pool's owner address (from Ownable2Step)          |
-| `getPoolStaker(pool)`     | Pool's staker address                             |
-| `getPoolVoter(pool)`      | Pool's delegated voter address                    |
-| `getPoolOperator(pool)`   | Pool's operator address                           |
-| `getPoolLockedUntil(pool)`| Pool's lockup expiration (microseconds)           |
-| `isPoolLocked(pool)`      | Whether pool's stake is locked                    |
+| Function                            | Returns                                              |
+| ----------------------------------- | ---------------------------------------------------- |
+| `getPoolVotingPower(pool, atTime)`  | Pool's voting power at time T (accounts for pending) |
+| `getPoolVotingPowerNow(pool)`       | Pool's current voting power (convenience function)   |
+| `getPoolEffectiveStake(pool, atTime)`| Pool's effective stake at time T                    |
+| `getPoolStake(pool)`                | Pool's total staked amount (includes pending)        |
+| `getPoolOwner(pool)`                | Pool's owner address (from Ownable2Step)             |
+| `getPoolStaker(pool)`               | Pool's staker address                                |
+| `getPoolVoter(pool)`                | Pool's delegated voter address                       |
+| `getPoolOperator(pool)`             | Pool's operator address                              |
+| `getPoolLockedUntil(pool)`          | Pool's lockup expiration (microseconds)              |
+| `isPoolLocked(pool)`                | Whether pool's stake is locked                       |
 
 #### `renewPoolLockup(pool)` — System Function
 
@@ -420,7 +460,7 @@ Individual stake pool contract with two-role separation. Inherits from OpenZeppe
 /// @notice Address of the Staking factory
 address public immutable FACTORY;
 
-/// @notice Staker address (manages funds: stake/unstake/renewLockUntil)
+/// @notice Staker address (manages funds: stake/requestWithdrawal/claimWithdrawal)
 address public staker;
 
 /// @notice Operator address (reserved for validator operations)
@@ -429,20 +469,36 @@ address public operator;
 /// @notice Delegated voter address (votes in governance using this pool's stake)
 address public voter;
 
-/// @notice Total staked amount
+/// @notice Total staked amount (includes pending withdrawals until claimed)
 uint256 public stake;
 
 /// @notice Lockup expiration timestamp (microseconds)
 uint64 public lockedUntil;
+
+/// @notice Pending withdrawal requests by nonce
+mapping(uint256 => PendingWithdrawal) public pendingWithdrawals;
+
+/// @notice Next nonce to assign for withdrawal requests
+uint256 public withdrawalNonce;
+
+/// @notice Sum of all pending withdrawal amounts
+uint256 public totalPendingWithdrawals;
 ```
 
 ### Interface
 
 ```solidity
 interface IStakePool {
+    // === Structs ===
+    struct PendingWithdrawal {
+        uint256 amount;
+        uint64 claimableTime;  // = lockedUntil at request time
+    }
+
     // === Events ===
     event StakeAdded(address indexed pool, uint256 amount);
-    event StakeWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
+    event WithdrawalRequested(address indexed pool, uint256 indexed nonce, uint256 amount, uint64 claimableTime);
+    event WithdrawalClaimed(address indexed pool, uint256 indexed nonce, uint256 amount, address indexed recipient);
     event LockupRenewed(address indexed pool, uint64 oldLockedUntil, uint64 newLockedUntil);
     event OperatorChanged(address indexed pool, address oldOperator, address newOperator);
     event VoterChanged(address indexed pool, address oldVoter, address newVoter);
@@ -453,10 +509,15 @@ interface IStakePool {
     function getOperator() external view returns (address);
     function getVoter() external view returns (address);
     function getStake() external view returns (uint256);
-    function getVotingPower() external view returns (uint256);
+    function getVotingPower(uint64 atTime) external view returns (uint256);
+    function getVotingPowerNow() external view returns (uint256);
+    function getEffectiveStake(uint64 atTime) external view returns (uint256);
     function getLockedUntil() external view returns (uint64);
     function getRemainingLockup() external view returns (uint64);
     function isLocked() external view returns (bool);
+    function getPendingWithdrawal(uint256 nonce) external view returns (PendingWithdrawal memory);
+    function getTotalPendingWithdrawals() external view returns (uint256);
+    function getWithdrawalNonce() external view returns (uint256);
 
     // === Owner Functions (via Ownable2Step) ===
     function setOperator(address newOperator) external;
@@ -465,7 +526,8 @@ interface IStakePool {
 
     // === Staker Functions ===
     function addStake() external payable;
-    function withdraw(uint256 amount, address recipient) external;
+    function requestWithdrawal(uint256 amount) external returns (uint256 nonce);
+    function claimWithdrawal(uint256 nonce, address recipient) external;
     function renewLockUntil(uint64 durationMicros) external;
 
     // === System Functions ===
@@ -515,24 +577,46 @@ Add native tokens to the stake pool. Voting power increases immediately.
 3. Update lockup: `lockedUntil = max(lockedUntil, now + minLockupDuration)`
 4. Emit `StakeAdded` event
 
-#### `withdraw(uint256 amount, address recipient)` — Staker Only
+#### `requestWithdrawal(uint256 amount)` — Staker Only
 
-Withdraw stake to a specified recipient. Only allowed when lockup has expired and pool is not an active validator.
+Request a withdrawal. Creates a pending entry that can be claimed when lockup expires.
 
 **Access Control:** Only `staker`
 
 **Behavior:**
 
-1. **Check validator status** via `ValidatorManagement.isValidator(pool)` and `getValidatorStatus(pool)`
-2. Revert if pool is ACTIVE or PENDING_INACTIVE (must leave validator set first)
-3. Revert if `lockedUntil > now` (lockup not expired)
-4. Revert if `amount == 0`
-5. Revert if `amount > stake`
-6. Decrease `stake` by `amount`
-7. Emit `StakeWithdrawn` event with recipient
-8. Transfer `amount` to `recipient`
+1. Revert if `amount == 0`
+2. Revert if `amount > stake - totalPendingWithdrawals` (insufficient available)
+3. **For validators**: Check effective stake after withdrawal >= minimumBond
+4. Create pending withdrawal: `{amount, claimableTime: lockedUntil}`
+5. Increment `withdrawalNonce` and return nonce
+6. Increase `totalPendingWithdrawals` by `amount`
+7. Emit `WithdrawalRequested` event
 
-**Security Note:** Active validators cannot withdraw ANY stake, including amounts exceeding `maximumBond`. This ensures validators cannot reduce their stake while participating in consensus.
+**Notes:**
+- Active validators CAN request withdrawals if they maintain >= minimumBond
+- `claimableTime = lockedUntil` at request time (lockup IS the waiting period)
+- Pending withdrawals reduce voting power as they approach claimable time
+
+#### `claimWithdrawal(uint256 nonce, address recipient)` — Staker Only
+
+Claim a pending withdrawal and receive tokens.
+
+**Access Control:** Only `staker`
+
+**Behavior:**
+
+1. Revert if pending withdrawal not found
+2. Revert if `claimableTime > now` (not yet claimable)
+3. Decrease `stake` by pending amount
+4. Decrease `totalPendingWithdrawals` by pending amount
+5. Delete pending entry
+6. Emit `WithdrawalClaimed` event
+7. Transfer tokens to `recipient`
+
+**Security Note:** 
+- Tokens are only transferred when claimed, not when requested
+- `claimableTime = lockedUntil` ensures waiting period matches lockup
 
 #### `renewLockUntil(uint64 durationMicros)` — Staker Only
 
@@ -609,14 +693,19 @@ Change the staker address.
 2. Set `staker = newStaker`
 3. Emit `StakerChanged` event
 
-#### `getVotingPower()`
+#### `getVotingPower(uint64 atTime)`
 
-Returns current voting power. Immediate effect based on lockup status.
+Returns voting power at a specific time T. Accounts for pending withdrawals.
 
 **Behavior:**
 
-- Returns `stake` if `lockedUntil > now` (locked)
-- Returns `0` if `lockedUntil <= now` (unlocked)
+1. Return `0` if `lockedUntil <= atTime` (lockup expired at time T)
+2. Calculate ineffective pending (where `claimableTime - atTime < minLockupDuration`)
+3. Return `stake - ineffectivePending` (or 0 if result would be negative)
+
+**Notes:**
+- Pending withdrawals become "ineffective" (don't count toward voting power) when their remaining lockup is less than minLockupDuration
+- Use `getVotingPowerNow()` for convenience to query current voting power
 
 ---
 
@@ -668,11 +757,13 @@ Lockup parameters are configured in `StakingConfig`:
 2. **On addStake**: `lockedUntil = max(current, now + minLockupDuration)` (extends if needed)
 3. **On renewLockUntil(duration)**: `lockedUntil = lockedUntil + duration` (result must be `>= now + minLockupDuration`)
 
-### Lockup and Withdrawals
+### Lockup and Withdrawals (Queue-Based)
 
-- Withdrawals require `lockedUntil <= now` (lockup expired)
-- Withdrawals also require pool is NOT an active validator (ACTIVE or PENDING_INACTIVE status)
-- Staker can re-lock by calling `renewLockUntil()` to restore voting power
+- **Request Phase**: `requestWithdrawal(amount)` creates pending entry with `claimableTime = lockedUntil`
+- **Claim Phase**: `claimWithdrawal(nonce, recipient)` transfers tokens when `claimableTime <= now`
+- For active validators: can request withdrawal but must maintain >= minimumBond effective stake
+- Pending withdrawals reduce voting power as they approach claimable time
+- Staker can re-lock by calling `renewLockUntil()` (does NOT affect existing pending withdrawals)
 - **For active validators**: Lockups are auto-renewed at each epoch boundary via `systemRenewLockup()`
 - **For non-validators**: No automatic lockup renewal — staker must explicitly extend
 
@@ -680,17 +771,17 @@ Lockup parameters are configured in `StakingConfig`:
 
 ## Access Control
 
-| Contract  | Function                         | Allowed Callers         |
-| --------- | -------------------------------- | ----------------------- |
-| Staking   | createPool                       | Anyone (with min stake) |
-| Staking   | renewPoolLockup                  | VALIDATOR_MANAGER only  |
-| Staking   | view functions                   | Anyone                  |
-| StakePool | addStake/withdraw/renewLockUntil | Staker only             |
-| StakePool | systemRenewLockup                | Staking factory only    |
-| StakePool | setOperator/setVoter/setStaker   | Owner only              |
-| StakePool | transferOwnership                | Owner only              |
-| StakePool | acceptOwnership                  | Pending owner only      |
-| StakePool | view functions                   | Anyone                  |
+| Contract  | Function                                        | Allowed Callers         |
+| --------- | ----------------------------------------------- | ----------------------- |
+| Staking   | createPool                                      | Anyone (with min stake) |
+| Staking   | renewPoolLockup                                 | VALIDATOR_MANAGER only  |
+| Staking   | view functions                                  | Anyone                  |
+| StakePool | addStake/requestWithdrawal/claimWithdrawal/renewLockUntil | Staker only   |
+| StakePool | systemRenewLockup                               | Staking factory only    |
+| StakePool | setOperator/setVoter/setStaker                  | Owner only              |
+| StakePool | transferOwnership                               | Owner only              |
+| StakePool | acceptOwnership                                 | Pending owner only      |
+| StakePool | view functions                                  | Anyone                  |
 
 ---
 
@@ -717,16 +808,17 @@ The following errors from `Errors.sol` are used:
 
 ### StakePool Errors
 
-| Error                                                     | When                                            |
-| --------------------------------------------------------- | ----------------------------------------------- |
-| `ZeroAmount()`                                            | addStake/withdraw with 0                        |
-| `NotStaker(address caller, address staker)`               | Non-staker calling staker-only function         |
-| `LockupNotExpired(uint64 lockedUntil, uint64 now)`        | Withdraw while still locked                     |
-| `LockupDurationTooShort(uint64 provided, uint64 minimum)` | renewLockUntil result < now + minLockupDuration |
-| `LockupOverflow(uint64 current, uint64 addition)`         | renewLockUntil would overflow lockedUntil       |
-| `InsufficientStake(uint256 requested, uint256 available)` | Withdraw more than available                    |
-| `CannotWithdrawWhileActiveValidator(address pool)`        | Withdraw from active/pending_inactive validator |
-| `OnlyStakingFactory(address caller)`                      | systemRenewLockup called by non-factory         |
+| Error                                                                | When                                                     |
+| -------------------------------------------------------------------- | -------------------------------------------------------- |
+| `ZeroAmount()`                                                       | addStake/requestWithdrawal with 0                        |
+| `NotStaker(address caller, address staker)`                          | Non-staker calling staker-only function                  |
+| `LockupDurationTooShort(uint64 provided, uint64 minimum)`            | renewLockUntil result < now + minLockupDuration          |
+| `LockupOverflow(uint64 current, uint64 addition)`                    | renewLockUntil would overflow lockedUntil                |
+| `InsufficientAvailableStake(uint256 requested, uint256 available)`   | requestWithdrawal exceeds available (stake - pending)    |
+| `WithdrawalNotFound(uint256 nonce)`                                  | claimWithdrawal with invalid nonce                       |
+| `WithdrawalNotClaimable(uint64 claimableTime, uint64 currentTime)`   | claimWithdrawal before claimableTime                     |
+| `WithdrawalWouldBreachMinimumBond(uint256 effectiveAfter, uint256 minimumBond)` | Validator withdrawal would breach min bond |
+| `OnlyStakingFactory(address caller)`                                 | systemRenewLockup called by non-factory                  |
 
 ---
 
@@ -748,17 +840,24 @@ address pool = staking.createPool{value: 100 ether}(
 // 2. Add more stake later (as staker, voting power increases immediately)
 IStakePool(pool).addStake{value: 50 ether}();
 
-// 3. Check voting power (150 ether if locked)
-uint256 power = IStakePool(pool).getVotingPower();
+// 3. Check voting power at current time (150 ether if locked)
+uint256 power = IStakePool(pool).getVotingPowerNow();
 
-// 4. Delegate voting to another address (as owner)
+// 4. Check voting power at a future time
+uint64 futureTime = uint64(block.timestamp * 1_000_000) + 15 days * 1_000_000;
+uint256 futurePower = IStakePool(pool).getVotingPower(futureTime);
+
+// 5. Delegate voting to another address (as owner)
 IStakePool(pool).setVoter(delegatee);
 
-// 5. Extend lockup by 30 days (as staker)
+// 6. Extend lockup by 30 days (as staker)
 IStakePool(pool).renewLockUntil(30 days * 1_000_000); // microseconds
 
-// 6. Wait for lockup to expire, then withdraw to self (as staker)
-IStakePool(pool).withdraw(50 ether, msg.sender);
+// 7. Request a withdrawal (queued until lockup expires)
+uint256 nonce = IStakePool(pool).requestWithdrawal(50 ether);
+
+// 8. Wait for lockup to expire, then claim withdrawal (as staker)
+IStakePool(pool).claimWithdrawal(nonce, msg.sender);
 ```
 
 ### Setting Up a DPOS Pool
@@ -861,9 +960,11 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower();
 6. **Two-Step Ownership** — Ownable2Step prevents accidental ownership transfers
 7. **Role Separation** — Clear separation between owner (admin) and staker (funds)
 8. **Immediate Effect Trade-off** — Stake changes are immediate; consumers must snapshot for epoch-based security
-9. **Validator Withdrawal Protection** — Active validators cannot withdraw stake (enforced in StakePool.withdraw)
-10. **Lockup Auto-Renewal** — Active validators' lockups are auto-renewed at epoch boundaries
-11. **Excessive Stake Protection** — Even stake exceeding maximumBond cannot be withdrawn while active
+9. **Queue-Based Withdrawals** — Withdrawals are queued; tokens only transferred when lockup expires
+10. **Minimum Bond Protection** — Active validators must maintain >= minimumBond effective stake
+11. **Lockup Auto-Renewal** — Active validators' lockups are auto-renewed at epoch boundaries
+12. **Time-Parameterized Voting Power** — Allows accurate voting power queries at any point in time
+13. **Pending Withdrawal Decay** — Pending withdrawals gradually reduce voting power as they approach claimable time
 
 ---
 

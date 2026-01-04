@@ -9,14 +9,20 @@ import { Errors } from "../foundation/Errors.sol";
 import { ValidatorStatus } from "../foundation/Types.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
 import { IStakingConfig } from "../runtime/IStakingConfig.sol";
+import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
 
 /// @title StakePool
 /// @author Gravity Team
-/// @notice Individual stake pool contract with two-role separation
+/// @notice Individual stake pool contract with queue-based withdrawals
 /// @dev Created via CREATE2 by the Staking factory. Each user creates their own pool.
 ///      Implements two-role separation:
 ///      - Owner: Administrative control (set voter/operator/staker, ownership via Ownable2Step)
-///      - Staker: Fund management (stake/unstake/renewLockUntil) - can be a contract for DPOS, LSD, etc.
+///      - Staker: Fund management (stake/requestWithdrawal/claimWithdrawal)
+///
+///      Withdrawal Model:
+///      - requestWithdrawal() creates a pending entry with claimableTime = lockedUntil
+///      - claimWithdrawal() transfers tokens when claimableTime is reached
+///      - Voting power = stake - pending (where claimableTime < atTime + minLockupDuration)
 contract StakePool is IStakePool, Ownable2Step {
     // ========================================================================
     // IMMUTABLES
@@ -29,7 +35,7 @@ contract StakePool is IStakePool, Ownable2Step {
     // STATE
     // ========================================================================
 
-    /// @notice Staker address (manages funds: stake/unstake/renewLockUntil)
+    /// @notice Staker address (manages funds: stake/requestWithdrawal/claimWithdrawal)
     address public staker;
 
     /// @notice Operator address (reserved for validator operations)
@@ -38,11 +44,20 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @notice Delegated voter address (votes in governance using pool's stake)
     address public voter;
 
-    /// @notice Total staked amount
+    /// @notice Total staked amount (includes pending withdrawals until claimed)
     uint256 public stake;
 
     /// @notice Lockup expiration timestamp (microseconds)
     uint64 public lockedUntil;
+
+    /// @notice Pending withdrawal requests by nonce
+    mapping(uint256 => PendingWithdrawal) public pendingWithdrawals;
+
+    /// @notice Next nonce to assign for withdrawal requests
+    uint256 public withdrawalNonce;
+
+    /// @notice Sum of all pending withdrawal amounts
+    uint256 public totalPendingWithdrawals;
 
     // ========================================================================
     // MODIFIERS
@@ -125,12 +140,30 @@ contract StakePool is IStakePool, Ownable2Step {
     }
 
     /// @inheritdoc IStakePool
-    function getVotingPower() external view returns (uint256) {
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        if (lockedUntil > now_) {
-            return stake;
+    function getVotingPower(
+        uint64 atTime
+    ) external view returns (uint256) {
+        // Main stake must be locked at time T
+        if (lockedUntil <= atTime) {
+            return 0;
         }
-        return 0;
+
+        // Calculate effective stake (stake minus ineffective pending)
+        uint256 effective = _getEffectiveStakeAt(atTime);
+        return effective;
+    }
+
+    /// @inheritdoc IStakePool
+    function getVotingPowerNow() external view returns (uint256) {
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        return this.getVotingPower(now_);
+    }
+
+    /// @inheritdoc IStakePool
+    function getEffectiveStake(
+        uint64 atTime
+    ) external view returns (uint256) {
+        return _getEffectiveStakeAt(atTime);
     }
 
     /// @inheritdoc IStakePool
@@ -151,6 +184,23 @@ contract StakePool is IStakePool, Ownable2Step {
     function isLocked() external view returns (bool) {
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         return lockedUntil > now_;
+    }
+
+    /// @inheritdoc IStakePool
+    function getPendingWithdrawal(
+        uint256 nonce
+    ) external view returns (PendingWithdrawal memory) {
+        return pendingWithdrawals[nonce];
+    }
+
+    /// @inheritdoc IStakePool
+    function getTotalPendingWithdrawals() external view returns (uint256) {
+        return totalPendingWithdrawals;
+    }
+
+    /// @inheritdoc IStakePool
+    function getWithdrawalNonce() external view returns (uint256) {
+        return withdrawalNonce;
     }
 
     // ========================================================================
@@ -209,40 +259,75 @@ contract StakePool is IStakePool, Ownable2Step {
     }
 
     /// @inheritdoc IStakePool
-    function withdraw(
-        uint256 amount,
-        address recipient
-    ) external onlyStaker {
-        // Check if this pool is an active validator (ACTIVE or PENDING_INACTIVE)
-        // Active validators must leave the validator set before withdrawing
-        IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
-        if (validatorMgmt.isValidator(address(this))) {
-            ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
-            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
-                revert Errors.CannotWithdrawWhileActiveValidator(address(this));
-            }
-        }
-
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-        // Check lockup expired
-        if (lockedUntil > now_) {
-            revert Errors.LockupNotExpired(lockedUntil, now_);
-        }
-
+    function requestWithdrawal(
+        uint256 amount
+    ) external onlyStaker returns (uint256 nonce) {
         if (amount == 0) {
             revert Errors.ZeroAmount();
         }
 
-        if (amount > stake) {
-            revert Errors.InsufficientStake(amount, stake);
+        // Check available stake (stake - already pending withdrawals)
+        uint256 available = stake - totalPendingWithdrawals;
+        if (amount > available) {
+            revert Errors.InsufficientAvailableStake(amount, available);
         }
 
+        // For validators, check that effective stake after withdrawal >= minimumBond
+        IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+        if (validatorMgmt.isValidator(address(this))) {
+            ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
+            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+                uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+                uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+
+                // Calculate effective stake after this withdrawal
+                // The new pending withdrawal will have claimableTime = lockedUntil
+                // It becomes "ineffective" when (lockedUntil - atTime) < minLockupDuration
+                uint256 currentEffective = _getEffectiveStakeAt(now_);
+
+                // This withdrawal will reduce effective stake when it becomes "ineffective"
+                // For simplicity, we check the worst case: effective stake minus requested amount
+                if (currentEffective < amount + minBond) {
+                    revert Errors.WithdrawalWouldBreachMinimumBond(currentEffective - amount, minBond);
+                }
+            }
+        }
+
+        // Create pending withdrawal with claimableTime = lockedUntil
+        nonce = withdrawalNonce++;
+        pendingWithdrawals[nonce] = PendingWithdrawal({ amount: amount, claimableTime: lockedUntil });
+        totalPendingWithdrawals += amount;
+
+        emit WithdrawalRequested(address(this), nonce, amount, lockedUntil);
+    }
+
+    /// @inheritdoc IStakePool
+    function claimWithdrawal(
+        uint256 nonce,
+        address recipient
+    ) external onlyStaker {
+        PendingWithdrawal memory pending = pendingWithdrawals[nonce];
+
+        // Check withdrawal exists
+        if (pending.amount == 0) {
+            revert Errors.WithdrawalNotFound(nonce);
+        }
+
+        // Check claimable time reached
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        if (pending.claimableTime > now_) {
+            revert Errors.WithdrawalNotClaimable(pending.claimableTime, now_);
+        }
+
+        // Update state (CEI pattern)
+        uint256 amount = pending.amount;
+        delete pendingWithdrawals[nonce];
         stake -= amount;
+        totalPendingWithdrawals -= amount;
 
-        emit StakeWithdrawn(address(this), amount, recipient);
+        emit WithdrawalClaimed(address(this), nonce, amount, recipient);
 
-        // Transfer tokens to recipient (CEI pattern - effects before interactions)
+        // Transfer tokens to recipient
         (bool success,) = payable(recipient).call{ value: amount }("");
         require(success, "StakePool: transfer failed");
     }
@@ -282,10 +367,43 @@ contract StakePool is IStakePool, Ownable2Step {
 
         // Only renew if lockup has expired or would expire soon
         // This matches Aptos behavior: auto-renew at epoch boundary if expired
+        // Note: This does NOT affect existing pending withdrawals
         if (newLockedUntil > lockedUntil) {
             uint64 oldLockedUntil = lockedUntil;
             lockedUntil = newLockedUntil;
             emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);
         }
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    /// @notice Calculate effective stake at a given time
+    /// @dev Effective stake = stake - pending withdrawals where remaining lockup < minLockupDuration
+    /// @param atTime The timestamp to calculate at (microseconds)
+    /// @return Effective stake amount
+    function _getEffectiveStakeAt(
+        uint64 atTime
+    ) internal view returns (uint256) {
+        uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+
+        // Calculate threshold: pending withdrawals with claimableTime < (atTime + minLockup) are ineffective
+        uint64 threshold = atTime + minLockup;
+
+        // Sum up ineffective pending withdrawals
+        uint256 ineffective = 0;
+        for (uint256 i = 0; i < withdrawalNonce; i++) {
+            PendingWithdrawal memory pending = pendingWithdrawals[i];
+            if (pending.amount > 0 && pending.claimableTime < threshold) {
+                ineffective += pending.amount;
+            }
+        }
+
+        // Return effective stake
+        if (ineffective >= stake) {
+            return 0;
+        }
+        return stake - ineffective;
     }
 }

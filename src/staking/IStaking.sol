@@ -61,15 +61,36 @@ interface IStaking {
     // VIEW FUNCTIONS - Pool Status Queries (for Validators)
     // ========================================================================
 
-    /// @notice Get voting power of a specific pool
-    /// @dev Reverts if pool is not valid. Returns 0 if pool's lockup has expired.
+    /// @notice Get voting power of a specific pool at a given time
+    /// @dev Reverts if pool is not valid. Returns 0 if pool's lockup expired at atTime.
+    ///      Accounts for pending withdrawals with insufficient remaining lockup.
     /// @param pool Address of the pool
-    /// @return Voting power in wei (stake if locked, 0 if unlocked)
+    /// @param atTime The timestamp (microseconds) to calculate voting power at
+    /// @return Voting power in wei
     function getPoolVotingPower(
+        address pool,
+        uint64 atTime
+    ) external view returns (uint256);
+
+    /// @notice Get current voting power of a specific pool (convenience function)
+    /// @dev Reverts if pool is not valid
+    /// @param pool Address of the pool
+    /// @return Voting power in wei at current time
+    function getPoolVotingPowerNow(
         address pool
     ) external view returns (uint256);
 
-    /// @notice Get stake amount of a specific pool
+    /// @notice Get effective stake of a specific pool at a given time
+    /// @dev Effective stake = stake - pending withdrawals with insufficient lockup
+    /// @param pool Address of the pool
+    /// @param atTime The timestamp (microseconds) to calculate effective stake at
+    /// @return Effective stake in wei
+    function getPoolEffectiveStake(
+        address pool,
+        uint64 atTime
+    ) external view returns (uint256);
+
+    /// @notice Get stake amount of a specific pool (total including pending withdrawals)
     /// @dev Reverts if pool is not valid
     /// @param pool Address of the pool
     /// @return Stake amount in wei

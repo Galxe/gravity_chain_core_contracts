@@ -9,6 +9,7 @@ import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
 import { IReconfiguration } from "../blocker/IReconfiguration.sol";
+import { ITimestamp } from "../runtime/ITimestamp.sol";
 
 /// @title ValidatorManagement
 /// @author Gravity Team
@@ -148,7 +149,8 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Verify voting power meets minimum bond requirement
-        uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         if (votingPower < minimumBond) {
             revert Errors.InsufficientBond(minimumBond, votingPower);
@@ -186,7 +188,8 @@ contract ValidatorManagement is IValidatorManagement {
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;
-        record.bond = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        record.bond = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
 
         // Set consensus keys
         record.consensusPubkey = consensusPubkey;
@@ -216,7 +219,8 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Verify voting power still meets minimum
-        uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         if (votingPower < minimumBond) {
             revert Errors.InsufficientBond(minimumBond, votingPower);
@@ -520,7 +524,8 @@ contract ValidatorManagement is IValidatorManagement {
     function _getValidatorVotingPower(
         address stakePool
     ) internal view returns (uint256) {
-        uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
     }

@@ -3,12 +3,29 @@ pragma solidity ^0.8.30;
 
 /// @title IStakePool
 /// @author Gravity Team
-/// @notice Interface for individual stake pool contracts
+/// @notice Interface for individual stake pool contracts with queue-based withdrawals
 /// @dev Each user who wants to stake creates their own StakePool via the Staking factory.
 ///      Implements two-role separation:
 ///      - Owner: Administrative control (set voter/operator/staker, ownership via Ownable2Step)
-///      - Staker: Fund management (stake/unstake/renewLockUntil) - can be a contract for DPOS, LSD, etc.
+///      - Staker: Fund management (stake/requestWithdrawal/claimWithdrawal) - can be a contract for DPOS, LSD, etc.
+///
+///      Withdrawal Model:
+///      - Withdrawals are queued with a nonce and claimable when lockedUntil expires
+///      - Voting power = stake - pending withdrawals (where claimableTime < atTime + minLockupDuration)
+///      - Active validators can request withdrawals but must maintain minimumBond
 interface IStakePool {
+    // ========================================================================
+    // STRUCTS
+    // ========================================================================
+
+    /// @notice Represents a pending withdrawal request
+    /// @param amount Amount of stake to withdraw
+    /// @param claimableTime When the withdrawal can be claimed (= lockedUntil at request time)
+    struct PendingWithdrawal {
+        uint256 amount;
+        uint64 claimableTime;
+    }
+
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -18,11 +35,19 @@ interface IStakePool {
     /// @param amount Amount of stake added
     event StakeAdded(address indexed pool, uint256 amount);
 
-    /// @notice Emitted when stake is withdrawn
+    /// @notice Emitted when a withdrawal is requested
     /// @param pool Address of this pool
-    /// @param amount Amount of stake withdrawn
+    /// @param nonce Unique identifier for this withdrawal
+    /// @param amount Amount of stake requested for withdrawal
+    /// @param claimableTime When the withdrawal can be claimed (microseconds)
+    event WithdrawalRequested(address indexed pool, uint256 indexed nonce, uint256 amount, uint64 claimableTime);
+
+    /// @notice Emitted when a withdrawal is claimed
+    /// @param pool Address of this pool
+    /// @param nonce Unique identifier for this withdrawal
+    /// @param amount Amount of stake claimed
     /// @param recipient Address that received the withdrawn funds
-    event StakeWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
+    event WithdrawalClaimed(address indexed pool, uint256 indexed nonce, uint256 amount, address indexed recipient);
 
     /// @notice Emitted when lockup is renewed/extended
     /// @param pool Address of this pool
@@ -52,7 +77,7 @@ interface IStakePool {
     // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @notice Get the staker address (manages funds: stake/unstake/renewLockUntil)
+    /// @notice Get the staker address (manages funds: stake/requestWithdrawal/claimWithdrawal)
     /// @return Staker address
     function getStaker() external view returns (address);
 
@@ -64,14 +89,31 @@ interface IStakePool {
     /// @return Voter address
     function getVoter() external view returns (address);
 
-    /// @notice Get the total staked amount
+    /// @notice Get the total staked amount (includes pending withdrawals until claimed)
     /// @return Total stake in wei
     function getStake() external view returns (uint256);
 
-    /// @notice Get the current voting power
-    /// @dev Returns stake if locked, 0 if lockup expired
+    /// @notice Get the voting power at a specific time T
+    /// @dev Voting power = stake - pending withdrawals where (claimableTime - T) < minLockupDuration
+    ///      Returns 0 if lockedUntil <= atTime
+    /// @param atTime The timestamp (microseconds) to calculate voting power at
     /// @return Voting power in wei
-    function getVotingPower() external view returns (uint256);
+    function getVotingPower(
+        uint64 atTime
+    ) external view returns (uint256);
+
+    /// @notice Get the current voting power (convenience function)
+    /// @return Voting power in wei at current time
+    function getVotingPowerNow() external view returns (uint256);
+
+    /// @notice Get the effective stake at a specific time T
+    /// @dev Effective stake = stake - pending withdrawals with insufficient lockup
+    ///      This is the stake that counts towards voting power
+    /// @param atTime The timestamp (microseconds) to calculate effective stake at
+    /// @return Effective stake in wei
+    function getEffectiveStake(
+        uint64 atTime
+    ) external view returns (uint256);
 
     /// @notice Get the lockup expiration timestamp
     /// @return Lockup expiration in microseconds
@@ -84,6 +126,21 @@ interface IStakePool {
     /// @notice Check if the pool's stake is currently locked
     /// @return True if lockedUntil > now
     function isLocked() external view returns (bool);
+
+    /// @notice Get a pending withdrawal by nonce
+    /// @param nonce The withdrawal nonce
+    /// @return The pending withdrawal struct (amount=0 if not found or claimed)
+    function getPendingWithdrawal(
+        uint256 nonce
+    ) external view returns (PendingWithdrawal memory);
+
+    /// @notice Get the total amount in pending withdrawals
+    /// @return Total pending withdrawal amount in wei
+    function getTotalPendingWithdrawals() external view returns (uint256);
+
+    /// @notice Get the current withdrawal nonce (next nonce to be assigned)
+    /// @return Current nonce value
+    function getWithdrawalNonce() external view returns (uint256);
 
     // ========================================================================
     // OWNER FUNCTIONS (via Ownable2Step)
@@ -116,14 +173,24 @@ interface IStakePool {
 
     /// @notice Add native tokens to the stake pool
     /// @dev Only callable by staker. Voting power increases immediately.
+    ///      Extends lockedUntil to max(current, now + minLockupDuration)
     function addStake() external payable;
 
-    /// @notice Withdraw stake (only when lockup expired)
-    /// @dev Only callable by staker. Reverts if lockup not expired.
+    /// @notice Request a withdrawal (queue-based)
+    /// @dev Only callable by staker. Creates a pending withdrawal with claimableTime = lockedUntil.
+    ///      For active validators, ensures effective stake after withdrawal >= minimumBond.
     /// @param amount Amount to withdraw
+    /// @return nonce The unique identifier for this withdrawal request
+    function requestWithdrawal(
+        uint256 amount
+    ) external returns (uint256 nonce);
+
+    /// @notice Claim a pending withdrawal
+    /// @dev Only callable by staker. Reverts if claimableTime not reached.
+    /// @param nonce The withdrawal nonce to claim
     /// @param recipient Address to receive the withdrawn funds
-    function withdraw(
-        uint256 amount,
+    function claimWithdrawal(
+        uint256 nonce,
         address recipient
     ) external;
 
@@ -142,5 +209,6 @@ interface IStakePool {
     /// @notice Renew lockup for active validators (called by Staking factory during epoch transitions)
     /// @dev Only callable by the Staking factory. Sets lockedUntil = now + lockupDurationMicros.
     ///      This implements Aptos-style auto-renewal for active validators.
+    ///      Does NOT affect existing pending withdrawals - they keep their original claimableTime.
     function systemRenewLockup() external;
 }
