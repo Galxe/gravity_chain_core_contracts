@@ -155,7 +155,7 @@ contract Staking is IStaking {
     function isPoolLocked(
         address pool
     ) external view onlyValidPool(pool) returns (bool) {
-        // TODO(yxia): Do we need this function? 
+        // TODO(yxia): Do we need this function?
         return IStakePool(pool).isLocked();
     }
 

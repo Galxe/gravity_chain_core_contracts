@@ -1,5 +1,3 @@
 @src/=src/
 @openzeppelin/=node_modules/@openzeppelin/contracts/
-@openzeppelin-upgrades/=node_modules/@openzeppelin/contracts-upgradeable/
 forge-std/=node_modules/forge-std/src/
-

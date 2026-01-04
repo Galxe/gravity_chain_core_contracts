@@ -21,13 +21,10 @@
   resolved "https://registry.yarnpkg.com/@humanwhocodes/momoa/-/momoa-2.0.4.tgz#8b9e7a629651d15009c3587d07a222deeb829385"
   integrity sha512-RE815I4arJFtt+FVeU1Tgp9/Xvecacji8w/V6XtXsWWH/wz/eNkNbhb+ny/+PlVZjV0rxQpRSQKNKE3lcktHEA==
 
-"@openzeppelin/contracts-upgradeable@OpenZeppelin/openzeppelin-contracts-upgradeable#60b305a8f3ff0c7688f02ac470417b6bbf1c4d27":
-  version "5.3.0"
-  resolved "https://codeload.github.com/OpenZeppelin/openzeppelin-contracts-upgradeable/tar.gz/60b305a8f3ff0c7688f02ac470417b6bbf1c4d27"
-
-"@openzeppelin/contracts@OpenZeppelin/openzeppelin-contracts#e4f70216d759d8e6a64144a9e1f7bbeed78e7079":
-  version "5.3.0"
-  resolved "https://codeload.github.com/OpenZeppelin/openzeppelin-contracts/tar.gz/e4f70216d759d8e6a64144a9e1f7bbeed78e7079"
+"@openzeppelin/contracts@5.5.0":
+  version "5.5.0"
+  resolved "https://registry.yarnpkg.com/@openzeppelin/contracts/-/contracts-5.5.0.tgz#24e8a2f9598de484dcb223512af656edf52bc0e8"
+  integrity sha512-R8hq4zmKKWP2c7OxeRgAcjZwvF5W0Qq2OIX7degrtdM52Q9xYr4MLJdUAVPKGUewNJ1qo+M6YiZLLnNUnjP/gg==
 
 "@pnpm/config.env-replace@^1.1.0":
   version "1.1.0"
@@ -374,9 +371,9 @@ fill-range@^7.1.1:
   dependencies:
     to-regex-range "^5.0.1"
 
-forge-std@foundry-rs/forge-std#3b20d60d14b343ee4f908cb8079495c07f5e8981:
-  version "1.9.6"
-  resolved "https://codeload.github.com/foundry-rs/forge-std/tar.gz/3b20d60d14b343ee4f908cb8079495c07f5e8981"
+forge-std@foundry-rs/forge-std#v1.12.0:
+  version "1.12.0"
+  resolved "https://codeload.github.com/foundry-rs/forge-std/tar.gz/7117c90c8cf6c68e5acce4f09a6b24715cea4de6"
 
 form-data-encoder@^2.1.2:
   version "2.1.4"
