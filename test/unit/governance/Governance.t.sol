@@ -208,12 +208,10 @@ contract GovernanceTest is Test {
 
         bytes32 executionHash = keccak256("test");
 
-        uint64 now_ = timestamp.nowMicroseconds();
-        uint64 requiredLockup = now_ + VOTING_DURATION_MICROS;
-        uint64 actualLockup = IStakePool(pool).getLockedUntil();
-
+        // With the new voting power model, insufficient lockup means 0 voting power at expiration
+        // Since lockup expires before proposal expiration, voting power at expiration = 0
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientLockup.selector, requiredLockup, actualLockup));
+        vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 0));
         governance.createProposal(pool, executionHash, "ipfs://test");
     }
 

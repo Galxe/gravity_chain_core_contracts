@@ -139,7 +139,7 @@ Gravity Core Contracts form the on-chain infrastructure for the Gravity blockcha
 - Stake-based voting via StakePool's voter address
 - Hash-verified execution model
 - Partial voting and early resolution support
-- Lockup protection (voters must have lockup past proposal expiration)
+- Voting power calculated at proposal expiration time (inherently requires sufficient lockup)
 
 📄 **Details**: [governance.spec.md](./governance.spec.md)
 

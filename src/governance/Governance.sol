@@ -7,31 +7,8 @@ import { Proposal, ProposalState } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
-
-/// @notice Interface for Staking factory
-interface IStakingGov {
-    function isPool(
-        address pool
-    ) external view returns (bool);
-    function getPoolVotingPower(
-        address pool,
-        uint64 atTime
-    ) external view returns (uint256);
-    function getPoolVotingPowerNow(
-        address pool
-    ) external view returns (uint256);
-    function getPoolVoter(
-        address pool
-    ) external view returns (address);
-    function getPoolLockedUntil(
-        address pool
-    ) external view returns (uint64);
-}
-
-/// @notice Interface for Timestamp
-interface ITimestampGov {
-    function nowMicroseconds() external view returns (uint64);
-}
+import { IStaking } from "../staking/IStaking.sol";
+import { ITimestamp } from "../runtime/ITimestamp.sol";
 
 /// @title Governance
 /// @author Gravity Team
@@ -82,7 +59,7 @@ contract Governance is IGovernance {
 
     /// @notice Get current timestamp in microseconds
     function _now() internal view returns (uint64) {
-        return ITimestampGov(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        return ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
     }
 
     /// @notice Get governance config
@@ -91,8 +68,8 @@ contract Governance is IGovernance {
     }
 
     /// @notice Get staking contract
-    function _staking() internal view returns (IStakingGov) {
-        return IStakingGov(SystemAddresses.STAKING);
+    function _staking() internal view returns (IStaking) {
+        return IStaking(SystemAddresses.STAKING);
     }
 
     /// @notice Compute the key for usedVotingPower mapping
@@ -197,8 +174,13 @@ contract Governance is IGovernance {
         address stakePool,
         uint64 proposalId
     ) public view returns (uint128) {
-        uint64 now_ = _now();
-        uint256 poolPower = _staking().getPoolVotingPower(stakePool, now_);
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) {
+            revert Errors.ProposalNotFound(proposalId);
+        }
+
+        // Get voting power at proposal's expiration time
+        uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
         bytes32 key = _votingKey(stakePool, proposalId);
         uint128 used = usedVotingPower[key];
 
@@ -271,22 +253,18 @@ contract Governance is IGovernance {
         // Verify caller is pool's voter
         _requireVoter(stakePool);
 
-        // Get pool's voting power
+        // Calculate proposal expiration time
         uint64 now_ = _now();
-        uint256 votingPower = _staking().getPoolVotingPower(stakePool, now_);
+        uint64 votingDuration = _config().votingDurationMicros();
+        uint64 expirationTime = now_ + votingDuration;
+
+        // Get pool's voting power at expiration time
+        // This inherently checks that lockup covers the voting period
+        uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime);
         uint256 requiredStake = _config().requiredProposerStake();
 
         if (votingPower < requiredStake) {
             revert Errors.InsufficientVotingPower(requiredStake, votingPower);
-        }
-
-        // Verify lockup covers voting period
-        uint64 votingDuration = _config().votingDurationMicros();
-        uint64 expirationTime = now_ + votingDuration;
-
-        uint64 lockedUntil = _staking().getPoolLockedUntil(stakePool);
-        if (lockedUntil < expirationTime) {
-            revert Errors.InsufficientLockup(expirationTime, lockedUntil);
         }
 
         // Create proposal
@@ -340,13 +318,8 @@ contract Governance is IGovernance {
         // Verify caller is pool's voter
         _requireVoter(stakePool);
 
-        // Verify lockup covers voting period
-        uint64 lockedUntil = _staking().getPoolLockedUntil(stakePool);
-        if (lockedUntil < p.expirationTime) {
-            revert Errors.InsufficientLockup(p.expirationTime, lockedUntil);
-        }
-
-        // Calculate remaining voting power
+        // Calculate remaining voting power (uses voting power at expiration time,
+        // which inherently checks that lockup covers the voting period)
         uint128 remaining = getRemainingVotingPower(stakePool, proposalId);
         if (votingPower > remaining) {
             revert Errors.VotingPowerOverflow(votingPower, remaining);

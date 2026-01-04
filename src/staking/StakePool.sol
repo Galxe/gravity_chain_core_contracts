@@ -432,7 +432,8 @@ contract StakePool is IStakePool, Ownable2Step {
     }
 
     /// @notice Calculate effective stake at a given time using O(log n) binary search
-    /// @dev Effective stake = activeStake + (pending that is still effective at time T)
+    /// @dev Effective stake = activeStake (if locked) + (pending that is still effective at time T)
+    ///      Active stake is "effective" when pool's lockedUntil > T
     ///      A pending bucket is "effective" when its lockedUntil > T
     ///      A pending bucket is "ineffective" when its lockedUntil <= T
     /// @param atTime The timestamp to calculate at (microseconds)
@@ -440,6 +441,9 @@ contract StakePool is IStakePool, Ownable2Step {
     function _getEffectiveStakeAt(
         uint64 atTime
     ) internal view returns (uint256) {
+        // Active stake is only effective if the pool's lockup covers atTime
+        uint256 effectiveActive = (lockedUntil > atTime) ? activeStake : 0;
+
         // Find cumulative amount of pending that has become ineffective (lockedUntil <= atTime)
         uint256 ineffective = _getCumulativeAmountAtTime(atTime);
 
@@ -450,11 +454,11 @@ contract StakePool is IStakePool, Ownable2Step {
             ineffective -= claimedAmount;
         }
 
-        // Effective stake for voting = activeStake + pending that is still "effective"
+        // Effective stake for voting = effectiveActive + pending that is still "effective"
         // Pending is "effective" if its lockedUntil > atTime (still locked at that time)
         // Pending is "ineffective" if its lockedUntil <= atTime (will be unlocked at that time)
         //
-        // effectiveStake = activeStake + (totalPending - ineffectivePending)
+        // effectiveStake = effectiveActive + (totalPending - ineffectivePending)
 
         uint256 totalPending;
         if (_pendingBuckets.length > 0) {
@@ -463,10 +467,10 @@ contract StakePool is IStakePool, Ownable2Step {
 
         if (ineffective >= totalPending) {
             // All pending is ineffective
-            return activeStake;
+            return effectiveActive;
         }
 
-        return activeStake + (totalPending - ineffective);
+        return effectiveActive + (totalPending - ineffective);
     }
 
     /// @notice Binary search to find cumulative amount at time T

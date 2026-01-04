@@ -270,11 +270,14 @@ struct PendingBucket {
 
 ```solidity
 function getVotingPower(uint64 atTime) returns (uint256) {
-    // Voting power = activeStake + pending where lockedUntil > atTime
+    // Voting power = effective stake at time T
     return _getEffectiveStakeAt(atTime);
 }
 
 function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) {
+    // Active stake is only effective if pool's lockup covers atTime
+    uint256 effectiveActive = (lockedUntil > atTime) ? activeStake : 0;
+    
     // Find cumulative amount of pending that has become ineffective (lockedUntil <= atTime)
     uint256 ineffective = _getCumulativeAmountAtTime(atTime);  // O(log n) binary search
     
@@ -291,16 +294,18 @@ function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) {
         : 0;
     
     if (ineffective >= totalPending) {
-        return activeStake;
+        return effectiveActive;
     }
     
-    return activeStake + (totalPending - ineffective);
+    return effectiveActive + (totalPending - ineffective);
 }
 ```
 
 - **Time-parameterized**: Can query voting power at any time T
 - **O(log n) complexity**: Binary search on sorted buckets with prefix sums
-- **Pending effectiveness**: Pending stake is "effective" while lockedUntil > T
+- **Active stake effectiveness**: Active stake is only counted when `lockedUntil > T`
+- **Pending effectiveness**: Pending stake is "effective" while its bucket's `lockedUntil > T`
+- **Zero voting power when unlocked**: If pool's lockup has expired, voting power is 0
 
 ### Claiming Logic
 
@@ -772,17 +777,20 @@ Change the staker address.
 
 #### `getVotingPower(uint64 atTime)`
 
-Returns voting power at a specific time T. Accounts for pending buckets.
+Returns voting power at a specific time T. Accounts for pool lockup and pending buckets.
 
 **Behavior:**
 
 1. Return effective stake at time T
-2. Effective stake = activeStake + pending where lockedUntil > T
-3. Uses O(log n) binary search on prefix-sum buckets
+2. Active stake is only counted if pool's `lockedUntil > T`
+3. Pending stake is counted for buckets where `bucket.lockedUntil > T`
+4. Uses O(log n) binary search on prefix-sum buckets
 
 **Notes:**
-- Pending buckets are "effective" while their lockedUntil > T
+- If pool's lockup has expired (`lockedUntil <= T`), active stake contributes 0 to voting power
+- Pending buckets are "effective" while their individual `lockedUntil > T`
 - Use `getVotingPowerNow()` for convenience to query current voting power
+- This behavior enables governance to use voting power at proposal expiration time, inherently checking lockup
 
 ---
 
@@ -1026,10 +1034,12 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
    - Voting power calculation handles partial effectiveness
 
 4. **Lockup Model**
-   - Voting power = effective stake when locked
+   - Voting power = 0 when pool's lockup has expired (`lockedUntil <= now`)
+   - Voting power = activeStake + effective pending when locked
    - Effective stake decreases as pending buckets expire
    - Lockup extended on addStake
    - Lockup extended on renewLockUntil
+   - renewLockUntil restores voting power after lockup expiration
    - systemRenewLockup updates lockup for active validators
 
 ### Fuzz Tests
@@ -1046,6 +1056,8 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
 3. Cumulative amounts are always increasing (prefix sums)
 4. `claimedAmount` never exceeds total cumulative pending
 5. Effective stake <= activeStake + totalPending
+6. Voting power = 0 when `lockedUntil <= now`
+7. Voting power = activeStake when locked and no pending
 
 ---
 
@@ -1065,10 +1077,21 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
 12. **Time-Parameterized Voting Power** — Allows accurate voting power queries at any point in time
 13. **Unbonding Delay** — Additional wait period after lockup expires before withdrawal
 14. **Claim Pointer Model** — No bucket deletion needed, prevents storage slot manipulation attacks
+15. **Lockup-Integrated Voting Power** — Voting power is 0 when lockup expires, enabling governance to inherently check lockup
 
 ---
 
 ## Changelog
+
+### 2026-01-04: Voting Power Lockup Integration
+
+Updated voting power calculation to account for pool's lockup expiration:
+
+**Voting Power Changes**
+- `activeStake` is only counted when `lockedUntil > atTime`
+- If pool's lockup has expired, voting power at that time is 0
+- Enables governance to use voting power at proposal expiration time, inherently checking lockup
+- Removes need for separate lockup validation in governance contracts
 
 ### 2026-01-04: Bucket-Based Withdrawal Model
 

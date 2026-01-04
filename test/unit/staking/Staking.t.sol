@@ -248,15 +248,15 @@ contract StakingTest is Test {
         );
     }
 
-    function test_getPoolVotingPower_returnsActiveStakeWhenUnlocked() public {
+    function test_getPoolVotingPower_returnsZeroWhenUnlocked() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
         uint64 now_ = timestamp.microseconds();
-        // After removing the "return 0 when unlocked" check, voting power equals effective stake
-        assertEq(staking.getPoolVotingPower(pool, now_), MIN_STAKE, "Should return active stake when unlocked");
+        // When lockup expires, voting power is 0 (activeStake is not effective)
+        assertEq(staking.getPoolVotingPower(pool, now_), 0, "Voting power is 0 when unlocked");
     }
 
     function test_RevertWhen_getPoolVotingPower_invalidPool() public {
@@ -380,16 +380,16 @@ contract StakingTest is Test {
         assertEq(IStakePool(pool).getVotingPowerNow(), stakeAmount);
     }
 
-    function test_getVotingPower_returnsActiveStakeWhenUnlocked() public {
+    function test_getVotingPower_returnsZeroWhenUnlocked() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
         uint64 now_ = timestamp.microseconds();
-        // After removing the "return 0 when unlocked" check, voting power equals effective stake
-        assertEq(IStakePool(pool).getVotingPower(now_), MIN_STAKE, "Voting power equals active stake when unlocked");
-        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power equals active stake when unlocked");
+        // When lockup expires, voting power is 0 (activeStake is not effective)
+        assertEq(IStakePool(pool).getVotingPower(now_), 0, "Voting power is 0 when unlocked");
+        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power is 0 when unlocked");
     }
 
     function test_isLocked_returnsTrueWhenLocked() public {
@@ -741,15 +741,11 @@ contract StakingTest is Test {
         // Voting power = activeStake + effective pending = 7 + 3 = 10
         assertEq(IStakePool(pool).getVotingPower(now_), 10 ether, "All stake should be effective when locked");
 
-        // Advance to just past lockedUntil - pending becomes ineffective
+        // Advance to just past lockedUntil - both activeStake and pending become ineffective
         _advanceTime(LOCKUP_DURATION + 1);
 
-        // Pending with lockedUntil <= now is ineffective, so voting power = activeStake only
-        assertEq(
-            IStakePool(pool).getVotingPowerNow(),
-            7 ether,
-            "Voting power equals active stake when pending is ineffective"
-        );
+        // Both activeStake and pending with lockedUntil <= now are ineffective, so voting power = 0
+        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power is 0 when lockup expired");
     }
 
     function test_getEffectiveStake_excludesIneffectivePending() public {
@@ -765,12 +761,10 @@ contract StakingTest is Test {
         // Effective stake includes pending that's still locked
         assertEq(IStakePool(pool).getEffectiveStake(now_), 10 ether, "All stake effective when pending still locked");
 
-        // Check at a future time when pending would be unlocked
+        // Check at a future time when pending and lockup would be unlocked
         uint64 futureTime = IStakePool(pool).getLockedUntil() + 1;
-        // At futureTime, pending with lockedUntil <= futureTime becomes ineffective
-        assertEq(
-            IStakePool(pool).getEffectiveStake(futureTime), 7 ether, "Only active stake effective when pending unlocked"
-        );
+        // At futureTime, both activeStake and pending become ineffective (lockup expired)
+        assertEq(IStakePool(pool).getEffectiveStake(futureTime), 0, "No stake effective when lockup expired");
     }
 
     function test_getClaimableAmount_returnsCorrectAmount() public {
@@ -827,15 +821,16 @@ contract StakingTest is Test {
         uint64 oldLockedUntil = IStakePool(pool).getLockedUntil();
         _advanceTime(LOCKUP_DURATION + 1);
 
-        // Voting power equals active stake (we removed the "return 0 when unlocked" check)
-        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power equals active stake");
+        // When lockup expired, voting power is 0
+        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power is 0 when unlocked");
 
         vm.prank(alice);
         IStakePool(pool).renewLockUntil(LOCKUP_DURATION * 2); // Need enough to be >= now + minLockup
 
         uint64 newLockedUntil = IStakePool(pool).getLockedUntil();
         assertGt(newLockedUntil, oldLockedUntil, "Lockup should be extended");
-        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power unchanged");
+        // After renewal, voting power is restored
+        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power restored after renewal");
     }
 
     function test_renewLockUntil_allowsSmallExtensionWhenFarInFuture() public {
@@ -1118,11 +1113,10 @@ contract StakingTest is Test {
         assertTrue(IStakePool(pool).isLocked());
         assertEq(IStakePool(pool).getVotingPowerNow(), IStakePool(pool).getActiveStake());
 
-        // When unlocked: votingPower still equals effective stake
-        // (we removed the "return 0 when unlocked" check)
+        // When unlocked: votingPower is 0 (activeStake is not effective when lockup expired)
         _advanceTime(LOCKUP_DURATION + 1);
         assertFalse(IStakePool(pool).isLocked());
-        assertEq(IStakePool(pool).getVotingPowerNow(), IStakePool(pool).getActiveStake());
+        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power is 0 when unlocked");
     }
 
     function test_invariant_lockupNeverDecreases() public {

@@ -35,7 +35,7 @@ This design is inspired by Aptos's `aptos_governance.move` module but adapted fo
 
 1. **Stake-Based Voting** — Voting power comes from StakePools via the Staking factory
 2. **Delegated Voting** — The pool's `voter` address casts votes using pool's voting power
-3. **Lockup Protection** — Voters must have lockup extending past proposal expiration
+3. **Voting Power at Expiration** — Voting power is calculated at proposal's expiration time, inherently requiring sufficient lockup
 4. **Hash-Verified Execution** — Proposals store execution hash; executor provides matching calldata
 5. **Partial Voting** — Can vote with a portion of available voting power
 6. **Early Resolution** — Can resolve before voting ends if sufficient votes are cast
@@ -99,8 +99,7 @@ graph TD
     G --> S
 
     SP -.->|voter address| G
-    SP -.->|voting power| G
-    SP -.->|lockup time| G
+    SP -.->|voting power at expiration| G
 ```
 
 ---
@@ -343,27 +342,29 @@ Create a new governance proposal.
 
 1. Verify `stakePool` is a valid pool via `Staking.isPool()`
 2. Verify `msg.sender == StakePool.voter`
-3. Get voting power via `Staking.getPoolVotingPower(stakePool)`
-4. Revert if voting power < `requiredProposerStake`
-5. Get pool's `lockedUntil`
-6. Calculate `expirationTime = now + votingDurationMicros`
-7. Revert if `lockedUntil < expirationTime` (lockup must cover voting period)
-8. Create proposal with:
+3. Calculate `expirationTime = now + votingDurationMicros`
+4. Get voting power at expiration time via `Staking.getPoolVotingPower(stakePool, expirationTime)`
+5. Revert if voting power < `requiredProposerStake`
+6. Create proposal with:
    - `id = nextProposalId++`
    - `proposer = msg.sender`
    - `executionHash = executionHash`
    - `creationTime = now`
    - `expirationTime = now + votingDurationMicros`
    - `minVoteThreshold = config.minVotingThreshold()`
-9. Emit `ProposalCreated` event
-10. Return `proposalId`
+7. Emit `ProposalCreated` event
+8. Return `proposalId`
+
+**Notes:**
+
+- Voting power is calculated at `expirationTime`, not current time
+- This inherently checks that the pool's lockup extends past voting period (if lockup expires before expiration, voting power will be 0)
 
 **Errors:**
 
 - `InvalidPool(stakePool)` — Pool not created by Staking factory
 - `NotDelegatedVoter(expected, actual)` — Caller is not pool's voter
-- `InsufficientVotingPower(required, actual)` — Not enough stake
-- `InsufficientLockup(required, actual)` — Lockup too short
+- `InsufficientVotingPower(required, actual)` — Not enough stake (includes lockup too short case)
 
 ---
 
@@ -378,16 +379,17 @@ Cast a vote on a proposal using a stake pool's voting power.
 1. Verify proposal exists and is PENDING
 2. Verify `stakePool` is a valid pool via `Staking.isPool()`
 3. Verify `msg.sender == StakePool.voter`
-4. Get pool's `lockedUntil`
-5. Revert if `lockedUntil < proposal.expirationTime` (lockup must cover voting period)
-6. Get pool's current voting power via `Staking.getPoolVotingPower(stakePool)`
-7. Calculate key: `keccak256(abi.encodePacked(stakePool, proposalId))`
-8. Get `used = usedVotingPower[key]`
-9. Calculate `remaining = poolVotingPower - used`
-10. Revert if `votingPower > remaining`
-11. Update `usedVotingPower[key] += votingPower`
-12. Update votes: if `support` then `yesVotes += votingPower` else `noVotes += votingPower`
-13. Emit `VoteCast` event
+4. Calculate remaining voting power via `getRemainingVotingPower(stakePool, proposalId)`
+5. Revert if `votingPower > remaining`
+6. Update `usedVotingPower[key] += votingPower`
+7. Update votes: if `support` then `yesVotes += votingPower` else `noVotes += votingPower`
+8. Emit `VoteCast` event
+
+**Notes:**
+
+- Voting power is calculated at the proposal's `expirationTime`, not current time
+- This inherently checks that the pool's lockup extends past voting period
+- If lockup expires before proposal expiration, voting power will be 0
 
 **Errors:**
 
@@ -395,7 +397,6 @@ Cast a vote on a proposal using a stake pool's voting power.
 - `VotingPeriodEnded(expirationTime)` — Voting has ended
 - `InvalidPool(stakePool)` — Pool not created by Staking factory
 - `NotDelegatedVoter(expected, actual)` — Caller is not pool's voter
-- `InsufficientLockup(required, actual)` — Lockup too short
 - `VotingPowerOverflow(requested, remaining)` — Trying to use more power than available
 
 ---
@@ -476,10 +477,17 @@ Get remaining voting power for a pool on a proposal.
 
 **Behavior:**
 
-1. Get pool's current voting power via `Staking.getPoolVotingPower(stakePool)`
-2. Calculate key: `keccak256(abi.encodePacked(stakePool, proposalId))`
-3. Get `used = usedVotingPower[key]`
-4. Return `poolVotingPower - used`
+1. Revert if proposal doesn't exist
+2. Get pool's voting power at proposal's `expirationTime` via `Staking.getPoolVotingPower(stakePool, expirationTime)`
+3. Calculate key: `keccak256(abi.encodePacked(stakePool, proposalId))`
+4. Get `used = usedVotingPower[key]`
+5. Return `poolVotingPower - used`
+
+**Notes:**
+
+- Voting power is calculated at the proposal's expiration time, not current time
+- If pool's lockup expires before proposal expiration, voting power will be 0
+- This makes lockup checking implicit rather than explicit
 
 ---
 
@@ -518,16 +526,15 @@ The following errors are used by governance contracts:
 
 ### Existing Errors (in Errors.sol)
 
-| Error                                          | When                                        |
-| ---------------------------------------------- | ------------------------------------------- |
-| `ProposalNotFound(uint64 proposalId)`          | Proposal doesn't exist                      |
-| `VotingPeriodEnded(uint64 expirationTime)`     | Voting has ended                            |
-| `VotingPeriodNotEnded(uint64 expirationTime)`  | Voting hasn't ended yet                     |
-| `ProposalAlreadyResolved(uint64 proposalId)`   | Proposal already resolved                   |
-| `ExecutionHashMismatch(bytes32, bytes32)`      | Execution hash doesn't match                |
-| `InsufficientLockup(uint64 required, actual)`  | Lockup doesn't cover voting period          |
-| `InsufficientVotingPower(uint256, uint256)`    | Not enough voting power                     |
-| `InvalidPool(address pool)`                    | Pool not created by Staking factory         |
+| Error                                          | When                                                      |
+| ---------------------------------------------- | --------------------------------------------------------- |
+| `ProposalNotFound(uint64 proposalId)`          | Proposal doesn't exist                                    |
+| `VotingPeriodEnded(uint64 expirationTime)`     | Voting has ended                                          |
+| `VotingPeriodNotEnded(uint64 expirationTime)`  | Voting hasn't ended yet                                   |
+| `ProposalAlreadyResolved(uint64 proposalId)`   | Proposal already resolved                                 |
+| `ExecutionHashMismatch(bytes32, bytes32)`      | Execution hash doesn't match                              |
+| `InsufficientVotingPower(uint256, uint256)`    | Not enough voting power (includes lockup too short case)  |
+| `InvalidPool(address pool)`                    | Pool not created by Staking factory                       |
 
 ### New Errors (to add)
 
@@ -560,7 +567,7 @@ All time values use **microseconds** (uint64), consistent with the Timestamp con
 
 ### From Aptos
 
-1. **Lockup >= Proposal Expiration**: Both proposers and voters must have stake locked until after voting ends
+1. **Voting Power at Expiration**: Voting power is calculated at proposal's expiration time, inherently requiring lockup to extend past voting period
 2. **Double Vote Prevention**: Track voting power used per (pool, proposal) to prevent double voting
 3. **Minimum Proposer Stake**: Require minimum voting power to create proposals (spam prevention)
 4. **Execution Hash Verification**: Exact match required between stored hash and provided calldata
@@ -633,17 +640,16 @@ governance.execute(
    - All setters revert with non-TIMELOCK caller
 
 2. **Proposal Creation**
-   - Create with valid pool and sufficient stake
+   - Create with valid pool and sufficient stake at expiration time
    - Revert if not pool's voter
-   - Revert if insufficient voting power
-   - Revert if lockup too short
+   - Revert if insufficient voting power at expiration time (includes lockup too short)
 
 3. **Voting**
    - Vote with full power
    - Vote with partial power
    - Revert on double vote (using same power twice)
    - Revert if not pool's voter
-   - Revert if lockup too short
+   - Revert if insufficient voting power at expiration time
    - Revert if voting period ended
 
 4. **Resolution**
