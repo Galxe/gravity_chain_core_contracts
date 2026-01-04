@@ -110,6 +110,7 @@ contract StakingConfig {
     function setMinimumProposalStake(
         uint256 _minimumProposalStake
     ) external {
+        // TODO(yxia): should be moved to GovernanceConfig.
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         uint256 oldValue = minimumProposalStake;

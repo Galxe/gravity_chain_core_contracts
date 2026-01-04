@@ -71,6 +71,7 @@ contract Staking is IStaking {
     function computePoolAddress(
         uint256 nonce
     ) public view returns (address) {
+        // TODO(yxia): revisit our pool address computation design.
         bytes32 salt = bytes32(nonce);
         bytes32 bytecodeHash = keccak256(
             abi.encodePacked(type(StakePool).creationCode, abi.encode(address(0))) // placeholder owner
@@ -154,6 +155,7 @@ contract Staking is IStaking {
     function isPoolLocked(
         address pool
     ) external view onlyValidPool(pool) returns (bool) {
+        // TODO(yxia): Do we need this function? 
         return IStakePool(pool).isLocked();
     }
 
