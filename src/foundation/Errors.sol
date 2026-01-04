@@ -125,6 +125,9 @@ library Errors {
     /// @param total The total number of active validators
     error ValidatorIndexOutOfBounds(uint64 index, uint64 total);
 
+    /// @notice Cannot remove the last active validator (would halt consensus)
+    error CannotRemoveLastValidator();
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================

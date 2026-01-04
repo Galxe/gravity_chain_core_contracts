@@ -8,6 +8,7 @@ import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
+import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 
 /// @title ValidatorManagement
 /// @author Gravity Team
@@ -22,6 +23,9 @@ contract ValidatorManagement is IValidatorManagement {
 
     /// @notice Maximum moniker length in bytes
     uint256 public constant MAX_MONIKER_LENGTH = 31;
+
+    /// @notice Precision factor for percentage calculations
+    uint256 internal constant PRECISION_FACTOR = 1e4;
 
     // ========================================================================
     // STATE
@@ -69,6 +73,15 @@ contract ValidatorManagement is IValidatorManagement {
     ) {
         if (_validators[stakePool].validator == address(0)) {
             revert Errors.ValidatorNotFound(stakePool);
+        }
+        _;
+    }
+
+    /// @notice Ensures no reconfiguration (epoch transition) is in progress
+    /// @dev Mirrors Aptos's assert_reconfig_not_in_progress() - blocks during entire DKG period
+    modifier whenNotReconfiguring() {
+        if (IReconfiguration(SystemAddresses.EPOCH_MANAGER).isTransitionInProgress()) {
+            revert Errors.ReconfigurationInProgress();
         }
         _;
     }
@@ -123,6 +136,9 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InsufficientBond(minimumBond, votingPower);
         }
 
+        // TODO(yxia): what if the stake drop below the minimum bond?
+        // TODO(yxia): shall we check the lockup duration?
+
         // Verify moniker length
         if (bytes(moniker).length > MAX_MONIKER_LENGTH) {
             revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(moniker).length);
@@ -148,7 +164,7 @@ contract ValidatorManagement is IValidatorManagement {
         // Set roles from staking contract
         record.owner = IStaking(SystemAddresses.STAKING).getPoolOwner(stakePool);
         record.operator = IStaking(SystemAddresses.STAKING).getPoolOperator(stakePool);
-        record.feeRecipient = record.owner;
+        record.feeRecipient = record.owner; // TODO(yxia): the fee recipient should be a parameter.
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;
@@ -168,7 +184,7 @@ contract ValidatorManagement is IValidatorManagement {
     /// @inheritdoc IValidatorManagement
     function joinValidatorSet(
         address stakePool
-    ) external validatorExists(stakePool) onlyOperator(stakePool) {
+    ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Verify validator set changes are allowed
@@ -204,12 +220,30 @@ contract ValidatorManagement is IValidatorManagement {
     /// @inheritdoc IValidatorManagement
     function leaveValidatorSet(
         address stakePool
-    ) external validatorExists(stakePool) onlyOperator(stakePool) {
+    ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         ValidatorRecord storage validator = _validators[stakePool];
+
+        // Verify validator set changes are allowed
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            revert Errors.ValidatorSetChangesDisabled();
+        }
+
+        // Handle leaving from PENDING_ACTIVE state (Aptos-style: remove from queue, revert to INACTIVE)
+        if (validator.status == ValidatorStatus.PENDING_ACTIVE) {
+            _removeFromPendingActive(stakePool);
+            validator.status = ValidatorStatus.INACTIVE;
+            emit ValidatorLeaveRequested(stakePool);
+            return;
+        }
 
         // Verify validator is ACTIVE
         if (validator.status != ValidatorStatus.ACTIVE) {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
+        }
+
+        // Prevent removing the last active validator (would halt consensus)
+        if (_activeValidators.length == 1) {
+            revert Errors.CannotRemoveLastValidator();
         }
 
         // Change status to PENDING_INACTIVE
@@ -228,9 +262,11 @@ contract ValidatorManagement is IValidatorManagement {
         address stakePool,
         bytes calldata newPubkey,
         bytes calldata newPop
-    ) external validatorExists(stakePool) onlyOperator(stakePool) {
+    ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         ValidatorRecord storage validator = _validators[stakePool];
 
+        // TODO(yxia): it wont take effect immediately i think, it has to wait until the next epoch.
+        // check if aptos has some fancy way to make it take effect immediately.
         // Update consensus key material (takes effect immediately)
         validator.consensusPubkey = newPubkey;
         validator.consensusPop = newPop;
@@ -242,7 +278,7 @@ contract ValidatorManagement is IValidatorManagement {
     function setFeeRecipient(
         address stakePool,
         address newRecipient
-    ) external validatorExists(stakePool) onlyOperator(stakePool) {
+    ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Set pending fee recipient (will take effect at next epoch)
@@ -309,7 +345,7 @@ contract ValidatorManagement is IValidatorManagement {
         // Calculate current total voting power (before adding new validators)
         uint256 currentTotal = _calculateTotalVotingPower();
         uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
-        uint256 maxIncrease = currentTotal * limitPct / 100;
+        uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
         uint256 addedPower = 0;
 
         // Track which validators we activate and which remain pending
@@ -415,6 +451,22 @@ contract ValidatorManagement is IValidatorManagement {
                 // Swap with last element and pop
                 _activeValidators[i] = _activeValidators[length - 1];
                 _activeValidators.pop();
+                return;
+            }
+        }
+    }
+
+    /// @notice Remove a validator from the pending active array
+    /// @dev Used when a validator cancels their join request (leaves from PENDING_ACTIVE state)
+    function _removeFromPendingActive(
+        address pool
+    ) internal {
+        uint256 length = _pendingActive.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_pendingActive[i] == pool) {
+                // Swap with last element and pop
+                _pendingActive[i] = _pendingActive[length - 1];
+                _pendingActive.pop();
                 return;
             }
         }

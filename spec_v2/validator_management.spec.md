@@ -2,6 +2,7 @@
 status: draft
 owner: @yxia
 layer: validator_management
+updated: 2026-01-03
 ---
 
 # Validator Management Layer Specification
@@ -95,9 +96,9 @@ graph TD
     │                                         ▼
     │    ┌──────────────┐   joinValidatorSet()   ┌────────────────┐
     │    │   INACTIVE   │ ─────────────────────▶ │ PENDING_ACTIVE │
-    │    │  (no index)  │                        │   (no index)   │
-    │    └──────────────┘                        └────────────────┘
-    │           ▲                                        │
+    │    │  (no index)  │ ◀───────────────────── │   (no index)   │
+    │    └──────────────┘   leaveValidatorSet()  └────────────────┘
+    │           ▲           (cancel join)                │
     │           │                                        │ onNewEpoch()
     │           │                                        │ (assigns index)
     │           │                                        ▼
@@ -274,42 +275,55 @@ Request to join the active validator set.
 **Access Control**: Validator's operator only
 
 **Behavior**:
-1. Verify validator exists and status is INACTIVE
-2. Verify caller is operator
-3. Verify voting power still meets minimum
+1. Verify no reconfiguration (epoch transition) is in progress
+2. Verify validator exists and status is INACTIVE
+3. Verify caller is operator
 4. Verify `allowValidatorSetChange` is true
-5. Verify max validator set size won't be exceeded
-6. Change status to PENDING_ACTIVE
-7. Add to `_pendingActive` array
-8. Emit `ValidatorJoinRequested` event
+5. Verify voting power still meets minimum
+6. Verify max validator set size won't be exceeded
+7. Change status to PENDING_ACTIVE
+8. Add to `_pendingActive` array
+9. Emit `ValidatorJoinRequested` event
 
 **Reverts**:
+- `ReconfigurationInProgress` - Epoch transition in progress
 - `ValidatorNotFound` - Validator not registered
 - `NotOperator` - Caller is not the operator
 - `InvalidStatus` - Validator not in INACTIVE status
-- `InsufficientBond` - Voting power dropped below minimum
 - `ValidatorSetChangesDisabled` - Set changes not allowed
+- `InsufficientBond` - Voting power dropped below minimum
 - `MaxValidatorSetSizeReached` - At capacity
 
 ---
 
 ### `leaveValidatorSet()`
 
-Request to leave the active validator set.
+Request to leave the active validator set. Can also cancel a pending join request.
 
 **Access Control**: Validator's operator only
 
 **Behavior**:
-1. Verify validator exists and status is ACTIVE
-2. Verify caller is operator
-3. Change status to PENDING_INACTIVE
-4. Add to `_pendingInactive` array
-5. Emit `ValidatorLeaveRequested` event
+1. Verify no reconfiguration (epoch transition) is in progress
+2. Verify `allowValidatorSetChange` is true
+3. Verify validator exists
+4. Verify caller is operator
+5. **If status is PENDING_ACTIVE** (cancel join request):
+   - Remove from `_pendingActive` array
+   - Change status to INACTIVE
+   - Emit `ValidatorLeaveRequested` event
+6. **If status is ACTIVE**:
+   - Verify this is not the last active validator (consensus protection)
+   - Change status to PENDING_INACTIVE
+   - Add to `_pendingInactive` array
+   - Emit `ValidatorLeaveRequested` event
 
 **Reverts**:
+- `ReconfigurationInProgress` - Epoch transition in progress
+- `ValidatorSetChangesDisabled` - Set changes not allowed
 - `ValidatorNotFound` - Validator not registered
 - `NotOperator` - Caller is not the operator
-- `InvalidStatus` - Validator not in ACTIVE status
+- `InvalidStatus` - Validator not in ACTIVE or PENDING_ACTIVE status
+- `CannotRemoveLastValidator` - Would leave validator set empty
 
 ---
 
@@ -349,10 +363,16 @@ Rotate the validator's consensus key.
 **Access Control**: Validator's operator only
 
 **Behavior**:
-1. Verify validator exists
-2. Verify caller is operator
-3. Update consensus pubkey and PoP (takes effect immediately)
-4. Emit `ConsensusKeyRotated` event
+1. Verify no reconfiguration (epoch transition) is in progress
+2. Verify validator exists
+3. Verify caller is operator
+4. Update consensus pubkey and PoP (takes effect immediately)
+5. Emit `ConsensusKeyRotated` event
+
+**Reverts**:
+- `ReconfigurationInProgress` - Epoch transition in progress
+- `ValidatorNotFound` - Validator not registered
+- `NotOperator` - Caller is not the operator
 
 ---
 
@@ -363,10 +383,16 @@ Set a new fee recipient address.
 **Access Control**: Validator's operator only
 
 **Behavior**:
-1. Verify validator exists
-2. Verify caller is operator
-3. Set `pendingFeeRecipient` (applied at next epoch)
-4. Emit `FeeRecipientUpdated` event
+1. Verify no reconfiguration (epoch transition) is in progress
+2. Verify validator exists
+3. Verify caller is operator
+4. Set `pendingFeeRecipient` (applied at next epoch)
+5. Emit `FeeRecipientUpdated` event
+
+**Reverts**:
+- `ReconfigurationInProgress` - Epoch transition in progress
+- `ValidatorNotFound` - Validator not registered
+- `NotOperator` - Caller is not the operator
 
 ---
 
@@ -415,6 +441,8 @@ function _getValidatorVotingPower(address stakePool) internal view returns (uint
 | `ValidatorSetChangesDisabled()` | Set changes not allowed |
 | `MaxValidatorSetSizeReached(uint256)` | At validator set capacity |
 | `ValidatorIndexOutOfBounds(uint64, uint64)` | Index >= active count |
+| `ReconfigurationInProgress()` | Operation blocked during epoch transition |
+| `CannotRemoveLastValidator()` | Would leave validator set empty (halt consensus) |
 
 ---
 
@@ -509,4 +537,36 @@ validatorManager.leaveValidatorSet(pool);
 4. **Epoch-Based Changes**: No immediate activation/deactivation (prevents flash-stake attacks)
 5. **Index Consistency**: Indices are reassigned every epoch to maintain contiguity
 6. **No Direct StakePool Calls**: All pool queries go through Staking factory
+7. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
+8. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
+9. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
+
+---
+
+## Changelog
+
+### 2026-01-03: Aptos Security Parity
+
+Added security checks to match Aptos's `stake.move` validator management:
+
+**Reconfiguration Guard**
+- Added `whenNotReconfiguring` modifier using `IReconfiguration.isTransitionInProgress()`
+- Applied to: `joinValidatorSet()`, `leaveValidatorSet()`, `rotateConsensusKey()`, `setFeeRecipient()`
+- Mirrors Aptos's `assert_reconfig_not_in_progress()` pattern
+- Blocks operations during the entire DKG period (from `checkAndStartTransition` to `finishTransition`)
+
+**Last Validator Protection**
+- Added check in `leaveValidatorSet()` to prevent removing the last active validator
+- Reverts with `CannotRemoveLastValidator` error
+- Prevents consensus halt
+
+**Leave from PENDING_ACTIVE**
+- Extended `leaveValidatorSet()` to handle PENDING_ACTIVE status
+- Allows validators to cancel their join request before activation
+- Removes from pending queue and reverts status to INACTIVE
+- Added `_removeFromPendingActive()` helper function
+
+**allowValidatorSetChange for Leave**
+- Added `allowValidatorSetChange` check to `leaveValidatorSet()` (was only on join)
+- Matches Aptos behavior where both join and leave are gated by this config
 

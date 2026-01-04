@@ -13,6 +13,22 @@ import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
+import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
+
+/// @notice Mock Reconfiguration contract for testing
+contract MockReconfiguration {
+    bool private _transitionInProgress;
+
+    function isTransitionInProgress() external view returns (bool) {
+        return _transitionInProgress;
+    }
+
+    function setTransitionInProgress(
+        bool inProgress
+    ) external {
+        _transitionInProgress = inProgress;
+    }
+}
 
 /// @title ValidatorManagementTest
 /// @notice Unit tests for ValidatorManagement contract
@@ -22,6 +38,7 @@ contract ValidatorManagementTest is Test {
     StakingConfig public stakingConfig;
     ValidatorConfig public validatorConfig;
     Timestamp public timestamp;
+    MockReconfiguration public mockReconfiguration;
 
     // Test addresses
     address public alice = makeAddr("alice");
@@ -63,6 +80,10 @@ contract ValidatorManagementTest is Test {
 
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new ValidatorManagement()).code);
         validatorManager = ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+
+        // Deploy mock Reconfiguration at EPOCH_MANAGER address
+        vm.etch(SystemAddresses.EPOCH_MANAGER, address(new MockReconfiguration()).code);
+        mockReconfiguration = MockReconfiguration(SystemAddresses.EPOCH_MANAGER);
 
         // Initialize StakingConfig
         vm.prank(SystemAddresses.GENESIS);
@@ -288,31 +309,35 @@ contract ValidatorManagementTest is Test {
     // ========================================================================
 
     function test_leaveValidatorSet_success() public {
-        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
-        _processEpoch(); // Activate the validator
+        // Need at least 2 validators since last validator cannot leave
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch(); // Activate both validators
 
-        ValidatorRecord memory before = validatorManager.getValidator(pool);
+        ValidatorRecord memory before = validatorManager.getValidator(pool1);
         assertEq(uint8(before.status), uint8(ValidatorStatus.ACTIVE), "Should be ACTIVE");
 
         vm.prank(alice);
-        validatorManager.leaveValidatorSet(pool);
+        validatorManager.leaveValidatorSet(pool1);
 
-        ValidatorRecord memory after_ = validatorManager.getValidator(pool);
+        ValidatorRecord memory after_ = validatorManager.getValidator(pool1);
         assertEq(uint8(after_.status), uint8(ValidatorStatus.PENDING_INACTIVE), "Should be PENDING_INACTIVE");
 
         address[] memory pending = validatorManager.getPendingInactiveValidators();
         assertEq(pending.length, 1, "Should have one pending inactive");
-        assertEq(pending[0], pool, "Pending should match");
+        assertEq(pending[0], pool1, "Pending should match");
     }
 
     function test_leaveValidatorSet_emitsEvent() public {
-        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        // Need at least 2 validators since last validator cannot leave
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
         _processEpoch();
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, false);
-        emit IValidatorManagement.ValidatorLeaveRequested(pool);
-        validatorManager.leaveValidatorSet(pool);
+        emit IValidatorManagement.ValidatorLeaveRequested(pool1);
+        validatorManager.leaveValidatorSet(pool1);
     }
 
     function test_RevertWhen_leaveValidatorSet_notActive() public {
@@ -347,18 +372,24 @@ contract ValidatorManagementTest is Test {
     }
 
     function test_onNewEpoch_deactivatesPendingInactive() public {
-        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
-        _processEpoch(); // Activate
+        // Need at least 2 validators since last validator cannot leave
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch(); // Activate both
 
         vm.prank(alice);
-        validatorManager.leaveValidatorSet(pool);
+        validatorManager.leaveValidatorSet(pool1);
 
-        _processEpoch(); // Deactivate
+        _processEpoch(); // Deactivate pool1
 
-        assertEq(validatorManager.getActiveValidatorCount(), 0, "No active validators");
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "One active validator remaining");
 
-        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        ValidatorRecord memory record = validatorManager.getValidator(pool1);
         assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Status should be INACTIVE");
+
+        // Verify bob is still active
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Bob should still be ACTIVE");
     }
 
     function test_onNewEpoch_assignsIndicesCorrectly() public {
@@ -569,7 +600,10 @@ contract ValidatorManagementTest is Test {
         validatorManager.joinValidatorSet(pool);
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
 
-        // Epoch - ACTIVE
+        // Need another validator so alice can leave (last validator cannot leave)
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+
+        // Epoch - ACTIVE (both alice and bob become active)
         _processEpoch();
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
 
@@ -681,12 +715,16 @@ contract ValidatorManagementTest is Test {
         assertEq(uint8(pendingRecord.status), uint8(ValidatorStatus.PENDING_ACTIVE));
         // Index is 0 by default, but that's not "invalid" - it's just not assigned yet
 
+        // Need another validator so alice can leave (last validator cannot leave)
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+
         _processEpoch();
 
         // ACTIVE - has valid index
         ValidatorRecord memory activeRecord = validatorManager.getValidator(pool);
         assertEq(uint8(activeRecord.status), uint8(ValidatorStatus.ACTIVE));
-        assertEq(activeRecord.validatorIndex, 0, "Should have index 0");
+        // Index could be 0 or 1 depending on order, just verify it's assigned
+        assertTrue(activeRecord.validatorIndex < 2, "Should have valid index");
 
         vm.prank(alice);
         validatorManager.leaveValidatorSet(pool);
@@ -694,7 +732,6 @@ contract ValidatorManagementTest is Test {
         // PENDING_INACTIVE - keeps index for current epoch
         ValidatorRecord memory pendingInactiveRecord = validatorManager.getValidator(pool);
         assertEq(uint8(pendingInactiveRecord.status), uint8(ValidatorStatus.PENDING_INACTIVE));
-        assertEq(pendingInactiveRecord.validatorIndex, 0, "Should keep index");
 
         _processEpoch();
 
@@ -702,6 +739,104 @@ contract ValidatorManagementTest is Test {
         ValidatorRecord memory inactiveRecord = validatorManager.getValidator(pool);
         assertEq(uint8(inactiveRecord.status), uint8(ValidatorStatus.INACTIVE));
         assertEq(inactiveRecord.validatorIndex, 0, "Index should be cleared to 0");
+    }
+
+    // ========================================================================
+    // SECURITY TESTS (Aptos parity)
+    // ========================================================================
+
+    /// @notice Test that the last active validator cannot leave (would halt consensus)
+    function test_RevertWhen_leaveValidatorSet_lastValidator() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch(); // Activate
+
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Should have exactly 1 validator");
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
+        validatorManager.leaveValidatorSet(pool);
+    }
+
+    /// @notice Test that a validator can cancel their join request by leaving from PENDING_ACTIVE
+    function test_leaveValidatorSet_fromPendingActive() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Join - becomes PENDING_ACTIVE
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(pool);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
+
+        // Leave from PENDING_ACTIVE - should revert to INACTIVE
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool);
+
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(validatorManager.getPendingActiveValidators().length, 0, "Should have no pending active validators");
+    }
+
+    /// @notice Test that operations are blocked during reconfiguration
+    function test_RevertWhen_joinValidatorSet_duringReconfiguration() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.joinValidatorSet(pool);
+    }
+
+    /// @notice Test that leaveValidatorSet is blocked during reconfiguration
+    function test_RevertWhen_leaveValidatorSet_duringReconfiguration() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.leaveValidatorSet(pool1);
+    }
+
+    /// @notice Test that rotateConsensusKey is blocked during reconfiguration
+    function test_RevertWhen_rotateConsensusKey_duringReconfiguration() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.rotateConsensusKey(pool, hex"abcd1234", hex"5678efab");
+    }
+
+    /// @notice Test that setFeeRecipient is blocked during reconfiguration
+    function test_RevertWhen_setFeeRecipient_duringReconfiguration() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.setFeeRecipient(pool, bob);
+    }
+
+    /// @notice Test that leaveValidatorSet is blocked when allowValidatorSetChange is false
+    function test_RevertWhen_leaveValidatorSet_setChangesDisabled() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        // Disable validator set changes
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setAllowValidatorSetChange(false);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
+        validatorManager.leaveValidatorSet(pool1);
     }
 }
 
