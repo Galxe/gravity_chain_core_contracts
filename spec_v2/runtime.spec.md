@@ -43,8 +43,12 @@ nine contracts organized into three categories:
 
 ```
 src/runtime/
+├── ITimestamp.sol        # Read-only interface for Timestamp
+├── ITimestampWriter.sol  # Write interface for Timestamp (BLOCK only)
 ├── Timestamp.sol         # On-chain time oracle
+├── IStakingConfig.sol    # Read-only interface for StakingConfig
 ├── StakingConfig.sol     # Governance staking parameters
+├── IValidatorConfig.sol  # Read-only interface for ValidatorConfig
 ├── ValidatorConfig.sol   # Validator registry parameters
 ├── EpochConfig.sol       # Epoch interval configuration
 ├── VersionConfig.sol     # Protocol version (monotonic)
@@ -146,13 +150,37 @@ uint64 public microseconds;
 uint64 public constant MICRO_CONVERSION_FACTOR = 1_000_000;
 ```
 
-### Interface
+### Interfaces
+
+The Timestamp contract exposes two interfaces:
+
+**ITimestamp** — Read-only interface for downstream contracts:
+```solidity
+/// @title ITimestamp
+/// @notice Read-only interface for Timestamp contract
+interface ITimestamp {
+    function nowMicroseconds() external view returns (uint64);
+    function nowSeconds() external view returns (uint64);
+    function MICRO_CONVERSION_FACTOR() external view returns (uint64);
+}
+```
+
+**ITimestampWriter** — Write interface for BLOCK contract:
+```solidity
+/// @title ITimestampWriter
+/// @notice Write interface for Timestamp contract
+interface ITimestampWriter {
+    function updateGlobalTime(address proposer, uint64 timestamp) external;
+}
+```
+
+### Contract Interface
 
 ```solidity
 /// @title Timestamp
 /// @notice On-chain time oracle with microsecond precision
 /// @dev Updated by Block contract during block prologue. Supports NIL blocks.
-contract Timestamp {
+contract Timestamp is ITimestamp, ITimestampWriter {
     /// @notice Get current time in microseconds
     function nowMicroseconds() external view returns (uint64);
 
@@ -192,6 +220,19 @@ Configuration parameters for governance staking. Anyone can stake tokens to part
 |----------|---------|-------------|
 | `STAKE_CONFIG` | `0x0000000000000000000000000001625F2011` | Staking configuration |
 
+### Interface
+
+**IStakingConfig** — Read-only interface for downstream contracts (Staking, StakePool):
+```solidity
+/// @title IStakingConfig
+/// @notice Read-only interface for StakingConfig contract
+interface IStakingConfig {
+    function minimumStake() external view returns (uint256);
+    function lockupDurationMicros() external view returns (uint64);
+    function minimumProposalStake() external view returns (uint256);
+}
+```
+
 ### Parameters
 
 | Parameter | Type | Description | Constraints |
@@ -219,6 +260,24 @@ Configuration parameters for the validator registry. Controls validator bonding,
 | Constant | Address | Description |
 |----------|---------|-------------|
 | `VALIDATOR_CONFIG` | `0x0000000000000000000000000001625F2015` | Validator configuration |
+
+### Interface
+
+**IValidatorConfig** — Read-only interface for downstream contracts (ValidatorManagement):
+```solidity
+/// @title IValidatorConfig
+/// @notice Read-only interface for ValidatorConfig contract
+interface IValidatorConfig {
+    function minimumBond() external view returns (uint256);
+    function maximumBond() external view returns (uint256);
+    function unbondingDelayMicros() external view returns (uint64);
+    function allowValidatorSetChange() external view returns (bool);
+    function votingPowerIncreaseLimitPct() external view returns (uint64);
+    function maxValidatorSetSize() external view returns (uint256);
+    function MAX_VOTING_POWER_INCREASE_LIMIT() external view returns (uint64);
+    function MAX_VALIDATOR_SET_SIZE() external view returns (uint256);
+}
+```
 
 ### Parameters
 
@@ -575,6 +634,24 @@ contract DKG {
 ---
 
 ## Design Patterns
+
+### Interface Design Principle
+
+**Rule: Use canonical interfaces defined by the contract, not ad-hoc interfaces.**
+
+Each runtime contract that needs to be consumed by downstream contracts defines its own read-only interface:
+
+| Contract | Interface | Consumers |
+|----------|-----------|-----------|
+| `Timestamp.sol` | `ITimestamp` | StakePool, DKG, Governance |
+| `StakingConfig.sol` | `IStakingConfig` | Staking, StakePool |
+| `ValidatorConfig.sol` | `IValidatorConfig` | ValidatorManagement |
+
+This approach ensures:
+1. **Single source of truth**: Interface changes are made in one place
+2. **Type safety**: Downstream contracts import verified interfaces
+3. **No duplication**: Prevents ad-hoc interface definitions scattered across the codebase
+4. **Clear dependencies**: Import statements show exact dependencies
 
 ### Simple Config Pattern
 

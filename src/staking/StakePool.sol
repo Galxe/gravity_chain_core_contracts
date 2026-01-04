@@ -5,16 +5,8 @@ import { IStakePool } from "./IStakePool.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
-
-/// @notice Interface for Timestamp contract
-interface ITimestampPool {
-    function nowMicroseconds() external view returns (uint64);
-}
-
-/// @notice Interface for StakingConfig contract
-interface IStakingConfigPool {
-    function lockupDurationMicros() external view returns (uint64);
-}
+import { ITimestamp } from "../runtime/ITimestamp.sol";
+import { IStakingConfig } from "../runtime/IStakingConfig.sol";
 
 /// @title StakePool
 /// @author Gravity Team
@@ -83,8 +75,8 @@ contract StakePool is IStakePool, Ownable2Step {
         FACTORY = msg.sender;
 
         // Validate lockedUntil >= now + minLockup
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
         if (_lockedUntil < now_ + minLockup) {
             revert Errors.LockupDurationTooShort(_lockedUntil, now_ + minLockup);
         }
@@ -124,7 +116,7 @@ contract StakePool is IStakePool, Ownable2Step {
 
     /// @inheritdoc IStakePool
     function getVotingPower() external view returns (uint256) {
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         if (lockedUntil > now_) {
             return stake;
         }
@@ -138,7 +130,7 @@ contract StakePool is IStakePool, Ownable2Step {
 
     /// @inheritdoc IStakePool
     function getRemainingLockup() external view returns (uint64) {
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         if (lockedUntil > now_) {
             return lockedUntil - now_;
         }
@@ -147,7 +139,7 @@ contract StakePool is IStakePool, Ownable2Step {
 
     /// @inheritdoc IStakePool
     function isLocked() external view returns (bool) {
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         return lockedUntil > now_;
     }
 
@@ -195,8 +187,8 @@ contract StakePool is IStakePool, Ownable2Step {
         stake += msg.value;
 
         // Extend lockup if needed: lockedUntil = max(current, now + minLockupDuration)
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
         uint64 newLockedUntil = now_ + minLockup;
 
         if (newLockedUntil > lockedUntil) {
@@ -211,7 +203,7 @@ contract StakePool is IStakePool, Ownable2Step {
         uint256 amount,
         address recipient
     ) external onlyStaker {
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
         // Check lockup expired
         if (lockedUntil > now_) {
@@ -246,8 +238,8 @@ contract StakePool is IStakePool, Ownable2Step {
         }
 
         // Validate result >= now + minLockup
-        uint64 now_ = ITimestampPool(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 minLockup = IStakingConfigPool(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
         if (newLockedUntil < now_ + minLockup) {
             revert Errors.LockupDurationTooShort(newLockedUntil, now_ + minLockup);
         }

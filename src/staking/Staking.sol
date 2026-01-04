@@ -7,11 +7,7 @@ import { StakePool } from "./StakePool.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
-
-/// @notice Interface for StakingConfig contract
-interface IStakingConfigFactory {
-    function minimumStake() external view returns (uint256);
-}
+import { IStakingConfig } from "../runtime/IStakingConfig.sol";
 
 /// @title Staking
 /// @author Gravity Team
@@ -85,7 +81,7 @@ contract Staking is IStaking {
 
     /// @inheritdoc IStaking
     function getMinimumStake() external view returns (uint256) {
-        return IStakingConfigFactory(SystemAddresses.STAKE_CONFIG).minimumStake();
+        return IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake();
     }
 
     // ========================================================================
@@ -162,7 +158,7 @@ contract Staking is IStaking {
         uint64 lockedUntil
     ) external payable returns (address pool) {
         // Check minimum stake
-        uint256 minStake = IStakingConfigFactory(SystemAddresses.STAKE_CONFIG).minimumStake();
+        uint256 minStake = IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake();
         if (msg.value < minStake) {
             revert Errors.InsufficientStakeForPoolCreation(msg.value, minStake);
         }

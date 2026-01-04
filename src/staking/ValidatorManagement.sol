@@ -7,15 +7,7 @@ import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../fou
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
-
-/// @notice Interface for ValidatorConfig contract
-interface IValidatorConfigVM {
-    function minimumBond() external view returns (uint256);
-    function maximumBond() external view returns (uint256);
-    function allowValidatorSetChange() external view returns (bool);
-    function votingPowerIncreaseLimitPct() external view returns (uint64);
-    function maxValidatorSetSize() external view returns (uint256);
-}
+import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
 
 /// @title ValidatorManagement
 /// @author Gravity Team
@@ -126,7 +118,7 @@ contract ValidatorManagement is IValidatorManagement {
 
         // Verify voting power meets minimum bond requirement
         uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
-        uint256 minimumBond = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         if (votingPower < minimumBond) {
             revert Errors.InsufficientBond(minimumBond, votingPower);
         }
@@ -180,7 +172,7 @@ contract ValidatorManagement is IValidatorManagement {
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Verify validator set changes are allowed
-        if (!IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
             revert Errors.ValidatorSetChangesDisabled();
         }
 
@@ -191,13 +183,13 @@ contract ValidatorManagement is IValidatorManagement {
 
         // Verify voting power still meets minimum
         uint256 votingPower = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
-        uint256 minimumBond = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         if (votingPower < minimumBond) {
             revert Errors.InsufficientBond(minimumBond, votingPower);
         }
 
         // Verify max validator set size won't be exceeded
-        uint256 maxSize = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).maxValidatorSetSize();
+        uint256 maxSize = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maxValidatorSetSize();
         if (_activeValidators.length + _pendingActive.length >= maxSize) {
             revert Errors.MaxValidatorSetSizeReached(maxSize);
         }
@@ -316,7 +308,7 @@ contract ValidatorManagement is IValidatorManagement {
 
         // Calculate current total voting power (before adding new validators)
         uint256 currentTotal = _calculateTotalVotingPower();
-        uint64 limitPct = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
+        uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
         uint256 maxIncrease = currentTotal * limitPct / 100;
         uint256 addedPower = 0;
 
@@ -327,7 +319,7 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 keepPendingCount = 0;
 
         uint256 length = _pendingActive.length;
-        uint256 minimumBond = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
 
         for (uint256 i = 0; i < length; i++) {
             address pool = _pendingActive[i];
@@ -443,7 +435,7 @@ contract ValidatorManagement is IValidatorManagement {
         address stakePool
     ) internal view returns (uint256) {
         uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool);
-        uint256 maxBond = IValidatorConfigVM(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
+        uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
     }
 
