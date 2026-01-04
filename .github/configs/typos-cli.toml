@@ -1,7 +1,19 @@
 [files]
 extend-exclude = [
+    # Dependencies
     "**/lib/**",
-    "**/doc/**"
+    "**/node_modules/**",
+    # Generated/compiled artifacts
+    "**/out/**",
+    "**/cache/**",
+    "**/broadcast/**",
+    # Documentation and references
+    "**/doc/**",
+    "**/reference/**",
+    "**/spec/**",
+    # Lock files
+    "yarn.lock",
+    "package-lock.json"
 ]
 ignore-hidden = true
 ignore-files = true
