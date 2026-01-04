@@ -433,18 +433,18 @@ contract StakePool is IStakePool, Ownable2Step {
 
     /// @notice Calculate effective stake at a given time using O(log n) binary search
     /// @dev Effective stake = activeStake (if locked) + (pending that is still effective at time T)
-    ///      Active stake is "effective" when pool's lockedUntil > T
-    ///      A pending bucket is "effective" when its lockedUntil > T
-    ///      A pending bucket is "ineffective" when its lockedUntil <= T
+    ///      Active stake is "effective" when pool's lockedUntil >= T (locked through that time)
+    ///      A pending bucket is "effective" when its lockedUntil >= T
+    ///      A pending bucket is "ineffective" when its lockedUntil < T (unlocked before that time)
     /// @param atTime The timestamp to calculate at (microseconds)
     /// @return Effective stake amount
     function _getEffectiveStakeAt(
         uint64 atTime
     ) internal view returns (uint256) {
         // Active stake is only effective if the pool's lockup covers atTime
-        uint256 effectiveActive = (lockedUntil > atTime) ? activeStake : 0;
+        uint256 effectiveActive = (lockedUntil >= atTime) ? activeStake : 0;
 
-        // Find cumulative amount of pending that has become ineffective (lockedUntil <= atTime)
+        // Find cumulative amount of pending that has become ineffective (lockedUntil < atTime)
         uint256 ineffective = _getCumulativeAmountAtTime(atTime);
 
         // Subtract already claimed amount (those tokens are no longer in the pool)
@@ -455,8 +455,8 @@ contract StakePool is IStakePool, Ownable2Step {
         }
 
         // Effective stake for voting = effectiveActive + pending that is still "effective"
-        // Pending is "effective" if its lockedUntil > atTime (still locked at that time)
-        // Pending is "ineffective" if its lockedUntil <= atTime (will be unlocked at that time)
+        // Pending is "effective" if its lockedUntil >= atTime (locked through that time)
+        // Pending is "ineffective" if its lockedUntil < atTime (unlocked before that time)
         //
         // effectiveStake = effectiveActive + (totalPending - ineffectivePending)
 
@@ -474,9 +474,9 @@ contract StakePool is IStakePool, Ownable2Step {
     }
 
     /// @notice Binary search to find cumulative amount at time T
-    /// @dev Finds the last bucket where lockedUntil <= threshold and returns its cumulativeAmount
+    /// @dev Finds the last bucket where lockedUntil < threshold and returns its cumulativeAmount
     /// @param threshold The time threshold (microseconds)
-    /// @return Cumulative amount of pending that is ineffective (lockedUntil <= threshold)
+    /// @return Cumulative amount of pending that is ineffective (lockedUntil < threshold)
     function _getCumulativeAmountAtTime(
         uint64 threshold
     ) internal view returns (uint256) {
@@ -485,22 +485,22 @@ contract StakePool is IStakePool, Ownable2Step {
             return 0;
         }
 
-        // Binary search for the largest index where lockedUntil <= threshold
+        // Binary search for the largest index where lockedUntil < threshold
         // If no such index exists, return 0
 
-        // Check if all buckets are after threshold
-        // This ensures that left is always less or equal to threshold
-        if (_pendingBuckets[0].lockedUntil > threshold) {
+        // Check if all buckets are at or after threshold
+        // This ensures that left is always strictly less than threshold
+        if (_pendingBuckets[0].lockedUntil >= threshold) {
             return 0;
         }
 
-        // Check if all buckets are at or before threshold
-        // This ensure that the right is always greater than threshold
-        if (_pendingBuckets[len - 1].lockedUntil <= threshold) {
+        // Check if all buckets are strictly before threshold
+        // This ensures that the right is always at or after threshold
+        if (_pendingBuckets[len - 1].lockedUntil < threshold) {
             return _pendingBuckets[len - 1].cumulativeAmount;
         }
 
-        // Binary search: find largest i where lockedUntil[i] <= threshold
+        // Binary search: find largest i where lockedUntil[i] < threshold
         // [left, right), find the largest left where left + 1 == right
         uint256 left = 0;
         uint256 right = len - 1;
@@ -508,14 +508,14 @@ contract StakePool is IStakePool, Ownable2Step {
         while (left + 1 < right) {
             uint256 mid = (left + right) >> 1;
 
-            if (_pendingBuckets[mid].lockedUntil <= threshold) {
+            if (_pendingBuckets[mid].lockedUntil < threshold) {
                 left = mid;
             } else {
                 right = mid;
             }
         }
 
-        // left now points to the largest index where lockedUntil <= threshold
+        // left now points to the largest index where lockedUntil < threshold
         return _pendingBuckets[left].cumulativeAmount;
     }
 
@@ -532,15 +532,14 @@ contract StakePool is IStakePool, Ownable2Step {
 
         // Calculate the threshold: lockedUntil must be such that now > lockedUntil + unbondingDelay
         // i.e., lockedUntil < now - unbondingDelay (strict inequality)
-        // Since binary search finds lockedUntil <= threshold, we use threshold = now - unbondingDelay - 1
-        // to enforce the strict inequality.
+        // Binary search finds lockedUntil < threshold, so we use threshold = now - unbondingDelay directly.
         // Early return: if now <= unbondingDelay, nothing can be claimable yet (return 0, don't revert)
         if (now_ <= unbondingDelay) {
             return 0;
         }
-        uint64 threshold = now_ - unbondingDelay - 1;
+        uint64 threshold = now_ - unbondingDelay;
 
-        // Find cumulative amount where lockedUntil <= threshold (i.e., lockedUntil < now - unbondingDelay)
+        // Find cumulative amount where lockedUntil < threshold (i.e., lockedUntil < now - unbondingDelay)
         uint256 claimableCumulative = _getCumulativeAmountAtTime(threshold);
 
         // Subtract already claimed

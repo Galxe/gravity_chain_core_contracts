@@ -40,6 +40,15 @@ This design is inspired by Aptos's `aptos_governance.move` module but adapted fo
 5. **Partial Voting** — Can vote with a portion of available voting power
 6. **Early Resolution** — Can resolve before voting ends if sufficient votes are cast
 
+### Lock Semantics for Voting
+
+Voting power is derived from locked stake. The `lockedUntil` timestamp is **inclusive**:
+
+- A pool has voting power at time T when `lockedUntil >= T` (locked through that time)
+- A pool has zero voting power at time T when `lockedUntil < T` (already unlocked)
+
+Since voting power is calculated at `expirationTime`, a pool's lockup must extend through the proposal's expiration to have voting power.
+
 ### What This Layer Does
 
 - Creates and manages governance proposals
@@ -358,7 +367,9 @@ Create a new governance proposal.
 **Notes:**
 
 - Voting power is calculated at `expirationTime`, not current time
-- This inherently checks that the pool's lockup extends past voting period (if lockup expires before expiration, voting power will be 0)
+- This inherently checks that the pool's lockup extends through the voting period
+- If `lockedUntil < expirationTime`, voting power will be 0 (lockup expires before voting ends)
+- If `lockedUntil >= expirationTime`, voting power equals the pool's effective stake
 
 **Errors:**
 
@@ -388,8 +399,9 @@ Cast a vote on a proposal using a stake pool's voting power.
 **Notes:**
 
 - Voting power is calculated at the proposal's `expirationTime`, not current time
-- This inherently checks that the pool's lockup extends past voting period
-- If lockup expires before proposal expiration, voting power will be 0
+- This inherently checks that the pool's lockup extends through the voting period
+- If `lockedUntil < expirationTime`, voting power will be 0 (lockup expires before voting ends)
+- If `lockedUntil >= expirationTime`, voting power equals the pool's effective stake
 
 **Errors:**
 

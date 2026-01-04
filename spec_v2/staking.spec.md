@@ -41,6 +41,15 @@ This design is inspired by Aptos's `stake.move` module but adapted for EVM with 
 5. **Two-Role Separation** — Owner (admin) / Staker (funds) / Operator / Voter
 6. **Composable Staking** — Staker role can be a smart contract for DPOS, LSD, etc.
 
+### Lock Semantics
+
+The `lockedUntil` timestamp is **inclusive** — at time T, if `lockedUntil == T`, the token is still locked:
+
+- **Locked at time T**: `lockedUntil >= T` (token has voting power)
+- **Unlocked at time T**: `lockedUntil < T` (token has no voting power)
+
+This ensures consistency across all time-based checks and avoids off-by-one errors.
+
 ### What This Layer Does
 
 - Creates and manages individual StakePool contracts
@@ -275,10 +284,10 @@ function getVotingPower(uint64 atTime) returns (uint256) {
 }
 
 function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) {
-    // Active stake is only effective if pool's lockup covers atTime
-    uint256 effectiveActive = (lockedUntil > atTime) ? activeStake : 0;
+    // Active stake is only effective if pool's lockup covers atTime (lockedUntil is inclusive)
+    uint256 effectiveActive = (lockedUntil >= atTime) ? activeStake : 0;
     
-    // Find cumulative amount of pending that has become ineffective (lockedUntil <= atTime)
+    // Find cumulative amount of pending that has become ineffective (lockedUntil < atTime)
     uint256 ineffective = _getCumulativeAmountAtTime(atTime);  // O(log n) binary search
     
     // Subtract already claimed amount
@@ -303,9 +312,9 @@ function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) {
 
 - **Time-parameterized**: Can query voting power at any time T
 - **O(log n) complexity**: Binary search on sorted buckets with prefix sums
-- **Active stake effectiveness**: Active stake is only counted when `lockedUntil > T`
-- **Pending effectiveness**: Pending stake is "effective" while its bucket's `lockedUntil > T`
-- **Zero voting power when unlocked**: If pool's lockup has expired, voting power is 0
+- **Active stake effectiveness**: Active stake is only counted when `lockedUntil >= T` (locked through that time)
+- **Pending effectiveness**: Pending stake is "effective" while its bucket's `lockedUntil >= T`
+- **Zero voting power when unlocked**: If pool's lockup has expired (`lockedUntil < T`), voting power is 0
 
 ### Claiming Logic
 
@@ -320,7 +329,7 @@ function _getClaimableAmount() internal view returns (uint256) {
     if (now_ <= unbondingDelay) return 0;
     uint64 threshold = now_ - unbondingDelay;
     
-    // Binary search for cumulative amount where lockedUntil <= threshold
+    // Binary search for cumulative amount where lockedUntil < threshold
     uint256 claimableCumulative = _getCumulativeAmountAtTime(threshold);
     
     if (claimableCumulative <= claimedAmount) return 0;
@@ -341,7 +350,7 @@ function _getClaimableAmount() internal view returns (uint256) {
 - Reduces `activeStake` by `amount`
 - Creates or merges into pending bucket with current `lockedUntil`
 - For validators (ACTIVE or PENDING_INACTIVE): verifies `activeStake - amount >= minimumBond`
-- Pending stake remains "effective" for voting until its lockedUntil passes
+- Pending stake remains "effective" for voting while its `lockedUntil >= now`
 
 **On `withdrawAvailable(recipient)` (staker only):**
 
@@ -660,7 +669,7 @@ Unstake tokens (move from active stake to pending bucket).
 **Notes:**
 - Active validators cannot reduce `activeStake` below `minimumBond`
 - Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond
-- The pending amount is still "effective" for voting until its lockedUntil passes
+- The pending amount is still "effective" for voting while its `lockedUntil >= now`
 - Tokens remain in contract until `withdrawAvailable()` is called after unbonding
 
 #### `withdrawAvailable(address recipient)` — Staker Only
@@ -782,13 +791,13 @@ Returns voting power at a specific time T. Accounts for pool lockup and pending 
 **Behavior:**
 
 1. Return effective stake at time T
-2. Active stake is only counted if pool's `lockedUntil > T`
-3. Pending stake is counted for buckets where `bucket.lockedUntil > T`
+2. Active stake is only counted if pool's `lockedUntil >= T` (locked through that time)
+3. Pending stake is counted for buckets where `bucket.lockedUntil >= T`
 4. Uses O(log n) binary search on prefix-sum buckets
 
 **Notes:**
-- If pool's lockup has expired (`lockedUntil <= T`), active stake contributes 0 to voting power
-- Pending buckets are "effective" while their individual `lockedUntil > T`
+- If pool's lockup has expired (`lockedUntil < T`), active stake contributes 0 to voting power
+- Pending buckets are "effective" while their individual `lockedUntil >= T`
 - Use `getVotingPowerNow()` for convenience to query current voting power
 - This behavior enables governance to use voting power at proposal expiration time, inherently checking lockup
 
@@ -849,7 +858,7 @@ Lockup parameters are configured in `StakingConfig`:
 - **Waiting Period**: Tokens wait in pending state until `now > lockedUntil + unbondingDelay`
 - **Claim Phase**: `withdrawAvailable(recipient)` transfers all claimable tokens
 - For active validators: can unstake but must maintain `activeStake >= minimumBond`
-- Pending buckets are "effective" (count toward voting power) while `lockedUntil > now`
+- Pending buckets are "effective" (count toward voting power) while `lockedUntil >= now`
 - Staker can re-lock by calling `renewLockUntil()` (does NOT affect existing pending buckets)
 - **For active validators**: Lockups are auto-renewed at each epoch boundary via `systemRenewLockup()`
 - **For non-validators**: No automatic lockup renewal — staker must explicitly extend
@@ -1034,8 +1043,8 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
    - Voting power calculation handles partial effectiveness
 
 4. **Lockup Model**
-   - Voting power = 0 when pool's lockup has expired (`lockedUntil <= now`)
-   - Voting power = activeStake + effective pending when locked
+   - Voting power = 0 when pool's lockup has expired (`lockedUntil < now`)
+   - Voting power = activeStake + effective pending when locked (`lockedUntil >= now`)
    - Effective stake decreases as pending buckets expire
    - Lockup extended on addStake
    - Lockup extended on renewLockUntil
@@ -1056,7 +1065,7 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
 3. Cumulative amounts are always increasing (prefix sums)
 4. `claimedAmount` never exceeds total cumulative pending
 5. Effective stake <= activeStake + totalPending
-6. Voting power = 0 when `lockedUntil <= now`
+6. Voting power = 0 when `lockedUntil < now`
 7. Voting power = activeStake when locked and no pending
 
 ---
@@ -1088,10 +1097,15 @@ uint256 bondAmount = IStakePool(validatorPool).getVotingPower(now_);
 Updated voting power calculation to account for pool's lockup expiration:
 
 **Voting Power Changes**
-- `activeStake` is only counted when `lockedUntil > atTime`
-- If pool's lockup has expired, voting power at that time is 0
+- `activeStake` is only counted when `lockedUntil >= atTime` (lockedUntil is inclusive)
+- If pool's lockup has expired (`lockedUntil < atTime`), voting power at that time is 0
 - Enables governance to use voting power at proposal expiration time, inherently checking lockup
 - Removes need for separate lockup validation in governance contracts
+
+**Lock Semantics Clarification**
+- `lockedUntil` is inclusive: at time T, if `lockedUntil == T`, the token IS locked
+- Locked at time T: `lockedUntil >= T` (has voting power)
+- Unlocked at time T: `lockedUntil < T` (no voting power)
 
 ### 2026-01-04: Bucket-Based Withdrawal Model
 
