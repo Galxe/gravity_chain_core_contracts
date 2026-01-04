@@ -146,10 +146,8 @@ contract ValidatorManagementTest is Test {
 
     /// @notice Process an epoch transition
     function _processEpoch() internal {
-        // Get current epoch before pranking (view call doesn't need prank)
-        uint64 newEpoch = validatorManager.getCurrentEpoch() + 1;
         vm.prank(SystemAddresses.RECONFIGURATION);
-        validatorManager.onNewEpoch(newEpoch);
+        validatorManager.onNewEpoch();
     }
 
     // ========================================================================
@@ -456,13 +454,13 @@ contract ValidatorManagementTest is Test {
         vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(false, false, false, true);
         emit IValidatorManagement.EpochProcessed(1, 1, MIN_BOND);
-        validatorManager.onNewEpoch(1);
+        validatorManager.onNewEpoch();
     }
 
     function test_RevertWhen_onNewEpoch_notReconfiguration() public {
         vm.prank(alice);
         vm.expectRevert();
-        validatorManager.onNewEpoch(1);
+        validatorManager.onNewEpoch();
     }
 
     // ========================================================================
@@ -735,10 +733,10 @@ contract ValidatorManagementTest is Test {
 
         _processEpoch();
 
-        // INACTIVE - index cleared
+        // INACTIVE - index cleared (uses type(uint64).max as sentinel)
         ValidatorRecord memory inactiveRecord = validatorManager.getValidator(pool);
         assertEq(uint8(inactiveRecord.status), uint8(ValidatorStatus.INACTIVE));
-        assertEq(inactiveRecord.validatorIndex, 0, "Index should be cleared to 0");
+        assertEq(inactiveRecord.validatorIndex, type(uint64).max, "Index should be cleared to max uint64");
     }
 
     // ========================================================================
@@ -1018,6 +1016,294 @@ contract ValidatorManagementTest is Test {
         // getValidatorStatus should revert with ValidatorNotFound
         vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, pool));
         validatorManager.getValidatorStatus(pool);
+    }
+
+    // ========================================================================
+    // DKG SUPPORT FUNCTION TESTS
+    // ========================================================================
+
+    /// @notice Test getCurValidatorConsensusInfos returns active validators only when no pending_inactive
+    function test_getCurValidatorConsensusInfos_activeOnly() public {
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, 20 ether, "bob");
+        _processEpoch();
+
+        ValidatorConsensusInfo[] memory cur = validatorManager.getCurValidatorConsensusInfos();
+
+        assertEq(cur.length, 2, "Should return 2 current validators");
+        // Verify both validators are present
+        bool foundAlice = false;
+        bool foundBob = false;
+        for (uint256 i = 0; i < cur.length; i++) {
+            if (cur[i].votingPower == MIN_BOND) foundAlice = true;
+            if (cur[i].votingPower == 20 ether) foundBob = true;
+        }
+        assertTrue(foundAlice && foundBob, "Should include both validators");
+    }
+
+    /// @notice Test getCurValidatorConsensusInfos includes pending_inactive validators
+    /// @dev Pending_inactive validators remain in _activeValidators until epoch boundary,
+    ///      so they are automatically included in getCurValidatorConsensusInfos
+    function test_getCurValidatorConsensusInfos_includesPendingInactive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 30 ether, "charlie");
+        _processEpoch();
+
+        // Alice requests to leave - becomes PENDING_INACTIVE
+        // She's still in _activeValidators until the next epoch boundary
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+
+        // Verify alice is now PENDING_INACTIVE
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE), "Alice pending"
+        );
+
+        ValidatorConsensusInfo[] memory cur = validatorManager.getCurValidatorConsensusInfos();
+
+        // Should still include alice (pending_inactive) for DKG dealers
+        // _activeValidators contains all 3 until epoch boundary processes them
+        assertEq(cur.length, 3, "Should include all 3 validators including pending_inactive");
+
+        // Verify alice is in the results
+        bool aliceFound = false;
+        for (uint256 i = 0; i < cur.length; i++) {
+            if (cur[i].validator == pool1) {
+                aliceFound = true;
+                break;
+            }
+        }
+        assertTrue(aliceFound, "Alice (pending_inactive) should be in cur validators");
+    }
+
+    /// @notice Test getNextValidatorConsensusInfos excludes pending_inactive
+    function test_getNextValidatorConsensusInfos_excludesPendingInactive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 30 ether, "charlie");
+        _processEpoch();
+
+        // Alice requests to leave - becomes PENDING_INACTIVE
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+
+        // Should exclude alice (pending_inactive), only bob and charlie
+        assertEq(next.length, 2, "Should return 2 validators excluding pending_inactive");
+
+        // Verify indices are fresh (0, 1)
+        for (uint256 i = 0; i < next.length; i++) {
+            assertTrue(next[i].validator == pool2 || next[i].validator == pool3, "Should be bob or charlie");
+        }
+    }
+
+    /// @notice Test getNextValidatorConsensusInfos includes pending_active that meet min stake
+    function test_getNextValidatorConsensusInfos_includesPendingActive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        // Bob joins - becomes PENDING_ACTIVE
+        address pool2 = _createAndRegisterValidator(bob, 20 ether, "bob");
+        vm.prank(bob);
+        validatorManager.joinValidatorSet(pool2);
+
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+
+        // Should include both alice (active) and bob (pending_active)
+        assertEq(next.length, 2, "Should include active and pending_active validators");
+    }
+
+    /// @notice Test getNextValidatorConsensusInfos assigns fresh indices (0, 1, 2, ...)
+    function test_getNextValidatorConsensusInfos_freshIndices() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 30 ether, "charlie");
+        _processEpoch();
+
+        // Validator bob leaves (becomes pending_inactive)
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        // New validator david joins (becomes pending_active)
+        address pool4 = _createAndRegisterValidator(david, 40 ether, "david");
+        vm.prank(david);
+        validatorManager.joinValidatorSet(pool4);
+
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+
+        // Should have alice, charlie, david (3 validators)
+        // Indices should be 0, 1, 2 (position in array)
+        assertEq(next.length, 3, "Should have 3 validators in next set");
+
+        // Verify no duplicates and all expected validators present
+        address[3] memory expected = [pool1, pool3, pool4]; // alice, charlie, david
+        for (uint256 i = 0; i < expected.length; i++) {
+            bool found = false;
+            for (uint256 j = 0; j < next.length; j++) {
+                if (next[j].validator == expected[i]) {
+                    found = true;
+                    break;
+                }
+            }
+            assertTrue(found, "Expected validator should be in next set");
+        }
+    }
+
+    /// @notice Test getCurValidatorConsensusInfos returns empty when no validators
+    function test_getCurValidatorConsensusInfos_emptyWhenNoValidators() public view {
+        ValidatorConsensusInfo[] memory cur = validatorManager.getCurValidatorConsensusInfos();
+        assertEq(cur.length, 0, "Should return empty array when no validators");
+    }
+
+    /// @notice Test getNextValidatorConsensusInfos returns empty when no projected validators
+    function test_getNextValidatorConsensusInfos_emptyWhenNoProjectedValidators() public view {
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+        assertEq(next.length, 0, "Should return empty array when no projected validators");
+    }
+
+    /// @notice Test that cur and next can differ when validators are joining/leaving
+    /// @dev Cur returns _activeValidators (which includes pending_inactive until epoch boundary)
+    ///      Next returns (active - pending_inactive) + pending_active
+    function test_curAndNextValidatorsDiffer() public {
+        // Start with 3 validators
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 30 ether, "charlie");
+        _processEpoch();
+
+        // Bob leaves (pending_inactive) - still in _activeValidators until epoch boundary
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        // David joins (pending_active)
+        address pool4 = _createAndRegisterValidator(david, 40 ether, "david");
+        vm.prank(david);
+        validatorManager.joinValidatorSet(pool4);
+
+        ValidatorConsensusInfo[] memory cur = validatorManager.getCurValidatorConsensusInfos();
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+
+        // Cur: alice, bob (pending_inactive still in _activeValidators), charlie = 3
+        assertEq(cur.length, 3, "Cur should have 3 validators (pending_inactive still in _activeValidators)");
+
+        // Next: alice, charlie, david (pending_active) = 3 (bob excluded)
+        assertEq(next.length, 3, "Next should have 3 validators");
+
+        // Verify bob is in cur but not in next
+        bool bobInCur = false;
+        bool bobInNext = false;
+        for (uint256 i = 0; i < cur.length; i++) {
+            if (cur[i].validator == pool2) bobInCur = true;
+        }
+        for (uint256 i = 0; i < next.length; i++) {
+            if (next[i].validator == pool2) bobInNext = true;
+        }
+        assertTrue(bobInCur, "Bob should be in cur (pending_inactive still in _activeValidators)");
+        assertFalse(bobInNext, "Bob should NOT be in next (leaving)");
+
+        // Verify david is in next but not in cur
+        bool davidInCur = false;
+        bool davidInNext = false;
+        for (uint256 i = 0; i < cur.length; i++) {
+            if (cur[i].validator == pool4) davidInCur = true;
+        }
+        for (uint256 i = 0; i < next.length; i++) {
+            if (next[i].validator == pool4) davidInNext = true;
+        }
+        assertFalse(davidInCur, "David should NOT be in cur (not active yet)");
+        assertTrue(davidInNext, "David should be in next (pending_active)");
+    }
+
+    // ========================================================================
+    // STAKING FREEZE DURING RECONFIGURATION TESTS
+    // ========================================================================
+
+    /// @notice Test that addStake is blocked during reconfiguration
+    function test_RevertWhen_addStake_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        IStakePool(pool).addStake{ value: 1 ether }();
+    }
+
+    /// @notice Test that unstake is blocked during reconfiguration
+    function test_RevertWhen_unstake_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND * 2);
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        IStakePool(pool).unstake(1 ether);
+    }
+
+    /// @notice Test that withdrawAvailable is blocked during reconfiguration
+    function test_RevertWhen_withdrawAvailable_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        IStakePool(pool).withdrawAvailable(alice);
+    }
+
+    /// @notice Test that unstakeAndWithdraw is blocked during reconfiguration
+    function test_RevertWhen_unstakeAndWithdraw_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND * 2);
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        IStakePool(pool).unstakeAndWithdraw(1 ether, alice);
+    }
+
+    /// @notice Test that renewLockUntil is blocked during reconfiguration
+    function test_RevertWhen_renewLockUntil_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Start reconfiguration
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        IStakePool(pool).renewLockUntil(LOCKUP_DURATION);
+    }
+
+    /// @notice Test that staking operations work normally when reconfiguration is not in progress
+    function test_stakingOperations_whenNotReconfiguring() public {
+        address pool = _createStakePool(alice, MIN_BOND * 2);
+
+        // Ensure reconfiguration is not in progress
+        mockReconfiguration.setTransitionInProgress(false);
+
+        // All operations should work
+        vm.startPrank(alice);
+
+        // addStake
+        IStakePool(pool).addStake{ value: 1 ether }();
+        assertEq(IStakePool(pool).getActiveStake(), MIN_BOND * 2 + 1 ether);
+
+        // unstake
+        IStakePool(pool).unstake(1 ether);
+        assertEq(IStakePool(pool).getTotalPending(), 1 ether);
+
+        // renewLockUntil
+        uint64 oldLockup = IStakePool(pool).getLockedUntil();
+        IStakePool(pool).renewLockUntil(LOCKUP_DURATION);
+        assertGt(IStakePool(pool).getLockedUntil(), oldLockup);
+
+        vm.stopPrank();
     }
 }
 

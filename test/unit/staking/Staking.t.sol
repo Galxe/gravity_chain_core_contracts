@@ -29,6 +29,13 @@ contract MockValidatorManagement {
     }
 }
 
+/// @notice Mock Reconfiguration for testing - always returns not in progress
+contract MockReconfiguration {
+    function isTransitionInProgress() external pure returns (bool) {
+        return false;
+    }
+}
+
 /// @title StakingTest
 /// @notice Unit tests for Staking factory and StakePool contracts with O(log n) bucket-based withdrawals
 contract StakingTest is Test {
@@ -61,6 +68,9 @@ contract StakingTest is Test {
 
         // Deploy mock ValidatorManagement - returns false for isValidator() so pools can withdraw
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
+
+        // Deploy mock Reconfiguration - returns false for isTransitionInProgress() so staking operations work
+        vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration()).code);
 
         // Initialize StakingConfig with unbonding delay
         vm.prank(SystemAddresses.GENESIS);

@@ -29,11 +29,6 @@ interface IReconfiguration {
     /// @param transitionTime Timestamp when transition completed (microseconds)
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
 
-    /// @notice Emitted when epoch duration is updated
-    /// @param oldDuration Previous duration (microseconds)
-    /// @param newDuration New duration (microseconds)
-    event EpochDurationUpdated(uint64 oldDuration, uint64 newDuration);
-
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -58,17 +53,6 @@ interface IReconfiguration {
     ) external;
 
     // ========================================================================
-    // GOVERNANCE
-    // ========================================================================
-
-    /// @notice Update epoch interval
-    /// @dev Only callable by GOVERNANCE
-    /// @param newIntervalMicros New epoch interval in microseconds
-    function setEpochIntervalMicros(
-        uint64 newIntervalMicros
-    ) external;
-
-    // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
 
@@ -79,10 +63,6 @@ interface IReconfiguration {
     /// @notice Get timestamp of last reconfiguration (microseconds)
     /// @return Last reconfiguration time
     function lastReconfigurationTime() external view returns (uint64);
-
-    /// @notice Get epoch interval in microseconds
-    /// @return Epoch interval
-    function epochIntervalMicros() external view returns (uint64);
 
     /// @notice Check if epoch transition can be triggered (time-based)
     /// @return True if current time >= next epoch boundary

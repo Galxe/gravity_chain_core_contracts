@@ -314,9 +314,7 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function onNewEpoch(
-        uint64 newEpoch
-    ) external {
+    function onNewEpoch() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         // 1. Process PENDING_INACTIVE → INACTIVE (clear indices, remove from active)
@@ -337,7 +335,8 @@ contract ValidatorManagement is IValidatorManagement {
         // 6. Reassign indices for all active validators
         _reassignValidatorIndices();
 
-        // 7. Update epoch state (epoch provided by Reconfiguration contract)
+        // 7. Increment epoch (Aptos pattern: called before Reconfiguration increments its epoch)
+        uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         totalVotingPower = _calculateTotalVotingPower();
 
@@ -353,7 +352,7 @@ contract ValidatorManagement is IValidatorManagement {
 
             // Update status
             validator.status = ValidatorStatus.INACTIVE;
-            validator.validatorIndex = 0; // Clear index
+            validator.validatorIndex = type(uint64).max; // Clear index
 
             // Remove from active validators array
             _removeFromActiveValidators(pool);
@@ -557,7 +556,8 @@ contract ValidatorManagement is IValidatorManagement {
                 validator: pool,
                 consensusPubkey: validator.consensusPubkey,
                 consensusPop: validator.consensusPop,
-                votingPower: validator.bond
+                votingPower: validator.bond,
+                validatorIndex: validator.validatorIndex
             });
         }
 
@@ -579,7 +579,8 @@ contract ValidatorManagement is IValidatorManagement {
             validator: pool,
             consensusPubkey: validator.consensusPubkey,
             consensusPop: validator.consensusPop,
-            votingPower: validator.bond
+            votingPower: validator.bond,
+            validatorIndex: validator.validatorIndex
         });
     }
 
@@ -627,6 +628,137 @@ contract ValidatorManagement is IValidatorManagement {
     /// @inheritdoc IValidatorManagement
     function getPendingInactiveValidators() external view returns (address[] memory) {
         return _pendingInactive;
+    }
+
+    // ========================================================================
+    // Reconfiguration Support Functions
+    // ========================================================================
+
+    /// @inheritdoc IValidatorManagement
+    /// @dev Returns active + pending_inactive validators, ordered by their current validator index.
+    ///      The position in the returned array matches the validator's stored validatorIndex.
+    ///      This is used for DKG dealers - validators who can participate in running DKG.
+    ///      Note: _activeValidators already contains pending_inactive validators until epoch boundary.
+    function getCurValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
+        // _activeValidators already contains all current epoch validators
+        // including those with PENDING_INACTIVE status (they stay in active set until epoch boundary)
+        uint256 activeLen = _activeValidators.length;
+
+        if (activeLen == 0) {
+            return new ValidatorConsensusInfo[](0);
+        }
+
+        // Pre-allocate result array sized for all current validators
+        ValidatorConsensusInfo[] memory result = new ValidatorConsensusInfo[](activeLen);
+
+        // Active validators are already ordered by index in _activeValidators
+        // Their validatorIndex matches their position in the array
+        for (uint256 i = 0; i < activeLen; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+
+            result[i] = ValidatorConsensusInfo({
+                validator: pool,
+                consensusPubkey: validator.consensusPubkey,
+                consensusPop: validator.consensusPop,
+                votingPower: validator.bond,
+                validatorIndex: uint64(i)
+            });
+        }
+
+        return result;
+    }
+
+    /// @inheritdoc IValidatorManagement
+    /// @dev Computes the projected next epoch validator set for DKG targets.
+    ///      Returns (active - pending_inactive) + pending_active (subject to min stake).
+    ///      IMPORTANT: Indices are FRESHLY ASSIGNED (0, 1, 2, ...) based on position in the
+    ///      returned array. This matches Aptos's next_validator_consensus_infos() behavior.
+    function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+
+        // Step 1: Count validators that will be in next epoch
+        // Active validators that are NOT in pending_inactive
+        uint256 activeLen = _activeValidators.length;
+        uint256 pendingActiveLen = _pendingActive.length;
+
+        // Count active validators NOT leaving
+        uint256 stayingActiveCount = 0;
+        for (uint256 i = 0; i < activeLen; i++) {
+            address pool = _activeValidators[i];
+            if (!_isInPendingInactive(pool)) {
+                stayingActiveCount++;
+            }
+        }
+
+        // Count pending_active that meet minimum bond
+        uint256 joiningCount = 0;
+        for (uint256 i = 0; i < pendingActiveLen; i++) {
+            address pool = _pendingActive[i];
+            uint256 power = _getValidatorVotingPower(pool);
+            if (power >= minimumBond) {
+                joiningCount++;
+            }
+        }
+
+        uint256 totalLen = stayingActiveCount + joiningCount;
+        if (totalLen == 0) {
+            return new ValidatorConsensusInfo[](0);
+        }
+
+        // Step 2: Build result array with fresh indices
+        ValidatorConsensusInfo[] memory result = new ValidatorConsensusInfo[](totalLen);
+        uint256 idx = 0;
+
+        // Add staying active validators (excluding pending_inactive)
+        for (uint256 i = 0; i < activeLen; i++) {
+            address pool = _activeValidators[i];
+            if (!_isInPendingInactive(pool)) {
+                ValidatorRecord storage validator = _validators[pool];
+                result[idx] = ValidatorConsensusInfo({
+                    validator: pool,
+                    consensusPubkey: validator.consensusPubkey,
+                    consensusPop: validator.consensusPop,
+                    votingPower: _getValidatorVotingPower(pool),
+                    validatorIndex: uint64(idx)
+                });
+                idx++;
+            }
+        }
+
+        // Add pending_active validators that meet minimum bond
+        for (uint256 i = 0; i < pendingActiveLen; i++) {
+            address pool = _pendingActive[i];
+            uint256 power = _getValidatorVotingPower(pool);
+            if (power >= minimumBond) {
+                ValidatorRecord storage validator = _validators[pool];
+                result[idx] = ValidatorConsensusInfo({
+                    validator: pool,
+                    consensusPubkey: validator.consensusPubkey,
+                    consensusPop: validator.consensusPop,
+                    votingPower: power,
+                    validatorIndex: uint64(idx)
+                });
+                idx++;
+            }
+        }
+
+        return result;
+    }
+
+    /// @notice Check if a pool is in the pending_inactive array
+    /// @param pool The pool address to check
+    /// @return True if the pool is pending deactivation
+    function _isInPendingInactive(
+        address pool
+    ) internal view returns (bool) {
+        uint256 length = _pendingInactive.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_pendingInactive[i] == pool) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 

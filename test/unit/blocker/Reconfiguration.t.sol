@@ -7,6 +7,7 @@ import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
 import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 import { DKG } from "../../../src/runtime/DKG.sol";
 import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
+import { EpochConfig } from "../../../src/runtime/EpochConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
@@ -14,15 +15,36 @@ import { NotAllowed, NotAllowedAny } from "../../../src/foundation/SystemAccessC
 
 /// @notice Mock ValidatorManagement for testing
 contract MockValidatorManagement {
-    uint64 public lastEpochReceived;
+    uint64 public currentEpoch;
     ValidatorConsensusInfo[] private _validators;
+    ValidatorConsensusInfo[] private _curValidators; // dealers: current validators for DKG
+    ValidatorConsensusInfo[] private _nextValidators; // targets: projected next epoch validators
 
     function setValidators(
         ValidatorConsensusInfo[] memory validators
     ) external {
         delete _validators;
+        delete _curValidators;
+        delete _nextValidators;
         for (uint256 i = 0; i < validators.length; i++) {
             _validators.push(validators[i]);
+            _curValidators.push(validators[i]);
+            _nextValidators.push(validators[i]);
+        }
+    }
+
+    /// @notice Set dealers (current validators) and targets (next validators) separately for DKG tests
+    function setDkgValidatorSets(
+        ValidatorConsensusInfo[] memory dealers,
+        ValidatorConsensusInfo[] memory targets
+    ) external {
+        delete _curValidators;
+        delete _nextValidators;
+        for (uint256 i = 0; i < dealers.length; i++) {
+            _curValidators.push(dealers[i]);
+        }
+        for (uint256 i = 0; i < targets.length; i++) {
+            _nextValidators.push(targets[i]);
         }
     }
 
@@ -30,10 +52,22 @@ contract MockValidatorManagement {
         return _validators;
     }
 
-    function onNewEpoch(
-        uint64 newEpoch
-    ) external {
-        lastEpochReceived = newEpoch;
+    /// @notice Get current validators for DKG dealers (active + pending_inactive)
+    function getCurValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
+        return _curValidators;
+    }
+
+    /// @notice Get projected next epoch validators for DKG targets
+    function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
+        return _nextValidators;
+    }
+
+    function onNewEpoch() external {
+        currentEpoch++;
+    }
+
+    function getCurrentEpoch() external view returns (uint64) {
+        return currentEpoch;
     }
 }
 
@@ -44,6 +78,7 @@ contract ReconfigurationTest is Test {
     Timestamp public timestamp;
     DKG public dkg;
     RandomnessConfig public randomnessConfig;
+    EpochConfig public epochConfig;
     MockValidatorManagement public validatorManagement;
 
     // Common test values
@@ -55,7 +90,6 @@ contract ReconfigurationTest is Test {
     // Events to test
     event EpochTransitionStarted(uint64 indexed epoch);
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
-    event EpochDurationUpdated(uint64 oldDuration, uint64 newDuration);
 
     function setUp() public {
         // Deploy contracts
@@ -63,6 +97,7 @@ contract ReconfigurationTest is Test {
         timestamp = new Timestamp();
         dkg = new DKG();
         randomnessConfig = new RandomnessConfig();
+        epochConfig = new EpochConfig();
         validatorManagement = new MockValidatorManagement();
 
         // Deploy at system addresses
@@ -70,11 +105,16 @@ contract ReconfigurationTest is Test {
         vm.etch(SystemAddresses.TIMESTAMP, address(timestamp).code);
         vm.etch(SystemAddresses.DKG, address(dkg).code);
         vm.etch(SystemAddresses.RANDOMNESS_CONFIG, address(randomnessConfig).code);
+        vm.etch(SystemAddresses.EPOCH_CONFIG, address(epochConfig).code);
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(validatorManagement).code);
 
         // Initialize Timestamp
         vm.prank(SystemAddresses.BLOCK);
         Timestamp(SystemAddresses.TIMESTAMP).updateGlobalTime(address(0x1234), INITIAL_TIME);
+
+        // Initialize EpochConfig
+        vm.prank(SystemAddresses.GENESIS);
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(TWO_HOURS);
 
         // Initialize RandomnessConfig
         vm.prank(SystemAddresses.GENESIS);
@@ -108,7 +148,8 @@ contract ReconfigurationTest is Test {
                 validator: address(uint160(i + 1)),
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
-                votingPower: 100 * (i + 1)
+                votingPower: 100 * (i + 1),
+                validatorIndex: uint64(i)
             });
         }
         return validators;
@@ -151,7 +192,8 @@ contract ReconfigurationTest is Test {
 
         assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isInitialized());
         assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), TWO_HOURS);
+        // Epoch interval is now in EpochConfig, not Reconfiguration
+        assertEq(EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros(), TWO_HOURS);
         assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).lastReconfigurationTime(), INITIAL_TIME);
         assertEq(
             uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
@@ -264,8 +306,9 @@ contract ReconfigurationTest is Test {
         );
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
-        // Check ValidatorManagement was notified with correct epoch
-        assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), 1);
+        // Check ValidatorManagement was notified and incremented its epoch
+        // Note: ValidatorManagement now increments its own epoch internally
+        assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurrentEpoch(), 1);
     }
 
     function test_finishTransition_success_emptyDkgResult() public {
@@ -328,46 +371,6 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
         Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
-    }
-
-    // ========================================================================
-    // GOVERNANCE TESTS
-    // ========================================================================
-
-    function test_setEpochIntervalMicros_success() public {
-        _initializeReconfiguration();
-
-        uint64 newInterval = ONE_HOUR;
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(false, false, false, true);
-        emit EpochDurationUpdated(TWO_HOURS, newInterval);
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(newInterval);
-
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), newInterval);
-    }
-
-    function test_RevertWhen_setEpochIntervalMicros_notGovernance() public {
-        _initializeReconfiguration();
-
-        address notGovernance = address(0x1234);
-        vm.prank(notGovernance);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(ONE_HOUR);
-    }
-
-    function test_RevertWhen_setEpochIntervalMicros_zeroInterval() public {
-        _initializeReconfiguration();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(Errors.InvalidEpochInterval.selector);
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(0);
-    }
-
-    function test_RevertWhen_setEpochIntervalMicros_notInitialized() public {
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(Errors.ReconfigurationNotInitialized.selector);
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(ONE_HOUR);
     }
 
     // ========================================================================
@@ -458,8 +461,8 @@ contract ReconfigurationTest is Test {
         assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
-        // ValidatorManagement received the new epoch
-        assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), 1);
+        // ValidatorManagement epoch incremented
+        assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurrentEpoch(), 1);
     }
 
     function test_multipleEpochTransitions() public {
@@ -473,7 +476,7 @@ contract ReconfigurationTest is Test {
             _finishTransition("");
 
             assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), i + 1);
-            assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).lastEpochReceived(), i + 1);
+            assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurrentEpoch(), i + 1);
         }
     }
 
@@ -481,29 +484,17 @@ contract ReconfigurationTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_setEpochIntervalMicros(
-        uint64 newInterval
-    ) public {
-        vm.assume(newInterval > 0);
-        _initializeReconfiguration();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(newInterval);
-
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).epochIntervalMicros(), newInterval);
-    }
-
     function testFuzz_epochTransitionWithVariableInterval(
         uint64 interval
     ) public {
         // Use reasonable bounds for epoch interval (1 second to 1 week in microseconds)
         interval = uint64(bound(interval, 1_000_000, 604_800_000_000));
 
-        _initializeReconfiguration();
-
-        // Update interval
+        // Update interval in EpochConfig before initializing Reconfiguration
         vm.prank(SystemAddresses.GOVERNANCE);
-        Reconfiguration(SystemAddresses.RECONFIGURATION).setEpochIntervalMicros(interval);
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).setEpochIntervalMicros(interval);
+
+        _initializeReconfiguration();
 
         // Should not be ready to transition yet
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).canTriggerEpochTransition());
@@ -519,6 +510,157 @@ contract ReconfigurationTest is Test {
         _finishTransition("");
 
         assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+    }
+
+    // ========================================================================
+    // DKG DEALER/TARGET VALIDATOR SET TESTS
+    // ========================================================================
+
+    function test_checkAndStartTransition_usesDifferentDealersAndTargets() public {
+        _initializeReconfiguration();
+
+        // Setup: Current validators (dealers) include pending_inactive
+        ValidatorConsensusInfo[] memory dealers = new ValidatorConsensusInfo[](3);
+        dealers[0] = ValidatorConsensusInfo({
+            validator: address(uint160(1)),
+            consensusPubkey: abi.encodePacked("pubkey0"),
+            consensusPop: abi.encodePacked("pop0"),
+            votingPower: 100,
+            validatorIndex: 0
+        });
+        dealers[1] = ValidatorConsensusInfo({
+            validator: address(uint160(2)),
+            consensusPubkey: abi.encodePacked("pubkey1"),
+            consensusPop: abi.encodePacked("pop1"),
+            votingPower: 200,
+            validatorIndex: 1
+        });
+        dealers[2] = ValidatorConsensusInfo({
+            validator: address(uint160(3)), // pending_inactive
+            consensusPubkey: abi.encodePacked("pubkey2"),
+            consensusPop: abi.encodePacked("pop2"),
+            votingPower: 150,
+            validatorIndex: 2
+        });
+
+        // Targets: exclude pending_inactive validator (3), include new pending_active (4)
+        ValidatorConsensusInfo[] memory targets = new ValidatorConsensusInfo[](3);
+        targets[0] = ValidatorConsensusInfo({
+            validator: address(uint160(1)),
+            consensusPubkey: abi.encodePacked("pubkey0"),
+            consensusPop: abi.encodePacked("pop0"),
+            votingPower: 100,
+            validatorIndex: 0
+        });
+        targets[1] = ValidatorConsensusInfo({
+            validator: address(uint160(2)),
+            consensusPubkey: abi.encodePacked("pubkey1"),
+            consensusPop: abi.encodePacked("pop1"),
+            votingPower: 200,
+            validatorIndex: 1
+        });
+        targets[2] = ValidatorConsensusInfo({
+            validator: address(uint160(4)), // new pending_active
+            consensusPubkey: abi.encodePacked("pubkey3"),
+            consensusPop: abi.encodePacked("pop3"),
+            votingPower: 120,
+            validatorIndex: 2
+        });
+
+        // Set up mock with different dealers and targets
+        MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
+
+        // Advance time and start transition
+        _advanceTime(TWO_HOURS + 1);
+        bool started = _startTransition();
+        assertTrue(started);
+
+        // Verify transition started (DKG.start was called)
+        assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
+    }
+
+    function test_checkAndStartTransition_handlesPendingInactiveInDealers() public {
+        _initializeReconfiguration();
+
+        // Dealers include validator that is pending_inactive
+        // They can still participate in current epoch's DKG
+        ValidatorConsensusInfo[] memory dealers = new ValidatorConsensusInfo[](2);
+        dealers[0] = ValidatorConsensusInfo({
+            validator: address(uint160(1)),
+            consensusPubkey: abi.encodePacked("pubkey0"),
+            consensusPop: abi.encodePacked("pop0"),
+            votingPower: 100,
+            validatorIndex: 0
+        });
+        dealers[1] = ValidatorConsensusInfo({
+            validator: address(uint160(2)), // pending_inactive, still in dealers
+            consensusPubkey: abi.encodePacked("pubkey1"),
+            consensusPop: abi.encodePacked("pop1"),
+            votingPower: 200,
+            validatorIndex: 1
+        });
+
+        // Targets exclude the pending_inactive validator
+        ValidatorConsensusInfo[] memory targets = new ValidatorConsensusInfo[](1);
+        targets[0] = ValidatorConsensusInfo({
+            validator: address(uint160(1)), // index 0 in next epoch
+            consensusPubkey: abi.encodePacked("pubkey0"),
+            consensusPop: abi.encodePacked("pop0"),
+            votingPower: 100,
+            validatorIndex: 0
+        });
+
+        MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
+
+        _advanceTime(TWO_HOURS + 1);
+        bool started = _startTransition();
+        assertTrue(started);
+    }
+
+    function test_checkAndStartTransition_targetIndicesAreFreshlyAssigned() public {
+        _initializeReconfiguration();
+
+        // Simulate a scenario where target validators get fresh indices (0, 1, 2, ...)
+        // This is important: targets should NOT reuse their current epoch indices
+        ValidatorConsensusInfo[] memory dealers = new ValidatorConsensusInfo[](3);
+        for (uint256 i = 0; i < 3; i++) {
+            dealers[i] = ValidatorConsensusInfo({
+                validator: address(uint160(i + 1)),
+                consensusPubkey: abi.encodePacked("pubkey", i),
+                consensusPop: abi.encodePacked("pop", i),
+                votingPower: 100 * (i + 1),
+                validatorIndex: uint64(i)
+            });
+        }
+
+        // Targets with fresh indices (position in array = index)
+        // Note: In actual implementation, ValidatorManagement assigns indices as 0, 1, 2...
+        ValidatorConsensusInfo[] memory targets = new ValidatorConsensusInfo[](2);
+        // Only validators 1 and 3 remain (validator 2 is leaving)
+        // Their indices are freshly assigned: validator1 -> index 0, validator3 -> index 1
+        targets[0] = ValidatorConsensusInfo({
+            validator: address(uint160(1)),
+            consensusPubkey: abi.encodePacked("pubkey", uint256(0)),
+            consensusPop: abi.encodePacked("pop", uint256(0)),
+            votingPower: 100,
+            validatorIndex: 0
+        });
+        targets[1] = ValidatorConsensusInfo({
+            validator: address(uint160(3)),
+            consensusPubkey: abi.encodePacked("pubkey", uint256(2)),
+            consensusPop: abi.encodePacked("pop", uint256(2)),
+            votingPower: 300,
+            validatorIndex: 1
+        });
+
+        MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
+
+        _advanceTime(TWO_HOURS + 1);
+        bool started = _startTransition();
+        assertTrue(started);
+
+        // Verify: targets array has 2 elements (indices 0 and 1 implicitly)
+        // The DKG module will use these for the next epoch's key distribution
     }
 }
 

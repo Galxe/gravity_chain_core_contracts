@@ -44,6 +44,8 @@ struct ValidatorConsensusInfo {
     bytes consensusPop;
     /// @notice Voting power derived from bond
     uint256 votingPower;
+    /// @notice Index in active validator array of an epoch.
+    uint64 validatorIndex;
 }
 
 /// @notice Full validator record
@@ -87,19 +89,6 @@ struct ValidatorRecord {
     // === Indexing ===
     /// @notice Index in active validator array (only valid when ACTIVE/PENDING_INACTIVE)
     uint64 validatorIndex;
-}
-
-/// @notice Compact validator info for queries
-/// @dev Lighter weight than ValidatorRecord for read operations
-struct ValidatorInfo {
-    /// @notice Validator identity address
-    address validator;
-    /// @notice Voting power (derived from bond)
-    uint64 votingPower;
-    /// @notice Index in active validator array
-    uint64 validatorIndex;
-    /// @notice BLS consensus public key
-    bytes consensusPubkey;
 }
 
 // ============================================================================

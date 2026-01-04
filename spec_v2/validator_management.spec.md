@@ -343,7 +343,7 @@ interface IValidatorManagement {
     function setFeeRecipient(address stakePool, address newRecipient) external;
     
     // === Epoch Processing ===
-    function onNewEpoch(uint64 newEpoch) external;
+    function onNewEpoch() external;
     
     // === View Functions ===
     function getValidator(address stakePool) external view returns (ValidatorRecord memory);
@@ -461,8 +461,7 @@ Process epoch transition.
 
 **Access Control**: RECONFIGURATION only
 
-**Parameters**:
-- `newEpoch` - The new epoch number to set
+**Parameters**: None (reads current epoch from `IReconfiguration.currentEpoch()`)
 
 **Behavior**:
 1. Process PENDING_INACTIVE → INACTIVE:
@@ -481,8 +480,11 @@ Process epoch transition.
 4. Apply pending fee recipient changes
 5. Sync owner/operator from stake pools
 6. Reassign indices (0 to n-1) for all active validators
-7. Update epoch counter and total voting power
-8. Emit `EpochProcessed` event
+7. Read and store current epoch from `IReconfiguration.currentEpoch()`
+8. Update total voting power
+9. Emit `EpochProcessed` event
+
+> **Note**: The epoch is not passed as a parameter; instead, `ValidatorManagement` reads it from `Reconfiguration.currentEpoch()`. This aligns with Aptos's pattern where `stake::on_new_epoch()` is called before the epoch is incremented in `reconfiguration.move`.
 
 **Voting Power Limit**:
 - New validators can only add up to `votingPowerIncreaseLimitPct`% of current total
@@ -769,6 +771,17 @@ validatorManager.leaveValidatorSet(pool);
 
 ## Changelog
 
+### 2026-01-04: Aptos Alignment - onNewEpoch Signature Change
+
+**Interface Change**:
+- `onNewEpoch(uint64 newEpoch)` changed to `onNewEpoch()` (no parameters)
+- `ValidatorManagement` now reads the current epoch directly from `IReconfiguration.currentEpoch()` instead of receiving it as a parameter
+
+**Rationale**:
+- This aligns with Aptos's `reconfiguration.move` pattern where `stake::on_new_epoch()` is called BEFORE `config_ref.epoch` is incremented
+- `Reconfiguration.finishTransition()` now calls `ValidatorManagement.onNewEpoch()` before incrementing the epoch
+- This ensures validator set changes are processed in the context of the current (not yet incremented) epoch
+
 ### 2026-01-04: Security Fix - Active Stake Minimum Bond
 
 **SECURITY FIX**: Changed from checking `effectiveStake at (now + minLockup)` to checking `activeStake` directly.
@@ -791,6 +804,17 @@ validatorManager.leaveValidatorSet(pool);
 - Updated Security Considerations
 - Updated Invariant Tests
 
+### 2026-01-04: Aptos Alignment - onNewEpoch Signature Change
+
+**Interface Change**:
+- `onNewEpoch(uint64 newEpoch)` changed to `onNewEpoch()` (no parameters)
+- `ValidatorManagement` now reads the current epoch directly from `IReconfiguration.currentEpoch()` instead of receiving it as a parameter
+
+**Rationale**:
+- This aligns with Aptos's `reconfiguration.move` pattern where `stake::on_new_epoch()` is called BEFORE `config_ref.epoch` is incremented
+- `Reconfiguration.finishTransition()` now calls `ValidatorManagement.onNewEpoch()` before incrementing the epoch
+- This ensures validator set changes are processed in the context of the current (not yet incremented) epoch
+
 ### 2026-01-04: Specification Alignment
 
 Updated specification to match the current implementation:
@@ -803,9 +827,6 @@ Updated specification to match the current implementation:
 
 **Voting Power Queries**
 - Updated `_getValidatorVotingPower()` to show time-parameterized query using `getPoolVotingPower(pool, now_)`
-
-**Interface Updates**
-- `onNewEpoch(uint64 newEpoch)` now takes the new epoch number as a parameter
 
 ### 2026-01-03: Staking Security Enhancements
 

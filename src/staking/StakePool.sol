@@ -10,6 +10,7 @@ import { ValidatorStatus } from "../foundation/Types.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
 import { IStakingConfig } from "../runtime/IStakingConfig.sol";
 import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
+import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 
 /// @title StakePool
 /// @author Gravity Team
@@ -75,6 +76,16 @@ contract StakePool is IStakePool, Ownable2Step {
     modifier onlyFactory() {
         if (msg.sender != FACTORY) {
             revert Errors.OnlyStakingFactory(msg.sender);
+        }
+        _;
+    }
+
+    /// @notice Prevents operations during epoch transition (DKG in progress)
+    /// @dev Mirrors Aptos's assert_reconfig_not_in_progress() - blocks staking operations during DKG.
+    ///      This ensures consistent validator set state during the reconfiguration window.
+    modifier whenNotReconfiguring() {
+        if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) {
+            revert Errors.ReconfigurationInProgress();
         }
         _;
     }
@@ -247,7 +258,7 @@ contract StakePool is IStakePool, Ownable2Step {
     // ========================================================================
 
     /// @inheritdoc IStakePool
-    function addStake() external payable onlyStaker {
+    function addStake() external payable onlyStaker whenNotReconfiguring {
         if (msg.value == 0) {
             revert Errors.ZeroAmount();
         }
@@ -269,14 +280,14 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function unstake(
         uint256 amount
-    ) external onlyStaker {
+    ) external onlyStaker whenNotReconfiguring {
         _unstake(amount);
     }
 
     /// @inheritdoc IStakePool
     function withdrawAvailable(
         address recipient
-    ) external onlyStaker returns (uint256 amount) {
+    ) external onlyStaker whenNotReconfiguring returns (uint256 amount) {
         amount = _withdrawAvailable(recipient);
     }
 
@@ -284,7 +295,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function unstakeAndWithdraw(
         uint256 amount,
         address recipient
-    ) external onlyStaker returns (uint256 withdrawn) {
+    ) external onlyStaker whenNotReconfiguring returns (uint256 withdrawn) {
         // First unstake the requested amount
         _unstake(amount);
 
@@ -295,7 +306,7 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function renewLockUntil(
         uint64 durationMicros
-    ) external onlyStaker {
+    ) external onlyStaker whenNotReconfiguring {
         // Check for overflow
         uint64 newLockedUntil = lockedUntil + durationMicros;
         if (newLockedUntil <= lockedUntil) {

@@ -301,7 +301,7 @@ uint256 public constant MAX_VALIDATOR_SET_SIZE = 65536;
 
 ## Contract: `EpochConfig.sol`
 
-Configuration for epoch timing. Determines how long each epoch lasts.
+Configuration for epoch timing. Determines how long each epoch lasts. The `Reconfiguration` contract reads `epochIntervalMicros` from this contract to determine when epoch transitions should occur.
 
 ### System Address
 
@@ -314,6 +314,10 @@ Configuration for epoch timing. Determines how long each epoch lasts.
 | Parameter | Type | Description | Constraints |
 |-----------|------|-------------|-------------|
 | `epochIntervalMicros` | `uint64` | Epoch duration in microseconds | > 0 |
+
+### Consumers
+
+- **Reconfiguration.sol**: Reads `epochIntervalMicros` to check if an epoch transition should occur
 
 ### Interface
 

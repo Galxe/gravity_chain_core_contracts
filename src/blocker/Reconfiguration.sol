@@ -11,20 +11,19 @@ import { RandomnessConfig } from "../runtime/RandomnessConfig.sol";
 import { IDKG } from "../runtime/IDKG.sol";
 import { IRandomnessConfig } from "../runtime/IRandomnessConfig.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
+import { EpochConfig } from "../runtime/EpochConfig.sol";
 
 /// @title Reconfiguration
 /// @author Gravity Team
 /// @notice Central orchestrator for epoch transitions with DKG coordination
 /// @dev Manages epoch lifecycle following Aptos patterns. Coordinates with DKG,
 ///      RandomnessConfig, and ValidatorManagement for epoch transitions.
+///      Epoch interval is configured via EpochConfig contract.
 ///      Entry points: checkAndStartTransition() from Blocker, finishTransition() from consensus/governance.
 contract Reconfiguration is IReconfiguration {
     // ========================================================================
     // CONSTANTS
     // ========================================================================
-
-    /// @notice Default epoch interval (2 hours in microseconds)
-    uint64 public constant DEFAULT_EPOCH_INTERVAL_MICROS = 2 hours * 1_000_000;
 
     /// @notice Microseconds per second for conversion
     uint64 public constant MICRO_CONVERSION_FACTOR = 1_000_000;
@@ -38,9 +37,6 @@ contract Reconfiguration is IReconfiguration {
 
     /// @notice Timestamp of last reconfiguration (microseconds)
     uint64 public override lastReconfigurationTime;
-
-    /// @notice Epoch interval in microseconds
-    uint64 public override epochIntervalMicros;
 
     /// @notice Current transition state
     TransitionState private _transitionState;
@@ -64,7 +60,6 @@ contract Reconfiguration is IReconfiguration {
         }
 
         currentEpoch = 0;
-        epochIntervalMicros = DEFAULT_EPOCH_INTERVAL_MICROS;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         _transitionState = TransitionState.Idle;
         _transitionStartedAtEpoch = 0;
@@ -94,11 +89,13 @@ contract Reconfiguration is IReconfiguration {
         }
 
         // 3. Get validator consensus infos from ValidatorManagement
-        // Note: For dealers (current validators) and targets (next epoch validators),
-        // we use the same set since we don't have a separate "next" set mechanism yet.
-        // In a more sophisticated implementation, targets would be the projected next set.
-        ValidatorConsensusInfo[] memory currentVals =
-            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
+        //    - Dealers: Current validators (active + pending_inactive) who run DKG
+        //    - Targets: Projected next epoch validators who receive DKG keys
+        //    Following Aptos's reconfiguration_with_dkg.move pattern
+        ValidatorConsensusInfo[] memory dealers =
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurValidatorConsensusInfos();
+        ValidatorConsensusInfo[] memory targets =
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getNextValidatorConsensusInfos();
 
         // 4. Get randomness config
         RandomnessConfig.RandomnessConfigData memory config =
@@ -108,8 +105,8 @@ contract Reconfiguration is IReconfiguration {
         IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
 
         // 6. Start DKG session - emits DKGStartEvent for consensus engine
-        // Using currentVals for both dealers and targets for now
-        IDKG(SystemAddresses.DKG).start(currentEpoch, config, currentVals, currentVals);
+        //    Dealers are current validators, targets are projected next epoch validators
+        IDKG(SystemAddresses.DKG).start(currentEpoch, config, dealers, targets);
 
         // 7. Update state
         _transitionState = TransitionState.DkgInProgress;
@@ -138,44 +135,26 @@ contract Reconfiguration is IReconfiguration {
         }
         IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
 
-        // 3. Apply pending configs BEFORE incrementing epoch
+        // 3. Apply pending configs BEFORE validator changes
         //    This ensures new configs are active for the new epoch's first block
         IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
 
-        // 4. Increment epoch
+        // 4. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
+        //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
+        //    before config_ref.epoch is incremented. This ensures validator set
+        //    changes are processed in the context of the current epoch.
+        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
+
+        // 5. NOW increment epoch and update timestamp
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-        // 5. Notify validator manager to apply changes with the new epoch
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch(newEpoch);
 
         // 6. Reset state
         _transitionState = TransitionState.Idle;
 
         // 7. Emit transition event
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
-    }
-
-    // ========================================================================
-    // GOVERNANCE
-    // ========================================================================
-
-    /// @inheritdoc IReconfiguration
-    function setEpochIntervalMicros(
-        uint64 newIntervalMicros
-    ) external override {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-        _requireInitialized();
-
-        if (newIntervalMicros == 0) {
-            revert Errors.InvalidEpochInterval();
-        }
-
-        uint64 oldInterval = epochIntervalMicros;
-        epochIntervalMicros = newIntervalMicros;
-
-        emit EpochDurationUpdated(oldInterval, newIntervalMicros);
     }
 
     // ========================================================================
@@ -203,7 +182,8 @@ contract Reconfiguration is IReconfiguration {
         if (!_initialized) return 0;
 
         uint64 currentTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 nextEpochTime = lastReconfigurationTime + epochIntervalMicros;
+        uint64 epochInterval = EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros();
+        uint64 nextEpochTime = lastReconfigurationTime + epochInterval;
 
         if (currentTime >= nextEpochTime) {
             return 0;
@@ -223,9 +203,11 @@ contract Reconfiguration is IReconfiguration {
     // ========================================================================
 
     /// @notice Check if epoch transition can occur based on time
+    /// @dev Reads epoch interval from EpochConfig contract
     function _canTransition() internal view returns (bool) {
         uint64 currentTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        return currentTime >= lastReconfigurationTime + epochIntervalMicros;
+        uint64 epochInterval = EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros();
+        return currentTime >= lastReconfigurationTime + epochInterval;
     }
 
     /// @notice Require the contract to be initialized

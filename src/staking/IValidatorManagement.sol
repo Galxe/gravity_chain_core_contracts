@@ -130,14 +130,13 @@ interface IValidatorManagement {
 
     /// @notice Process epoch transition
     /// @dev Only callable by RECONFIGURATION contract.
+    ///      Called BEFORE Reconfiguration increments its epoch counter (Aptos pattern).
     ///      - Processes PENDING_INACTIVE → INACTIVE transitions
     ///      - Processes PENDING_ACTIVE → ACTIVE transitions (respecting voting power limits)
     ///      - Reassigns validator indices
     ///      - Updates total voting power
-    /// @param newEpoch The new epoch number to set
-    function onNewEpoch(
-        uint64 newEpoch
-    ) external;
+    ///      - Increments internal epoch counter
+    function onNewEpoch() external;
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -195,5 +194,24 @@ interface IValidatorManagement {
     /// @notice Get pending inactive validators
     /// @return Array of stake pool addresses pending deactivation
     function getPendingInactiveValidators() external view returns (address[] memory);
+
+    // ========================================================================
+    // DKG SUPPORT FUNCTIONS
+    // ========================================================================
+
+    /// @notice Get current validators for DKG dealers (active + pending_inactive)
+    /// @dev Used for DKG: validators who can participate in running DKG.
+    ///      Indices are their CURRENT epoch indices (position in array matches validatorIndex).
+    ///      Aptos pattern: pending_inactive can still participate in current epoch DKG.
+    /// @return Array of ValidatorConsensusInfo for dealers, ordered by current validator index
+    function getCurValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
+
+    /// @notice Get projected next epoch validators for DKG targets
+    /// @dev Used for DKG: validators who will receive DKG keys.
+    ///      Returns (active - pending_inactive) + pending_active (subject to min stake).
+    ///      IMPORTANT: Indices are FRESHLY ASSIGNED (0, 1, 2, ...) based on position in array,
+    ///      NOT their current epoch indices. This matches Aptos's next_validator_consensus_infos().
+    /// @return Array of ValidatorConsensusInfo for targets with projected indices
+    function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
 }
 

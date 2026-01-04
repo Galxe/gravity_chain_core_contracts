@@ -50,6 +50,7 @@ flowchart TD
         TS[Timestamp]
         DKG[DKG]
         RC[RandomnessConfig]
+        EC[EpochConfig]
     end
     
     subgraph Staking[Staking Layer]
@@ -60,6 +61,7 @@ flowchart TD
     B --> SAC
     B --> R
     B --> TS
+    B --> VM
     
     R --> IR
     R --> SA
@@ -69,6 +71,7 @@ flowchart TD
     R --> TS
     R --> DKG
     R --> RC
+    R --> EC
     R --> VM
     
     subgraph Callers[External Callers]
@@ -80,7 +83,6 @@ flowchart TD
     RUNTIME -->|onBlockStart| B
     CONSENSUS -->|finishTransition| R
     GOV -->|finishTransition| R
-    GOV -->|setEpochIntervalMicros| R
 ```
 
 ## System Addresses
@@ -119,9 +121,6 @@ uint64 public currentEpoch;
 /// @notice Timestamp of last reconfiguration (microseconds)
 uint64 public lastReconfigurationTime;
 
-/// @notice Epoch interval in microseconds (default 2 hours)
-uint64 public epochIntervalMicros;
-
 /// @notice Current transition state
 TransitionState private _transitionState;
 
@@ -131,6 +130,8 @@ uint64 private _transitionStartedAtEpoch;
 /// @notice Whether the contract has been initialized
 bool private _initialized;
 ```
+
+> **Note**: `epochIntervalMicros` is now stored in `EpochConfig` (Runtime layer), not in Reconfiguration.
 
 ### Interface
 
@@ -144,7 +145,6 @@ interface IReconfiguration {
     // Events
     event EpochTransitionStarted(uint64 indexed epoch);
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
-    event EpochDurationUpdated(uint64 oldDuration, uint64 newDuration);
 
     // Initialization
     function initialize() external;
@@ -153,19 +153,17 @@ interface IReconfiguration {
     function checkAndStartTransition() external returns (bool started);
     function finishTransition(bytes calldata dkgResult) external;
 
-    // Governance
-    function setEpochIntervalMicros(uint64 newIntervalMicros) external;
-
     // View Functions
     function currentEpoch() external view returns (uint64);
     function lastReconfigurationTime() external view returns (uint64);
-    function epochIntervalMicros() external view returns (uint64);
     function canTriggerEpochTransition() external view returns (bool);
     function isTransitionInProgress() external view returns (bool);
     function getTransitionState() external view returns (TransitionState);
     function getRemainingTimeSeconds() external view returns (uint64);
 }
 ```
+
+> **Note**: `epochIntervalMicros()` getter and `setEpochIntervalMicros()` moved to `EpochConfig` in the Runtime layer.
 
 ---
 
@@ -179,10 +177,11 @@ Initialize the contract at genesis.
 
 **Behavior**:
 1. Set `currentEpoch = 0`
-2. Set `epochIntervalMicros = 2 hours * 1_000_000`
-3. Set `lastReconfigurationTime` to current timestamp
-4. Set `transitionState = Idle`
-5. Emit `EpochTransitioned(0, timestamp)`
+2. Set `lastReconfigurationTime` to current timestamp
+3. Set `transitionState = Idle`
+4. Emit `EpochTransitioned(0, timestamp)`
+
+> **Note**: `epochIntervalMicros` is no longer set here; it is initialized separately in `EpochConfig`.
 
 **Reverts**:
 - `AlreadyInitialized` - Contract already initialized
@@ -197,7 +196,7 @@ Check and start epoch transition if conditions are met.
 
 **Behavior**:
 1. If `transitionState == DkgInProgress`, return false (no-op)
-2. Check if time has elapsed: `currentTime >= lastReconfigurationTime + epochIntervalMicros`
+2. Check if time has elapsed: `currentTime >= lastReconfigurationTime + EpochConfig.epochIntervalMicros()`
 3. If not ready, return false
 4. Get current validator set from ValidatorManagement
 5. Get randomness config from RandomnessConfig
@@ -225,30 +224,18 @@ Finish epoch transition after DKG completes.
 2. If `dkgResult` is non-empty, finish DKG session
 3. Clear any incomplete DKG session
 4. Apply pending RandomnessConfig
-5. Increment epoch: `currentEpoch++`
-6. Update `lastReconfigurationTime`
-7. Call `ValidatorManagement.onNewEpoch(newEpoch)`
+5. **Call `ValidatorManagement.onNewEpoch()` BEFORE incrementing epoch** (Aptos pattern)
+6. Increment epoch: `currentEpoch++`
+7. Update `lastReconfigurationTime`
 8. Set `transitionState = Idle`
 9. Emit `EpochTransitioned(newEpoch, timestamp)`
+
+> **Important**: The ordering matters. `ValidatorManagement.onNewEpoch()` is called before the epoch is incremented, matching Aptos's `reconfiguration.move` where `stake::on_new_epoch()` is called before `config_ref.epoch += 1`. ValidatorManagement reads the current epoch directly from the Reconfiguration contract.
 
 **Reverts**:
 - `ReconfigurationNotInProgress` - No transition in progress
 
 ---
-
-### `setEpochIntervalMicros(uint64 newIntervalMicros)`
-
-Update epoch interval via governance.
-
-**Access Control**: GOVERNANCE only
-
-**Behavior**:
-1. Require `newIntervalMicros > 0`
-2. Update `epochIntervalMicros`
-3. Emit `EpochDurationUpdated(old, new)`
-
-**Reverts**:
-- `InvalidEpochInterval` - Interval is 0
 
 ---
 
@@ -266,10 +253,12 @@ contract Blocker {
     event ComponentUpdateFailed(address indexed component, bytes reason);
 
     function initialize() external;
-    function onBlockStart(bytes32 proposer, bytes32[] calldata failedProposers, uint64 timestampMicros) external;
+    function onBlockStart(uint64 proposerIndex, uint64[] calldata failedProposerIndices, uint64 timestampMicros) external;
     function isInitialized() external view returns (bool);
 }
 ```
+
+> **Note**: The signature changed from `(bytes32 proposer, bytes32[] failedProposers, ...)` to `(uint64 proposerIndex, uint64[] failedProposerIndices, ...)` to align with Aptos's approach of using validator indices.
 
 ---
 
@@ -287,25 +276,27 @@ Initialize the contract at genesis.
 
 ---
 
-### `onBlockStart(bytes32 proposer, bytes32[] failedProposers, uint64 timestampMicros)`
+### `onBlockStart(uint64 proposerIndex, uint64[] failedProposerIndices, uint64 timestampMicros)`
 
 Called by VM runtime at the start of each block.
 
 **Access Control**: SYSTEM_CALLER (VM runtime) only
 
 **Parameters**:
-- `proposer` - Block proposer's consensus public key (32 bytes, bytes32(0) for NIL blocks)
-- `failedProposers` - Consensus pubkeys of validators who failed to propose (for future performance tracking)
+- `proposerIndex` - Index of the block proposer in the active validator set (`type(uint64).max` for NIL blocks)
+- `failedProposerIndices` - Indices of validators who failed to propose (for future performance tracking)
 - `timestampMicros` - Block timestamp in microseconds
 
 **Behavior**:
 1. Resolve proposer address:
-   - If `proposer == bytes32(0)` (NIL block): use `SYSTEM_CALLER`
-   - Otherwise: convert to address (placeholder for consensus key lookup)
+   - If `proposerIndex == type(uint64).max` (NIL block): use `SYSTEM_CALLER`
+   - Otherwise: query `ValidatorManagement.getActiveValidatorByIndex(proposerIndex).validator`
 2. Update global timestamp via `Timestamp.updateGlobalTime(validatorAddr, timestampMicros)`
 3. Call `Reconfiguration.checkAndStartTransition()`
 4. Get current epoch from Reconfiguration
 5. Emit `BlockStarted(block.number, epoch, validatorAddr, timestampMicros)`
+
+> **Note**: Using validator indices (instead of consensus public keys) aligns with Aptos's `block_prologue` approach where the consensus layer passes proposer indices.
 
 ---
 
@@ -316,11 +307,12 @@ Called by VM runtime at the start of each block.
 | `Reconfiguration.initialize()` | GENESIS only |
 | `Reconfiguration.checkAndStartTransition()` | BLOCK only |
 | `Reconfiguration.finishTransition()` | SYSTEM_CALLER or GOVERNANCE |
-| `Reconfiguration.setEpochIntervalMicros()` | GOVERNANCE only |
 | `Reconfiguration` view functions | Anyone |
 | `Blocker.initialize()` | GENESIS only |
 | `Blocker.onBlockStart()` | SYSTEM_CALLER only |
 | `Blocker.isInitialized()` | Anyone |
+
+> **Note**: `setEpochIntervalMicros()` is now in `EpochConfig`, not `Reconfiguration`.
 
 ---
 
@@ -374,9 +366,9 @@ Called by VM runtime at the start of each block.
 │       ├── DKG.finish(dkgResult) (if result provided)                         │
 │       ├── DKG.tryClearIncompleteSession()                                    │
 │       ├── RandomnessConfig.applyPendingConfig()                              │
+│       ├── ValidatorManagement.onNewEpoch() (BEFORE incrementing epoch)       │
 │       ├── currentEpoch++                                                     │
 │       ├── lastReconfigurationTime = now                                      │
-│       ├── ValidatorManagement.onNewEpoch(newEpoch)                           │
 │       ├── transitionState = Idle                                             │
 │       └── Emit EpochTransitioned                                             │
 │                                                                              │
@@ -389,9 +381,10 @@ Called by VM runtime at the start of each block.
 
 | Parameter | Default Value | Description |
 |-----------|---------------|-------------|
-| `epochIntervalMicros` | 7,200,000,000 (2 hours) | Epoch duration in microseconds |
 | `currentEpoch` | 0 | Starting epoch number |
 | `transitionState` | Idle | Initial state |
+
+> **Note**: `epochIntervalMicros` is now configured in `EpochConfig` (default 7,200,000,000 = 2 hours).
 
 ---
 
@@ -415,7 +408,8 @@ Conversion: `seconds * 1_000_000 = microseconds`
 | `ReconfigurationInProgress()` | Transition already in progress |
 | `ReconfigurationNotInProgress()` | No transition in progress to finish |
 | `ReconfigurationNotInitialized()` | Contract not yet initialized |
-| `InvalidEpochInterval()` | Epoch interval is 0 |
+
+> **Note**: `InvalidEpochInterval()` is now in `EpochConfig`, not `Reconfiguration`.
 
 ---
 
@@ -423,7 +417,7 @@ Conversion: `seconds * 1_000_000 = microseconds`
 
 NIL blocks are special blocks where:
 - No real proposer (system-generated block)
-- Proposer consensus address is `bytes32(0)`
+- Proposer index is `type(uint64).max` (max uint64 value)
 - Timestamp must stay the same (enforced by Timestamp contract)
 - Maps to `SYSTEM_CALLER` address
 
@@ -446,9 +440,10 @@ This is acceptable behavior since the chain was down anyway.
 
 1. **Monotonic Epoch**: `currentEpoch` only increases
 2. **Timestamp Update**: `lastReconfigurationTime` updates only on transitions
-3. **Minimum Interval**: Transitions occur at least `epochIntervalMicros` apart
+3. **Minimum Interval**: Transitions occur at least `EpochConfig.epochIntervalMicros()` apart
 4. **State Consistency**: `transitionState` is always Idle or DkgInProgress
 5. **DKG Synchronization**: Transition only completes after DKG completes or is force-ended
+6. **Transition Ordering**: `ValidatorManagement.onNewEpoch()` is called before epoch increment
 
 ---
 
@@ -480,18 +475,19 @@ This is acceptable behavior since the chain was down anyway.
 2. **Blocker** (`test/unit/blocker/Blocker.t.sol` - 16 tests)
    - [x] Initialize correctly
    - [x] Normal block processing
-   - [x] NIL block handling (bytes32(0) proposer)
+   - [x] NIL block handling (proposerIndex == type(uint64).max)
    - [x] Timestamp update
    - [x] Epoch transition triggering
-   - [x] Proposer resolution
+   - [x] Proposer resolution via validator index
    - [x] Integration with Reconfiguration
 
 ### Fuzz Tests (Implemented)
 
-- [x] Variable epoch intervals (`testFuzz_setEpochIntervalMicros`, `testFuzz_epochTransitionWithVariableInterval`)
-- [x] Proposer conversion (`testFuzz_onBlockStart_proposerConversion`)
+- [x] Proposer index resolution (`testFuzz_onBlockStart_proposerConversion`)
 - [x] Timestamp advances (`testFuzz_onBlockStart_timestampAdvances`)
 - [x] Block sequences (`testFuzz_multipleBlocksSequence`)
+
+> **Note**: Epoch interval fuzz tests moved to `EpochConfig.t.sol`.
 
 ### Integration Tests (Pending)
 
@@ -503,4 +499,29 @@ This is acceptable behavior since the chain was down anyway.
 - [ ] Epoch monotonicity
 - [ ] Timing constraints
 - [ ] State consistency
+
+---
+
+## Changelog
+
+### 2026-01-04: Aptos Alignment - Proposer Index and Epoch Interval Refactoring
+
+**Blocker Changes**:
+- Changed `onBlockStart` signature from `(bytes32 proposer, bytes32[] failedProposers, uint64 timestampMicros)` to `(uint64 proposerIndex, uint64[] failedProposerIndices, uint64 timestampMicros)`
+- NIL blocks now use `proposerIndex == type(uint64).max` instead of `bytes32(0)`
+- Proposer resolution now queries `ValidatorManagement.getActiveValidatorByIndex(proposerIndex)`
+- This aligns with Aptos's `block_prologue` approach using validator indices
+
+**Reconfiguration Changes**:
+- Removed `epochIntervalMicros` state variable (moved to `EpochConfig` in Runtime layer)
+- Removed `setEpochIntervalMicros()` function (moved to `EpochConfig`)
+- Removed `EpochDurationUpdated` event (now in `EpochConfig`)
+- Now reads `epochIntervalMicros` from `EpochConfig` contract
+- Fixed `finishTransition()` ordering: `ValidatorManagement.onNewEpoch()` is now called BEFORE incrementing epoch, matching Aptos's `reconfiguration.move` pattern
+- `onNewEpoch()` no longer receives the new epoch as a parameter; ValidatorManagement reads it directly
+
+**Rationale**:
+- Using validator indices instead of consensus public keys matches Aptos's consensus layer design
+- Moving epoch interval to `EpochConfig` follows the pattern of centralizing runtime configuration
+- The epoch transition ordering fix ensures validator set changes are processed in the context of the current epoch before advancing
 

@@ -7,7 +7,6 @@ import {
     ValidatorStatus,
     ValidatorConsensusInfo,
     ValidatorRecord,
-    ValidatorInfo,
     ProposalState,
     Proposal
 } from "../../../src/foundation/Types.sol";
@@ -90,13 +89,14 @@ contract TypesTest is Test {
         bytes memory pop = hex"11223344";
 
         ValidatorConsensusInfo memory info = ValidatorConsensusInfo({
-            validator: address(0x1234), consensusPubkey: pubkey, consensusPop: pop, votingPower: 1000
+            validator: address(0x1234), consensusPubkey: pubkey, consensusPop: pop, votingPower: 1000, validatorIndex: 5
         });
 
         assertEq(info.validator, address(0x1234));
         assertEq(info.consensusPubkey, pubkey);
         assertEq(info.consensusPop, pop);
         assertEq(info.votingPower, 1000);
+        assertEq(info.validatorIndex, 5);
     }
 
     // ========================================================================
@@ -135,23 +135,6 @@ contract TypesTest is Test {
 
         record.status = ValidatorStatus.PENDING_INACTIVE;
         assertEq(uint8(record.status), 3);
-    }
-
-    // ========================================================================
-    // ValidatorInfo Tests
-    // ========================================================================
-
-    function test_ValidatorInfo_Creation() public pure {
-        bytes memory pubkey = hex"aabbccdd";
-
-        ValidatorInfo memory info = ValidatorInfo({
-            validator: address(0x1234), votingPower: 1000, validatorIndex: 5, consensusPubkey: pubkey
-        });
-
-        assertEq(info.validator, address(0x1234));
-        assertEq(info.votingPower, 1000);
-        assertEq(info.validatorIndex, 5);
-        assertEq(info.consensusPubkey, pubkey);
     }
 
     // ========================================================================
