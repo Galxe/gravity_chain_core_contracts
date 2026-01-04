@@ -248,14 +248,15 @@ contract StakingTest is Test {
         );
     }
 
-    function test_getPoolVotingPower_returnsZeroWhenUnlocked() public {
+    function test_getPoolVotingPower_returnsActiveStakeWhenUnlocked() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
         uint64 now_ = timestamp.microseconds();
-        assertEq(staking.getPoolVotingPower(pool, now_), 0, "Should return 0 when unlocked");
+        // After removing the "return 0 when unlocked" check, voting power equals effective stake
+        assertEq(staking.getPoolVotingPower(pool, now_), MIN_STAKE, "Should return active stake when unlocked");
     }
 
     function test_RevertWhen_getPoolVotingPower_invalidPool() public {
@@ -379,15 +380,16 @@ contract StakingTest is Test {
         assertEq(IStakePool(pool).getVotingPowerNow(), stakeAmount);
     }
 
-    function test_getVotingPower_returnsZeroWhenUnlocked() public {
+    function test_getVotingPower_returnsActiveStakeWhenUnlocked() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         _advanceTime(LOCKUP_DURATION + 1);
 
         uint64 now_ = timestamp.microseconds();
-        assertEq(IStakePool(pool).getVotingPower(now_), 0, "Voting power should be 0 when unlocked");
-        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power should be 0 when unlocked");
+        // After removing the "return 0 when unlocked" check, voting power equals effective stake
+        assertEq(IStakePool(pool).getVotingPower(now_), MIN_STAKE, "Voting power equals active stake when unlocked");
+        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power equals active stake when unlocked");
     }
 
     function test_isLocked_returnsTrueWhenLocked() public {
@@ -594,98 +596,105 @@ contract StakingTest is Test {
     }
 
     // ========================================================================
-    // STAKE POOL TESTS - immediateWithdraw
+    // STAKE POOL TESTS - unstakeAndWithdraw (helper combining unstake + withdrawAvailable)
     // ========================================================================
 
-    function test_immediateWithdraw_withdrawsUnlockedStake() public {
+    function test_unstakeAndWithdraw_unstakesAndWithdrawsClaimable() public {
         vm.prank(alice);
         address pool = _createPool(alice, 10 ether);
 
-        // Advance past lockup + unbonding delay
+        // First unstake some amount
+        vm.prank(alice);
+        IStakePool(pool).unstake(3 ether);
+
+        // Advance past lockup + unbonding delay to make it claimable
         _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
+        // Note: lockedUntil hasn't changed, so any new unstake will merge into the same bucket
+        // unstakeAndWithdraw will: 1) unstake 2 ether (merged with first bucket), 2) withdraw all claimable
+        // Since both have the same lockedUntil, total claimable = 3 + 2 = 5 ether
         uint256 balanceBefore = bob.balance;
         vm.prank(alice);
-        IStakePool(pool).immediateWithdraw(5 ether, bob);
+        uint256 withdrawn = IStakePool(pool).unstakeAndWithdraw(2 ether, bob);
 
-        assertEq(IStakePool(pool).getActiveStake(), 5 ether, "Active stake should be reduced");
-        assertEq(bob.balance, balanceBefore + 5 ether, "Bob should receive funds");
+        // Both the 3 ether and the newly unstaked 2 ether are claimable (same lockedUntil)
+        assertEq(withdrawn, 5 ether, "Should withdraw 5 ether (both buckets merged)");
+        assertEq(bob.balance, balanceBefore + 5 ether, "Bob should receive 5 ether");
+
+        // Active stake should be reduced by the 2 ether unstaked
+        // Original: 10 ether, first unstake: 3 ether -> 7 ether, second unstake: 2 ether -> 5 ether
+        assertEq(IStakePool(pool).getActiveStake(), 5 ether, "Active stake should be 5 ether");
+
+        // Only 1 bucket since they merged (same lockedUntil)
+        assertEq(IStakePool(pool).getPendingBucketCount(), 1, "Should have 1 pending bucket (merged)");
     }
 
-    function test_immediateWithdraw_emitsImmediateWithdrawalEvent() public {
+    function test_unstakeAndWithdraw_returnsZeroWhenNothingClaimable() public {
         vm.prank(alice);
         address pool = _createPool(alice, 10 ether);
 
+        // Use unstakeAndWithdraw without any previous pending
+        uint256 balanceBefore = bob.balance;
+        vm.prank(alice);
+        uint256 withdrawn = IStakePool(pool).unstakeAndWithdraw(3 ether, bob);
+
+        // Nothing claimable yet (just created pending)
+        assertEq(withdrawn, 0, "Should return 0 when nothing claimable");
+        assertEq(bob.balance, balanceBefore, "Bob should receive nothing");
+        assertEq(IStakePool(pool).getActiveStake(), 7 ether, "Active stake should be 7 ether");
+        assertEq(IStakePool(pool).getTotalPending(), 3 ether, "Should have 3 ether pending");
+    }
+
+    function test_unstakeAndWithdraw_emitsUnstakedAndWithdrawalClaimedEvents() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, 10 ether);
+
+        // First unstake
+        vm.prank(alice);
+        IStakePool(pool).unstake(2 ether);
+
+        // Advance past lockup + unbonding
         _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
+        // Get lockedUntil before the call (it doesn't change)
+        uint64 currentLockedUntil = IStakePool(pool).getLockedUntil();
+
+        // Expect both Unstaked and WithdrawalClaimed events
+        // Note: since lockedUntil hasn't changed, the new unstake merges with the previous bucket
+        // So total claimable = 2 + 3 = 5 ether
         vm.prank(alice);
+        vm.expectEmit(true, false, false, true);
+        emit IStakePool.Unstaked(pool, 3 ether, currentLockedUntil);
         vm.expectEmit(true, true, false, true);
-        emit IStakePool.ImmediateWithdrawal(pool, 5 ether, bob);
-        IStakePool(pool).immediateWithdraw(5 ether, bob);
+        emit IStakePool.WithdrawalClaimed(pool, 5 ether, bob);
+        IStakePool(pool).unstakeAndWithdraw(3 ether, bob);
     }
 
-    function test_RevertWhen_immediateWithdraw_notUnbonded() public {
+    function test_RevertWhen_unstakeAndWithdraw_zeroAmount() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
-
-        // Only advance past lockup, not unbonding delay
-        _advanceTime(LOCKUP_DURATION + 1);
-
-        uint64 lockedUntil = IStakePool(pool).getLockedUntil();
-        uint64 now_ = timestamp.microseconds();
-
-        vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.WithdrawalNotClaimable.selector, lockedUntil + UNBONDING_DELAY, now_)
-        );
-        IStakePool(pool).immediateWithdraw(MIN_STAKE, alice);
-    }
-
-    function test_RevertWhen_immediateWithdraw_stillLocked() public {
-        vm.prank(alice);
-        address pool = _createPool(alice, MIN_STAKE);
-
-        uint64 lockedUntil = IStakePool(pool).getLockedUntil();
-        uint64 now_ = timestamp.microseconds();
-
-        vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.WithdrawalNotClaimable.selector, lockedUntil + UNBONDING_DELAY, now_)
-        );
-        IStakePool(pool).immediateWithdraw(MIN_STAKE, alice);
-    }
-
-    function test_RevertWhen_immediateWithdraw_zeroAmount() public {
-        vm.prank(alice);
-        address pool = _createPool(alice, MIN_STAKE);
-
-        _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
 
         vm.prank(alice);
         vm.expectRevert(Errors.ZeroAmount.selector);
-        IStakePool(pool).immediateWithdraw(0, alice);
+        IStakePool(pool).unstakeAndWithdraw(0, alice);
     }
 
-    function test_RevertWhen_immediateWithdraw_notStaker() public {
+    function test_RevertWhen_unstakeAndWithdraw_notStaker() public {
         vm.prank(alice);
         address pool = _createPoolWithStaker(alice, bob, MIN_STAKE);
 
-        _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
-
         vm.prank(charlie);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotStaker.selector, charlie, bob));
-        IStakePool(pool).immediateWithdraw(MIN_STAKE, charlie);
+        IStakePool(pool).unstakeAndWithdraw(MIN_STAKE, charlie);
     }
 
-    function test_RevertWhen_immediateWithdraw_insufficientActiveStake() public {
+    function test_RevertWhen_unstakeAndWithdraw_insufficientActiveStake() public {
         vm.prank(alice);
         address pool = _createPool(alice, 10 ether);
 
-        _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
-
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientAvailableStake.selector, 11 ether, 10 ether));
-        IStakePool(pool).immediateWithdraw(11 ether, alice);
+        IStakePool(pool).unstakeAndWithdraw(11 ether, alice);
     }
 
     // ========================================================================
@@ -708,8 +717,12 @@ contract StakingTest is Test {
         // Advance to just past lockedUntil - pending becomes ineffective
         _advanceTime(LOCKUP_DURATION + 1);
 
-        // Now voting power should be 0 because main stake is unlocked
-        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power 0 when main stake unlocked");
+        // Pending with lockedUntil <= now is ineffective, so voting power = activeStake only
+        assertEq(
+            IStakePool(pool).getVotingPowerNow(),
+            7 ether,
+            "Voting power equals active stake when pending is ineffective"
+        );
     }
 
     function test_getEffectiveStake_excludesIneffectivePending() public {
@@ -749,19 +762,6 @@ contract StakingTest is Test {
         assertEq(IStakePool(pool).getClaimableAmount(), 5 ether, "5 ether should be claimable");
     }
 
-    function test_getAvailableForImmediateWithdrawal_returnsCorrectAmount() public {
-        vm.prank(alice);
-        address pool = _createPool(alice, 10 ether);
-
-        // Not available yet
-        assertEq(IStakePool(pool).getAvailableForImmediateWithdrawal(), 0, "Nothing available initially");
-
-        // Advance past lockup + unbonding
-        _advanceTime(LOCKUP_DURATION + UNBONDING_DELAY + 1);
-
-        assertEq(IStakePool(pool).getAvailableForImmediateWithdrawal(), 10 ether, "All active stake available");
-    }
-
     // ========================================================================
     // STAKE POOL TESTS - Lockup Management (renewLockUntil - Staker Only)
     // ========================================================================
@@ -793,17 +793,22 @@ contract StakingTest is Test {
         IStakePool(pool).renewLockUntil(extension);
     }
 
-    function test_renewLockUntil_restoresVotingPower() public {
+    function test_renewLockUntil_extendsLockupPeriod() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
+        uint64 oldLockedUntil = IStakePool(pool).getLockedUntil();
         _advanceTime(LOCKUP_DURATION + 1);
-        assertEq(IStakePool(pool).getVotingPowerNow(), 0, "Voting power should be 0 when unlocked");
+
+        // Voting power equals active stake (we removed the "return 0 when unlocked" check)
+        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power equals active stake");
 
         vm.prank(alice);
         IStakePool(pool).renewLockUntil(LOCKUP_DURATION * 2); // Need enough to be >= now + minLockup
 
-        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power should be restored");
+        uint64 newLockedUntil = IStakePool(pool).getLockedUntil();
+        assertGt(newLockedUntil, oldLockedUntil, "Lockup should be extended");
+        assertEq(IStakePool(pool).getVotingPowerNow(), MIN_STAKE, "Voting power unchanged");
     }
 
     function test_renewLockUntil_allowsSmallExtensionWhenFarInFuture() public {
@@ -1078,7 +1083,7 @@ contract StakingTest is Test {
     // INVARIANT TESTS
     // ========================================================================
 
-    function test_invariant_votingPowerMatchesLockedStake() public {
+    function test_invariant_votingPowerMatchesEffectiveStake() public {
         vm.prank(alice);
         address pool = _createPool(alice, 10 ether);
 
@@ -1086,10 +1091,11 @@ contract StakingTest is Test {
         assertTrue(IStakePool(pool).isLocked());
         assertEq(IStakePool(pool).getVotingPowerNow(), IStakePool(pool).getActiveStake());
 
-        // When unlocked: votingPower == 0
+        // When unlocked: votingPower still equals effective stake
+        // (we removed the "return 0 when unlocked" check)
         _advanceTime(LOCKUP_DURATION + 1);
         assertFalse(IStakePool(pool).isLocked());
-        assertEq(IStakePool(pool).getVotingPowerNow(), 0);
+        assertEq(IStakePool(pool).getVotingPowerNow(), IStakePool(pool).getActiveStake());
     }
 
     function test_invariant_lockupNeverDecreases() public {

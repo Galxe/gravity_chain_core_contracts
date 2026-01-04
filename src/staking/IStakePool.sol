@@ -11,8 +11,8 @@ pragma solidity ^0.8.30;
 ///
 ///      Withdrawal Model:
 ///      - unstake() moves funds from activeStake to pending buckets sorted by lockedUntil
-///      - withdrawAvailable() claims all pending stake where (block.timestamp > lockedUntil + unbondingDelay)
-///      - immediateWithdraw() directly withdraws unlocked+unbonded stake
+///      - withdrawAvailable() claims all pending stake where (now > lockedUntil + unbondingDelay)
+///      - unstakeAndWithdraw() helper combines both operations
 ///      - All operations are O(log n) using prefix-sum buckets with binary search
 interface IStakePool {
     // ========================================================================
@@ -49,12 +49,6 @@ interface IStakePool {
     /// @param amount Total amount withdrawn
     /// @param recipient Address that received the funds
     event WithdrawalClaimed(address indexed pool, uint256 amount, address indexed recipient);
-
-    /// @notice Emitted when immediate withdrawal is executed
-    /// @param pool Address of this pool
-    /// @param amount Amount withdrawn immediately
-    /// @param recipient Address that received the funds
-    event ImmediateWithdrawal(address indexed pool, uint256 amount, address indexed recipient);
 
     /// @notice Emitted when lockup is renewed/extended
     /// @param pool Address of this pool
@@ -105,8 +99,7 @@ interface IStakePool {
     function getTotalPending() external view returns (uint256);
 
     /// @notice Get the voting power at a specific time T
-    /// @dev Voting power = activeStake - pending where lockedUntil <= T
-    ///      Returns 0 if lockedUntil <= atTime (main stake unlocked)
+    /// @dev Voting power = activeStake + effective pending (where lockedUntil > T)
     ///      Uses O(log n) binary search on pending buckets.
     /// @param atTime The timestamp (microseconds) to calculate voting power at
     /// @return Voting power in wei
@@ -119,7 +112,7 @@ interface IStakePool {
     function getVotingPowerNow() external view returns (uint256);
 
     /// @notice Get the effective stake at a specific time T
-    /// @dev Effective stake = activeStake - pending where lockedUntil <= T
+    /// @dev Effective stake = activeStake + pending where lockedUntil > T
     ///      Uses O(log n) binary search on pending buckets.
     /// @param atTime The timestamp (microseconds) to calculate effective stake at
     /// @return Effective stake in wei
@@ -154,14 +147,9 @@ interface IStakePool {
     /// @return Cumulative amount that has been claimed
     function getClaimedAmount() external view returns (uint256);
 
-    /// @notice Get the amount available for immediate withdrawal
-    /// @dev Returns stake that is unlocked and past unbonding delay
-    /// @return Amount available for immediate withdrawal in wei
-    function getAvailableForImmediateWithdrawal() external view returns (uint256);
-
     /// @notice Get the amount available in withdrawAvailable()
     /// @dev Returns pending stake where (now > lockedUntil + unbondingDelay)
-    /// @return Amount available for batch withdrawal in wei
+    /// @return Amount available for withdrawal in wei
     function getClaimableAmount() external view returns (uint256);
 
     // ========================================================================
@@ -200,24 +188,12 @@ interface IStakePool {
 
     /// @notice Unstake tokens (move from active stake to pending bucket)
     /// @dev Only callable by staker. Creates or merges into a pending bucket.
-    ///      The unstaked amount becomes ineffective for voting power based on lockedUntil.
+    ///      The unstaked amount becomes ineffective for voting power when lockedUntil passes.
     ///      Tokens remain in contract until withdrawAvailable() is called after unbonding.
-    ///      For active validators, ensures effective stake after unstake >= minimumBond.
+    ///      For active validators, ensures effective stake at (now + minLockup) >= minimumBond.
     /// @param amount Amount to unstake
     function unstake(
         uint256 amount
-    ) external;
-
-    /// @notice Immediately withdraw unlocked and unbonded stake
-    /// @dev Only callable by staker. Only works for stake where:
-    ///      - lockedUntil has passed (stake is unlocked)
-    ///      - unbondingDelay has passed after lockedUntil
-    ///      This is independent from the pending bucket system.
-    /// @param amount Amount to withdraw
-    /// @param recipient Address to receive the withdrawn funds
-    function immediateWithdraw(
-        uint256 amount,
-        address recipient
     ) external;
 
     /// @notice Withdraw all available pending stake
@@ -229,6 +205,18 @@ interface IStakePool {
     function withdrawAvailable(
         address recipient
     ) external returns (uint256 amount);
+
+    /// @notice Helper: unstake and withdraw in one call
+    /// @dev Only callable by staker. Calls unstake(amount) then withdrawAvailable(recipient).
+    ///      Useful for users who want to unstake and immediately claim any previously
+    ///      pending amounts that have completed unbonding.
+    /// @param amount Amount to unstake
+    /// @param recipient Address to receive any available withdrawn funds
+    /// @return withdrawn Amount actually withdrawn (may be 0 if nothing is claimable yet)
+    function unstakeAndWithdraw(
+        uint256 amount,
+        address recipient
+    ) external returns (uint256 withdrawn);
 
     /// @notice Extend lockup by a specified duration
     /// @dev Only callable by staker. The resulting lockedUntil must be >= now + minLockupDuration.

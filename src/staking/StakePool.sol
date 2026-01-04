@@ -22,8 +22,8 @@ import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
 ///      Withdrawal Model:
 ///      - unstake() creates pending buckets sorted by lockedUntil with prefix-sum cumulativeAmount
 ///      - withdrawAvailable() claims all pending where (now > lockedUntil + unbondingDelay)
-///      - immediateWithdraw() directly withdraws unlocked+unbonded active stake
-///      - Voting power = activeStake - ineffective pending (via O(log n) binary search)
+///      - unstakeAndWithdraw() helper combines both operations
+///      - Voting power = activeStake + effective pending (via O(log n) binary search)
 contract StakePool is IStakePool, Ownable2Step {
     // ========================================================================
     // IMMUTABLES
@@ -152,12 +152,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function getVotingPower(
         uint64 atTime
     ) external view returns (uint256) {
-        // Main stake must be locked at time T
-        if (lockedUntil <= atTime) {
-            return 0;
-        }
-
-        // Calculate effective stake (activeStake minus ineffective pending)
+        // Voting power = effective stake at time T
         return _getEffectiveStakeAt(atTime);
     }
 
@@ -209,19 +204,6 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function getClaimedAmount() external view returns (uint256) {
         return claimedAmount;
-    }
-
-    /// @inheritdoc IStakePool
-    function getAvailableForImmediateWithdrawal() external view returns (uint256) {
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 unbondingDelay = IStakingConfig(SystemAddresses.STAKE_CONFIG).unbondingDelayMicros();
-
-        // Check if stake is unlocked and past unbonding delay
-        if (now_ <= lockedUntil + unbondingDelay) {
-            return 0;
-        }
-
-        return activeStake;
     }
 
     /// @inheritdoc IStakePool
@@ -288,92 +270,26 @@ contract StakePool is IStakePool, Ownable2Step {
     function unstake(
         uint256 amount
     ) external onlyStaker {
-        if (amount == 0) {
-            revert Errors.ZeroAmount();
-        }
-
-        // Check available active stake
-        if (amount > activeStake) {
-            revert Errors.InsufficientAvailableStake(amount, activeStake);
-        }
-
-        // For validators, check that effective stake after unstake >= minimumBond
-        IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
-        if (validatorMgmt.isValidator(address(this))) {
-            ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
-            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
-                uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-                uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-                // Calculate effective stake after this unstake
-                uint256 currentEffective = _getEffectiveStakeAt(now_);
-
-                // After unstake, effective stake will be reduced by amount
-                if (currentEffective < amount + minBond) {
-                    revert Errors.WithdrawalWouldBreachMinimumBond(currentEffective - amount, minBond);
-                }
-            }
-        }
-
-        // Reduce active stake
-        activeStake -= amount;
-
-        // Add to pending bucket with lockedUntil
-        _addToPendingBucket(lockedUntil, amount);
-
-        emit Unstaked(address(this), amount, lockedUntil);
-    }
-
-    /// @inheritdoc IStakePool
-    function immediateWithdraw(
-        uint256 amount,
-        address recipient
-    ) external onlyStaker {
-        if (amount == 0) {
-            revert Errors.ZeroAmount();
-        }
-
-        uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint64 unbondingDelay = IStakingConfig(SystemAddresses.STAKE_CONFIG).unbondingDelayMicros();
-
-        // Check if stake is unlocked and past unbonding delay
-        if (now_ <= lockedUntil + unbondingDelay) {
-            revert Errors.WithdrawalNotClaimable(lockedUntil + unbondingDelay, now_);
-        }
-
-        // Check available active stake
-        if (amount > activeStake) {
-            revert Errors.InsufficientAvailableStake(amount, activeStake);
-        }
-
-        // Update state (CEI pattern)
-        activeStake -= amount;
-
-        emit ImmediateWithdrawal(address(this), amount, recipient);
-
-        // Transfer tokens to recipient
-        (bool success,) = payable(recipient).call{ value: amount }("");
-        if (!success) revert Errors.TransferFailed();
+        _unstake(amount);
     }
 
     /// @inheritdoc IStakePool
     function withdrawAvailable(
         address recipient
     ) external onlyStaker returns (uint256 amount) {
-        amount = _getClaimableAmount();
+        amount = _withdrawAvailable(recipient);
+    }
 
-        if (amount == 0) {
-            return 0;
-        }
+    /// @inheritdoc IStakePool
+    function unstakeAndWithdraw(
+        uint256 amount,
+        address recipient
+    ) external onlyStaker returns (uint256 withdrawn) {
+        // First unstake the requested amount
+        _unstake(amount);
 
-        // Update claim pointer (CEI pattern)
-        claimedAmount += amount;
-
-        emit WithdrawalClaimed(address(this), amount, recipient);
-
-        // Transfer tokens to recipient
-        (bool success,) = payable(recipient).call{ value: amount }("");
-        if (!success) revert Errors.TransferFailed();
+        // Then withdraw any claimable pending amounts
+        withdrawn = _withdrawAvailable(recipient);
     }
 
     /// @inheritdoc IStakePool
@@ -423,6 +339,95 @@ contract StakePool is IStakePool, Ownable2Step {
     // INTERNAL FUNCTIONS
     // ========================================================================
 
+    /// @notice Internal unstake implementation
+    /// @param amount Amount to unstake
+    function _unstake(
+        uint256 amount
+    ) internal {
+        if (amount == 0) {
+            revert Errors.ZeroAmount();
+        }
+
+        // Check available active stake
+        if (amount > activeStake) {
+            revert Errors.InsufficientAvailableStake(amount, activeStake);
+        }
+
+        // For validators, check that effective stake at (now + minLockup) >= minimumBond
+        // This ensures the bond is maintained throughout the lockup period
+        IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+        if (validatorMgmt.isValidator(address(this))) {
+            ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
+            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+                uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+                uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+                uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+
+                // Calculate effective stake at (now + minLockup) after this unstake
+                // The new pending bucket will have lockedUntil = current pool's lockedUntil
+                // At time (now + minLockup), any bucket with lockedUntil <= (now + minLockup) is ineffective
+                uint256 futureEffective = _getEffectiveStakeAt(now_ + minLockup);
+
+                // After unstake, the amount moves to pending with lockedUntil
+                // If lockedUntil <= (now + minLockup), this amount becomes ineffective immediately
+                // If lockedUntil > (now + minLockup), this amount is still effective
+                // Since we're creating a bucket with current lockedUntil, and lockedUntil >= now + minLockup,
+                // the new pending is still effective at (now + minLockup)
+                // So futureEffective doesn't change due to this unstake for the check
+
+                // Actually, wait - futureEffective is calculated BEFORE unstake
+                // After unstake: activeStake decreases, pending increases
+                // At time (now + minLockup), if bucket's lockedUntil <= (now + minLockup), it's ineffective
+                // If lockedUntil > (now + minLockup), it's still effective
+
+                // The bucket we create has lockedUntil = this.lockedUntil
+                // If this.lockedUntil <= (now + minLockup): bucket becomes ineffective at (now + minLockup)
+                //    So futureEffective after unstake = futureEffective before - amount
+                // If this.lockedUntil > (now + minLockup): bucket is still effective at (now + minLockup)
+                //    So futureEffective after unstake = futureEffective before (no change, just moved from active to effective pending)
+
+                // Check if current lockedUntil will make the pending ineffective at (now + minLockup)
+                if (lockedUntil <= now_ + minLockup) {
+                    // Pending will be ineffective at (now + minLockup), so effective stake decreases
+                    if (futureEffective < amount + minBond) {
+                        revert Errors.WithdrawalWouldBreachMinimumBond(futureEffective - amount, minBond);
+                    }
+                }
+                // else: pending is still effective at (now + minLockup), no change in effective stake
+            }
+        }
+
+        // Reduce active stake
+        activeStake -= amount;
+
+        // Add to pending bucket with lockedUntil
+        _addToPendingBucket(lockedUntil, amount);
+
+        emit Unstaked(address(this), amount, lockedUntil);
+    }
+
+    /// @notice Internal withdrawAvailable implementation
+    /// @param recipient Address to receive withdrawn funds
+    /// @return amount Amount withdrawn
+    function _withdrawAvailable(
+        address recipient
+    ) internal returns (uint256 amount) {
+        amount = _getClaimableAmount();
+
+        if (amount == 0) {
+            return 0;
+        }
+
+        // Update claim pointer (CEI pattern)
+        claimedAmount += amount;
+
+        emit WithdrawalClaimed(address(this), amount, recipient);
+
+        // Transfer tokens to recipient
+        (bool success,) = payable(recipient).call{ value: amount }("");
+        if (!success) revert Errors.TransferFailed();
+    }
+
     /// @notice Add amount to pending bucket with given lockedUntil
     /// @dev Either merges into last bucket (if same lockedUntil) or appends new bucket
     /// @param bucketLockedUntil The lockedUntil for this pending amount
@@ -455,7 +460,8 @@ contract StakePool is IStakePool, Ownable2Step {
     }
 
     /// @notice Calculate effective stake at a given time using O(log n) binary search
-    /// @dev Effective stake = activeStake - (pending that has become ineffective by time T)
+    /// @dev Effective stake = activeStake + (pending that is still effective at time T)
+    ///      A pending bucket is "effective" when its lockedUntil > T
     ///      A pending bucket is "ineffective" when its lockedUntil <= T
     /// @param atTime The timestamp to calculate at (microseconds)
     /// @return Effective stake amount
@@ -472,29 +478,16 @@ contract StakePool is IStakePool, Ownable2Step {
             ineffective -= claimedAmount;
         }
 
-        // Return activeStake (pending is already separate from activeStake)
-        // The "ineffective" here means pending that should NOT count as voting power
-        // Since pending is already not in activeStake, we return activeStake directly
-        // Wait - let me reconsider...
-
-        // Actually, for voting power calculation:
-        // - activeStake = stake not in pending (available to stake more or withdraw immediately when unlocked)
-        // - pending = stake that has been unstaked but not yet claimed
-
         // Effective stake for voting = activeStake + pending that is still "effective"
         // Pending is "effective" if its lockedUntil > atTime (still locked at that time)
         // Pending is "ineffective" if its lockedUntil <= atTime (will be unlocked at that time)
-
-        // So: effectiveStake = activeStake + (totalPending - ineffectivePending)
-        //                    = activeStake + totalPending - ineffectivePending
+        //
+        // effectiveStake = activeStake + (totalPending - ineffectivePending)
 
         uint256 totalPending;
         if (_pendingBuckets.length > 0) {
             totalPending = _pendingBuckets[_pendingBuckets.length - 1].cumulativeAmount - claimedAmount;
         }
-
-        // ineffective = cumulative at atTime - claimedAmount (capped at 0)
-        // effectivePending = totalPending - ineffective
 
         if (ineffective >= totalPending) {
             // All pending is ineffective
