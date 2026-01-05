@@ -176,8 +176,6 @@ contract ValidatorManagementTest is Test {
         ValidatorRecord memory record = validatorManager.getValidator(pool);
         assertEq(record.validator, pool, "Validator should match pool");
         assertEq(record.moniker, "alice-validator", "Moniker should match");
-        assertEq(record.owner, alice, "Owner should be alice");
-        assertEq(record.operator, alice, "Operator should be alice");
         assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Status should be INACTIVE");
         assertEq(record.bond, MIN_BOND, "Bond should match");
     }

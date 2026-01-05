@@ -56,19 +56,11 @@ struct ValidatorRecord {
     address validator;
     /// @notice Display name (max 31 bytes)
     string moniker;
-    /// @notice Owner address (controls bond, can set operator)
-    address owner;
-    /// @notice Operator address (can rotate keys, request join/leave)
-    address operator;
-    /// @notice Current lifecycle status
+   /// @notice Current lifecycle status
     ValidatorStatus status;
-    // === Bond Management (simplified - no 4-bucket model) ===
-    /// @notice Current validator bond amount
+    // === Bond Management ===
+    /// @notice Current validator bond amount (voting power snapshot at epoch boundary)
     uint256 bond;
-    /// @notice Pending unbond amount (effective next epoch)
-    uint256 pendingUnbond;
-    /// @notice When unbond becomes withdrawable (microseconds)
-    uint64 unbondAvailableAt;
     // === Consensus Key Material ===
     /// @notice BLS consensus public key
     bytes consensusPubkey;

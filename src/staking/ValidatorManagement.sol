@@ -209,10 +209,8 @@ contract ValidatorManagement is IValidatorManagement {
         record.moniker = moniker;
         record.stakingPool = stakePool;
 
-        // Set roles from staking contract
-        record.owner = IStaking(SystemAddresses.STAKING).getPoolOwner(stakePool);
-        record.operator = IStaking(SystemAddresses.STAKING).getPoolOperator(stakePool);
-        record.feeRecipient = record.owner; // TODO(yxia): the fee recipient should be a parameter.
+        // Set fee recipient from staking contract
+        record.feeRecipient = IStaking(SystemAddresses.STAKING).getPoolOwner(stakePool); // TODO(yxia): the fee recipient should be a parameter.
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;
@@ -373,8 +371,9 @@ contract ValidatorManagement is IValidatorManagement {
         // 8. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 9. Update owner/operator from stake pool for all active validators
-        _syncValidatorRoles();
+        // 9. Update bond (voting power) for all active validators
+        //    This captures post-lockup-renewal voting power
+        _syncValidatorBonds();
 
         // 10. Update total voting power
         //     Note: Epoch is managed by Reconfiguration contract (single source of truth)
@@ -492,19 +491,16 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
-    /// @notice Sync owner/operator from stake pool
-    function _syncValidatorRoles() internal {
+    /// @notice Update bond (voting power) for all active validators
+    /// @dev Called after lockup renewal to capture post-renewal voting power.
+    ///      Note: owner/operator are not synced here - they are set during registration
+    ///      and the authoritative source is always the StakePool contract.
+    function _syncValidatorBonds() internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
             address pool = _activeValidators[i];
-            ValidatorRecord storage validator = _validators[pool];
-
-            // Update owner and operator from stake pool
-            validator.owner = IStaking(SystemAddresses.STAKING).getPoolOwner(pool);
-            validator.operator = IStaking(SystemAddresses.STAKING).getPoolOperator(pool);
-
-            // Update bond (voting power snapshot)
-            validator.bond = _getValidatorVotingPower(pool);
+            // Update bond (voting power snapshot after lockup renewal)
+            _validators[pool].bond = _getValidatorVotingPower(pool);
         }
     }
 

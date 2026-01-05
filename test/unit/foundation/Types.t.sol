@@ -108,12 +108,8 @@ contract TypesTest is Test {
 
         assertEq(record.validator, address(0x1234));
         assertEq(record.moniker, "TestValidator");
-        assertEq(record.owner, address(0x5678));
-        assertEq(record.operator, address(0x9ABC));
         assertEq(uint8(record.status), uint8(ValidatorStatus.ACTIVE));
         assertEq(record.bond, 1000 ether);
-        assertEq(record.pendingUnbond, 0);
-        assertEq(record.unbondAvailableAt, 0);
         assertEq(record.feeRecipient, address(0x5678));
         assertEq(record.pendingFeeRecipient, address(0));
         assertEq(record.stakingPool, address(0));
@@ -234,12 +230,8 @@ contract TypesTest is Test {
         return ValidatorRecord({
             validator: address(0x1234),
             moniker: "TestValidator",
-            owner: address(0x5678),
-            operator: address(0x9ABC),
             status: ValidatorStatus.ACTIVE,
             bond: 1000 ether,
-            pendingUnbond: 0,
-            unbondAvailableAt: 0,
             consensusPubkey: hex"aabbccdd",
             consensusPop: hex"11223344",
             networkAddresses: hex"",
