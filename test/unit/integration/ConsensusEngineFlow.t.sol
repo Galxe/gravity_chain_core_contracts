@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { Blocker } from "../../../src/blocker/Blocker.sol";
 import { Reconfiguration } from "../../../src/blocker/Reconfiguration.sol";
 import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
@@ -78,6 +78,9 @@ contract ConsensusEngineFlowTest is Test {
     // Events
     event EpochTransitionStarted(uint64 indexed epoch);
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
+    event NewEpochEvent(
+        uint64 indexed newEpoch, ValidatorConsensusInfo[] validatorSet, uint256 totalVotingPower, uint64 transitionTime
+    );
     event DKGStartEvent(
         uint64 indexed sessionEpoch,
         RandomnessConfig.RandomnessConfigData config,
@@ -569,6 +572,143 @@ contract ConsensusEngineFlowTest is Test {
         // (In production, NIL blocks have proposer = vm_reserved)
         bool started = _simulateBlockPrologue();
         assertTrue(started, "NIL block should still trigger epoch transition");
+    }
+
+    // ========================================================================
+    // NEW EPOCH EVENT TESTS
+    // ========================================================================
+
+    /// @notice Test that NewEpochEvent is emitted with correct epoch and validator set
+    /// @dev Consensus engine relies on this event to get the new validator set
+    function test_newEpochEvent_emittedWithValidatorSet() public {
+        // Setup validators
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND * 2, "bob");
+        _processEpoch();
+
+        // Advance past epoch interval
+        _advanceTime(TWO_HOURS + 1);
+        _simulateBlockPrologue();
+
+        // Get expected validator set BEFORE reconfiguration completes
+        // (getNextValidatorConsensusInfos gives us what the set will be)
+        ValidatorConsensusInfo[] memory expectedValidators = validatorManager.getNextValidatorConsensusInfos();
+        uint256 expectedTotalPower = MIN_BOND + MIN_BOND * 2; // alice + bob
+
+        // Expect the NewEpochEvent to be emitted
+        // checkTopic1 = true (indexed newEpoch), checkTopic2 = false, checkTopic3 = false, checkData = true
+        vm.expectEmit(true, false, false, true, address(reconfig));
+        emit NewEpochEvent(1, expectedValidators, expectedTotalPower, timestamp.nowMicroseconds());
+
+        // Complete reconfiguration
+        _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
+
+        // Verify validator set matches what getActiveValidators() returns
+        ValidatorConsensusInfo[] memory validators = validatorManager.getActiveValidators();
+        assertEq(validators.length, 2, "Should have 2 validators");
+
+        // Verify pools are in the validator set
+        bool aliceFound = false;
+        bool bobFound = false;
+        for (uint256 i = 0; i < validators.length; i++) {
+            if (validators[i].validator == pool1) aliceFound = true;
+            if (validators[i].validator == pool2) bobFound = true;
+        }
+        assertTrue(aliceFound, "Alice should be in validator set");
+        assertTrue(bobFound, "Bob should be in validator set");
+    }
+
+    /// @notice Test that NewEpochEvent contains correct validator set data after churn
+    /// @dev Verifies event data is accurate when validators join and leave
+    function test_newEpochEvent_validatorSetAfterChurn() public {
+        // Setup initial validators
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND * 2, "bob");
+        _createRegisterAndJoin(charlie, MIN_BOND * 3, "charlie");
+        _processEpoch();
+
+        // Bob leaves
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        // David joins (within 20% limit)
+        address pool4 = _createAndRegisterValidator(david, MIN_BOND, "david");
+        vm.prank(david);
+        validatorManager.joinValidatorSet(pool4);
+
+        // Advance and start transition
+        _advanceTime(TWO_HOURS + 1);
+        _simulateBlockPrologue();
+
+        // Complete reconfiguration
+        _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
+
+        // Verify validator set after epoch transition
+        ValidatorConsensusInfo[] memory validators = validatorManager.getActiveValidators();
+        assertEq(validators.length, 3, "Should have 3 validators (alice, charlie, david)");
+
+        // Verify Bob is NOT in the set and David IS
+        bool bobFound = false;
+        bool davidFound = false;
+        for (uint256 i = 0; i < validators.length; i++) {
+            if (validators[i].validator == pool2) bobFound = true;
+            if (validators[i].validator == pool4) davidFound = true;
+        }
+        assertFalse(bobFound, "Bob should NOT be in validator set after leaving");
+        assertTrue(davidFound, "David should be in validator set after joining");
+
+        // Verify total voting power matches
+        uint256 totalPower = validatorManager.getTotalVotingPower();
+        uint256 expectedPower = MIN_BOND + MIN_BOND * 3 + MIN_BOND; // alice + charlie + david
+        assertEq(totalPower, expectedPower, "Total voting power should match");
+    }
+
+    /// @notice Test that NewEpochEvent total voting power matches validator manager
+    function test_newEpochEvent_totalVotingPowerMatches() public {
+        // Setup validators with different stakes
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND * 2, "bob");
+        _createRegisterAndJoin(charlie, MIN_BOND * 3, "charlie");
+        _processEpoch();
+
+        // Advance and complete epoch transition
+        _advanceTime(TWO_HOURS + 1);
+        _simulateBlockPrologue();
+        _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
+
+        // Verify total voting power
+        uint256 totalPower = validatorManager.getTotalVotingPower();
+        uint256 expectedPower = MIN_BOND + MIN_BOND * 2 + MIN_BOND * 3;
+        assertEq(totalPower, expectedPower, "Total voting power should be sum of all validators");
+    }
+
+    /// @notice Test NewEpochEvent across multiple epoch transitions
+    /// @dev Ensures event is consistently emitted with correct data
+    function test_newEpochEvent_multipleTransitions() public {
+        // Setup validators
+        _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        uint256 expectedTotalPower = MIN_BOND * 2; // alice + bob
+
+        // Complete 3 epochs and verify event each time
+        for (uint64 epoch = 0; epoch < 3; epoch++) {
+            _advanceTime(TWO_HOURS + 1);
+            _simulateBlockPrologue();
+
+            // Get expected validator set for this transition
+            ValidatorConsensusInfo[] memory expectedValidators = validatorManager.getNextValidatorConsensusInfos();
+
+            // Expect the NewEpochEvent to be emitted with correct epoch
+            vm.expectEmit(true, false, false, true, address(reconfig));
+            emit NewEpochEvent(epoch + 1, expectedValidators, expectedTotalPower, timestamp.nowMicroseconds());
+
+            _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
+
+            // Verify epoch advanced
+            assertEq(reconfig.currentEpoch(), epoch + 1, "Epoch should advance");
+        }
     }
 
     // ========================================================================

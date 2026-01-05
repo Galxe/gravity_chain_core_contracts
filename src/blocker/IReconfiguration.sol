@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import { ValidatorConsensusInfo } from "../foundation/Types.sol";
+
 /// @title IReconfiguration
 /// @author Gravity Team
 /// @notice Interface for the Reconfiguration contract (epoch lifecycle management)
@@ -28,6 +30,17 @@ interface IReconfiguration {
     /// @param newEpoch The new epoch number
     /// @param transitionTime Timestamp when transition completed (microseconds)
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
+
+    /// @notice Emitted when epoch transition completes with full validator set
+    /// @dev Consensus engine listens for this event to update validator set.
+    ///      Contains complete validator data needed for consensus to operate.
+    /// @param newEpoch The new epoch number
+    /// @param validatorSet Complete validator consensus info for the new epoch
+    /// @param totalVotingPower Total voting power of all validators
+    /// @param transitionTime Timestamp when transition completed (microseconds)
+    event NewEpochEvent(
+        uint64 indexed newEpoch, ValidatorConsensusInfo[] validatorSet, uint256 totalVotingPower, uint64 transitionTime
+    );
 
     // ========================================================================
     // INITIALIZATION

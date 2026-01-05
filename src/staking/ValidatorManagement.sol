@@ -380,7 +380,8 @@ contract ValidatorManagement is IValidatorManagement {
         totalVotingPower = _calculateTotalVotingPower();
 
         // TODO(lightman): validator's voting power needs to be uint64 on the consensus engine.
-        // TODO(yxia): where is the validator set update event?? CRITICAL.
+        // NOTE: The NewEpochEvent (emitted by Reconfiguration._applyReconfiguration) contains
+        // the full validator set for the consensus engine. EpochProcessed is for internal tracking.
         // Get next epoch from Reconfiguration (will be incremented after this call)
         uint64 nextEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch() + 1;
         emit EpochProcessed(nextEpoch, _activeValidators.length, totalVotingPower);

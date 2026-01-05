@@ -53,6 +53,15 @@ contract MockValidatorManagementBlocker {
         return _validators[index];
     }
 
+    /// @notice Get total voting power of active validators
+    function getTotalVotingPower() external view returns (uint256) {
+        uint256 total = 0;
+        for (uint256 i = 0; i < _validators.length; i++) {
+            total += _validators[i].votingPower;
+        }
+        return total;
+    }
+
     function onNewEpoch() external {
         currentEpoch++;
     }

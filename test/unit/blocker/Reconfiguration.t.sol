@@ -45,11 +45,13 @@ contract MockValidatorManagement {
     ) external {
         delete _curValidators;
         delete _nextValidators;
+        delete _validators;
         for (uint256 i = 0; i < dealers.length; i++) {
             _curValidators.push(dealers[i]);
         }
         for (uint256 i = 0; i < targets.length; i++) {
             _nextValidators.push(targets[i]);
+            _validators.push(targets[i]); // Active validators = targets after transition
         }
     }
 
@@ -65,6 +67,15 @@ contract MockValidatorManagement {
     /// @notice Get projected next epoch validators for DKG targets
     function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
         return _nextValidators;
+    }
+
+    /// @notice Get total voting power of active validators
+    function getTotalVotingPower() external view returns (uint256) {
+        uint256 total = 0;
+        for (uint256 i = 0; i < _validators.length; i++) {
+            total += _validators[i].votingPower;
+        }
+        return total;
     }
 
     function onNewEpoch() external {

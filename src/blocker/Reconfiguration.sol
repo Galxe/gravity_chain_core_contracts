@@ -279,8 +279,16 @@ contract Reconfiguration is IReconfiguration {
         // 4. Reset state
         _transitionState = TransitionState.Idle;
 
-        // 5. Emit transition event
+        // 5. Get finalized validator set for NewEpochEvent
+        ValidatorConsensusInfo[] memory validatorSet =
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
+        uint256 totalVotingPower = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower();
+
+        // 6. Emit events
+        //    - EpochTransitioned: simple event for internal tracking
+        //    - NewEpochEvent: full validator set for consensus engine
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
+        emit NewEpochEvent(newEpoch, validatorSet, totalVotingPower, lastReconfigurationTime);
     }
 }
 

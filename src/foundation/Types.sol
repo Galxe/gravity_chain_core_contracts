@@ -56,7 +56,7 @@ struct ValidatorRecord {
     address validator;
     /// @notice Display name (max 31 bytes)
     string moniker;
-   /// @notice Current lifecycle status
+    /// @notice Current lifecycle status
     ValidatorStatus status;
     // === Bond Management ===
     /// @notice Current validator bond amount (voting power snapshot at epoch boundary)
