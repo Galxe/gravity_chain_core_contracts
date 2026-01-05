@@ -9,6 +9,7 @@ import { Errors } from "../foundation/Errors.sol";
 /// @author Gravity Team
 /// @notice Configuration parameters for validator registry
 /// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
+///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 ///      Controls validator bonding, set size limits, and join/leave rules.
 contract ValidatorConfig {
     // ========================================================================
@@ -20,6 +21,20 @@ contract ValidatorConfig {
 
     /// @notice Maximum allowed validator set size
     uint256 public constant MAX_VALIDATOR_SET_SIZE = 65536;
+
+    // ========================================================================
+    // TYPES
+    // ========================================================================
+
+    /// @notice Pending configuration data structure
+    struct PendingConfig {
+        uint256 minimumBond;
+        uint256 maximumBond;
+        uint64 unbondingDelayMicros;
+        bool allowValidatorSetChange;
+        uint64 votingPowerIncreaseLimitPct;
+        uint256 maxValidatorSetSize;
+    }
 
     // ========================================================================
     // STATE
@@ -43,6 +58,12 @@ contract ValidatorConfig {
     /// @notice Maximum number of validators in the set
     uint256 public maxValidatorSetSize;
 
+    /// @notice Pending configuration for next epoch
+    PendingConfig private _pendingConfig;
+
+    /// @notice Whether a pending configuration exists
+    bool public hasPendingConfig;
+
     /// @notice Whether the contract has been initialized
     bool private _initialized;
 
@@ -50,16 +71,14 @@ contract ValidatorConfig {
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when a configuration parameter is updated
-    /// @param param Parameter name hash
-    /// @param oldValue Previous value
-    /// @param newValue New value
-    event ConfigUpdated(bytes32 indexed param, uint256 oldValue, uint256 newValue);
+    /// @notice Emitted when configuration is applied at epoch boundary
+    event ValidatorConfigUpdated();
 
-    /// @notice Emitted when allowValidatorSetChange is updated
-    /// @param oldValue Previous value
-    /// @param newValue New value
-    event ValidatorSetChangeAllowedUpdated(bool oldValue, bool newValue);
+    /// @notice Emitted when pending configuration is set by governance
+    event PendingValidatorConfigSet();
+
+    /// @notice Emitted when pending configuration is cleared (applied or removed)
+    event PendingValidatorConfigCleared();
 
     // ========================================================================
     // INITIALIZATION
@@ -88,6 +107,130 @@ contract ValidatorConfig {
         }
 
         // Validate parameters
+        _validateConfig(
+            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize
+        );
+
+        minimumBond = _minimumBond;
+        maximumBond = _maximumBond;
+        unbondingDelayMicros = _unbondingDelayMicros;
+        allowValidatorSetChange = _allowValidatorSetChange;
+        votingPowerIncreaseLimitPct = _votingPowerIncreaseLimitPct;
+        maxValidatorSetSize = _maxValidatorSetSize;
+
+        _initialized = true;
+
+        emit ValidatorConfigUpdated();
+    }
+
+    // ========================================================================
+    // VIEW FUNCTIONS
+    // ========================================================================
+
+    /// @notice Get pending configuration if any
+    /// @return hasPending Whether a pending config exists
+    /// @return config The pending configuration (only valid if hasPending is true)
+    function getPendingConfig() external view returns (bool hasPending, PendingConfig memory config) {
+        _requireInitialized();
+        return (hasPendingConfig, _pendingConfig);
+    }
+
+    /// @notice Check if the contract has been initialized
+    /// @return True if initialized
+    function isInitialized() external view returns (bool) {
+        return _initialized;
+    }
+
+    // ========================================================================
+    // GOVERNANCE FUNCTIONS (GOVERNANCE only)
+    // ========================================================================
+
+    /// @notice Set configuration for next epoch
+    /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
+    /// @param _minimumBond Minimum bond to join validator set (must be > 0)
+    /// @param _maximumBond Maximum bond per validator (must be >= minimumBond)
+    /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
+    /// @param _allowValidatorSetChange Whether validators can join/leave post-genesis
+    /// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)
+    /// @param _maxValidatorSetSize Max validators in set (1-65536)
+    function setForNextEpoch(
+        uint256 _minimumBond,
+        uint256 _maximumBond,
+        uint64 _unbondingDelayMicros,
+        bool _allowValidatorSetChange,
+        uint64 _votingPowerIncreaseLimitPct,
+        uint256 _maxValidatorSetSize
+    ) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+
+        // Validate parameters
+        _validateConfig(
+            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize
+        );
+
+        _pendingConfig = PendingConfig({
+            minimumBond: _minimumBond,
+            maximumBond: _maximumBond,
+            unbondingDelayMicros: _unbondingDelayMicros,
+            allowValidatorSetChange: _allowValidatorSetChange,
+            votingPowerIncreaseLimitPct: _votingPowerIncreaseLimitPct,
+            maxValidatorSetSize: _maxValidatorSetSize
+        });
+        hasPendingConfig = true;
+
+        emit PendingValidatorConfigSet();
+    }
+
+    // ========================================================================
+    // EPOCH TRANSITION (RECONFIGURATION only)
+    // ========================================================================
+
+    /// @notice Apply pending configuration at epoch boundary
+    /// @dev Only callable by RECONFIGURATION during epoch transition.
+    ///      If no pending config exists, this is a no-op.
+    function applyPendingConfig() external {
+        requireAllowed(SystemAddresses.RECONFIGURATION);
+        _requireInitialized();
+
+        if (!hasPendingConfig) {
+            // No pending config, nothing to apply
+            return;
+        }
+
+        minimumBond = _pendingConfig.minimumBond;
+        maximumBond = _pendingConfig.maximumBond;
+        unbondingDelayMicros = _pendingConfig.unbondingDelayMicros;
+        allowValidatorSetChange = _pendingConfig.allowValidatorSetChange;
+        votingPowerIncreaseLimitPct = _pendingConfig.votingPowerIncreaseLimitPct;
+        maxValidatorSetSize = _pendingConfig.maxValidatorSetSize;
+
+        hasPendingConfig = false;
+
+        // Clear pending config storage
+        delete _pendingConfig;
+
+        emit ValidatorConfigUpdated();
+        emit PendingValidatorConfigCleared();
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    /// @notice Validate configuration parameters
+    /// @param _minimumBond Minimum bond value
+    /// @param _maximumBond Maximum bond value
+    /// @param _unbondingDelayMicros Unbonding delay
+    /// @param _votingPowerIncreaseLimitPct Voting power increase limit
+    /// @param _maxValidatorSetSize Max validator set size
+    function _validateConfig(
+        uint256 _minimumBond,
+        uint256 _maximumBond,
+        uint64 _unbondingDelayMicros,
+        uint64 _votingPowerIncreaseLimitPct,
+        uint256 _maxValidatorSetSize
+    ) internal pure {
         if (_minimumBond == 0) {
             revert Errors.InvalidMinimumBond();
         }
@@ -107,127 +250,12 @@ contract ValidatorConfig {
         if (_maxValidatorSetSize == 0 || _maxValidatorSetSize > MAX_VALIDATOR_SET_SIZE) {
             revert Errors.InvalidValidatorSetSize(_maxValidatorSetSize);
         }
-
-        minimumBond = _minimumBond;
-        maximumBond = _maximumBond;
-        unbondingDelayMicros = _unbondingDelayMicros;
-        allowValidatorSetChange = _allowValidatorSetChange;
-        votingPowerIncreaseLimitPct = _votingPowerIncreaseLimitPct;
-        maxValidatorSetSize = _maxValidatorSetSize;
-
-        _initialized = true;
     }
 
-    // ========================================================================
-    // GOVERNANCE SETTERS (GOVERNANCE only)
-    // ========================================================================
-
-    /// @notice Update minimum bond
-    /// @dev Only callable by GOVERNANCE
-    /// @param _minimumBond New minimum bond value (must be > 0 and <= maximumBond)
-    function setMinimumBond(
-        uint256 _minimumBond
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_minimumBond == 0) {
-            revert Errors.InvalidMinimumBond();
+    /// @notice Require the contract to be initialized
+    function _requireInitialized() internal view {
+        if (!_initialized) {
+            revert Errors.ValidatorConfigNotInitialized();
         }
-
-        if (_minimumBond > maximumBond) {
-            revert Errors.MinimumBondExceedsMaximum(_minimumBond, maximumBond);
-        }
-
-        uint256 oldValue = minimumBond;
-        minimumBond = _minimumBond;
-
-        emit ConfigUpdated("minimumBond", oldValue, _minimumBond);
-    }
-
-    /// @notice Update maximum bond
-    /// @dev Only callable by GOVERNANCE
-    /// @param _maximumBond New maximum bond value (must be >= minimumBond)
-    function setMaximumBond(
-        uint256 _maximumBond
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_maximumBond < minimumBond) {
-            revert Errors.MinimumBondExceedsMaximum(minimumBond, _maximumBond);
-        }
-
-        uint256 oldValue = maximumBond;
-        maximumBond = _maximumBond;
-
-        emit ConfigUpdated("maximumBond", oldValue, _maximumBond);
-    }
-
-    /// @notice Update unbonding delay
-    /// @dev Only callable by GOVERNANCE
-    /// @param _unbondingDelayMicros New unbonding delay in microseconds (must be > 0)
-    function setUnbondingDelayMicros(
-        uint64 _unbondingDelayMicros
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_unbondingDelayMicros == 0) {
-            revert Errors.InvalidUnbondingDelay();
-        }
-
-        uint256 oldValue = unbondingDelayMicros;
-        unbondingDelayMicros = _unbondingDelayMicros;
-
-        emit ConfigUpdated("unbondingDelayMicros", oldValue, _unbondingDelayMicros);
-    }
-
-    /// @notice Update allow validator set change flag
-    /// @dev Only callable by GOVERNANCE
-    /// @param _allow New value for allowValidatorSetChange
-    function setAllowValidatorSetChange(
-        bool _allow
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        bool oldValue = allowValidatorSetChange;
-        allowValidatorSetChange = _allow;
-
-        emit ValidatorSetChangeAllowedUpdated(oldValue, _allow);
-    }
-
-    /// @notice Update voting power increase limit
-    /// @dev Only callable by GOVERNANCE
-    /// @param _votingPowerIncreaseLimitPct New limit (1-50)
-    function setVotingPowerIncreaseLimitPct(
-        uint64 _votingPowerIncreaseLimitPct
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) {
-            revert Errors.InvalidVotingPowerIncreaseLimit(_votingPowerIncreaseLimitPct);
-        }
-
-        uint256 oldValue = votingPowerIncreaseLimitPct;
-        votingPowerIncreaseLimitPct = _votingPowerIncreaseLimitPct;
-
-        emit ConfigUpdated("votingPowerIncreaseLimitPct", oldValue, _votingPowerIncreaseLimitPct);
-    }
-
-    /// @notice Update max validator set size
-    /// @dev Only callable by GOVERNANCE
-    /// @param _maxValidatorSetSize New max size (1-65536)
-    function setMaxValidatorSetSize(
-        uint256 _maxValidatorSetSize
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_maxValidatorSetSize == 0 || _maxValidatorSetSize > MAX_VALIDATOR_SET_SIZE) {
-            revert Errors.InvalidValidatorSetSize(_maxValidatorSetSize);
-        }
-
-        uint256 oldValue = maxValidatorSetSize;
-        maxValidatorSetSize = _maxValidatorSetSize;
-
-        emit ConfigUpdated("maxValidatorSetSize", oldValue, _maxValidatorSetSize);
     }
 }
-

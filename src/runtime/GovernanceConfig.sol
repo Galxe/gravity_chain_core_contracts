@@ -8,7 +8,8 @@ import { Errors } from "../foundation/Errors.sol";
 /// @title GovernanceConfig
 /// @author Gravity Team
 /// @notice Configuration parameters for on-chain governance
-/// @dev Initialized at genesis, updatable via governance (GOVERNANCE)
+/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
+///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 contract GovernanceConfig {
     // ========================================================================
     // CONSTANTS
@@ -16,6 +17,18 @@ contract GovernanceConfig {
 
     /// @notice Maximum allowed early resolution threshold (100% = 10000 basis points)
     uint128 public constant MAX_EARLY_RESOLUTION_THRESHOLD_BPS = 10000;
+
+    // ========================================================================
+    // TYPES
+    // ========================================================================
+
+    /// @notice Pending configuration data structure
+    struct PendingConfig {
+        uint128 minVotingThreshold;
+        uint256 requiredProposerStake;
+        uint64 votingDurationMicros;
+        uint128 earlyResolutionThresholdBps;
+    }
 
     // ========================================================================
     // STATE
@@ -34,6 +47,12 @@ contract GovernanceConfig {
     /// @dev If yes or no votes exceed this % of total staked, proposal can resolve early
     uint128 public earlyResolutionThresholdBps;
 
+    /// @notice Pending configuration for next epoch
+    PendingConfig private _pendingConfig;
+
+    /// @notice Whether a pending configuration exists
+    bool public hasPendingConfig;
+
     /// @notice Whether contract has been initialized
     bool private _initialized;
 
@@ -41,11 +60,14 @@ contract GovernanceConfig {
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when a configuration parameter is updated
-    /// @param param Parameter name hash
-    /// @param oldValue Previous value
-    /// @param newValue New value
-    event ConfigUpdated(bytes32 indexed param, uint256 oldValue, uint256 newValue);
+    /// @notice Emitted when configuration is applied at epoch boundary
+    event GovernanceConfigUpdated();
+
+    /// @notice Emitted when pending configuration is set by governance
+    event PendingGovernanceConfigSet();
+
+    /// @notice Emitted when pending configuration is cleared (applied or removed)
+    event PendingGovernanceConfigCleared();
 
     // ========================================================================
     // INITIALIZATION
@@ -69,13 +91,8 @@ contract GovernanceConfig {
             revert Errors.AlreadyInitialized();
         }
 
-        if (_votingDurationMicros == 0) {
-            revert Errors.InvalidVotingDuration();
-        }
-
-        if (_earlyResolutionThresholdBps > MAX_EARLY_RESOLUTION_THRESHOLD_BPS) {
-            revert Errors.InvalidEarlyResolutionThreshold(_earlyResolutionThresholdBps);
-        }
+        // Validate parameters
+        _validateConfig(_votingDurationMicros, _earlyResolutionThresholdBps);
 
         minVotingThreshold = _minVotingThreshold;
         requiredProposerStake = _requiredProposerStake;
@@ -83,68 +100,115 @@ contract GovernanceConfig {
         earlyResolutionThresholdBps = _earlyResolutionThresholdBps;
 
         _initialized = true;
+
+        emit GovernanceConfigUpdated();
     }
 
     // ========================================================================
-    // SETTERS (GOVERNANCE only)
+    // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @notice Update minimum voting threshold
-    /// @dev Only callable by GOVERNANCE
-    /// @param _minVotingThreshold New minimum voting threshold
-    function setMinVotingThreshold(
-        uint128 _minVotingThreshold
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        emit ConfigUpdated(keccak256("minVotingThreshold"), minVotingThreshold, _minVotingThreshold);
-        minVotingThreshold = _minVotingThreshold;
+    /// @notice Get pending configuration if any
+    /// @return hasPending Whether a pending config exists
+    /// @return config The pending configuration (only valid if hasPending is true)
+    function getPendingConfig() external view returns (bool hasPending, PendingConfig memory config) {
+        _requireInitialized();
+        return (hasPendingConfig, _pendingConfig);
     }
 
-    /// @notice Update required proposer stake
-    /// @dev Only callable by GOVERNANCE
-    /// @param _requiredProposerStake New required proposer stake
-    function setRequiredProposerStake(
-        uint256 _requiredProposerStake
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        emit ConfigUpdated(keccak256("requiredProposerStake"), requiredProposerStake, _requiredProposerStake);
-        requiredProposerStake = _requiredProposerStake;
+    /// @notice Check if the contract has been initialized
+    /// @return True if initialized
+    function isInitialized() external view returns (bool) {
+        return _initialized;
     }
 
-    /// @notice Update voting duration
-    /// @dev Only callable by GOVERNANCE
-    /// @param _votingDurationMicros New voting duration in microseconds
-    function setVotingDurationMicros(
-        uint64 _votingDurationMicros
+    // ========================================================================
+    // GOVERNANCE FUNCTIONS (GOVERNANCE only)
+    // ========================================================================
+
+    /// @notice Set configuration for next epoch
+    /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
+    /// @param _minVotingThreshold Minimum votes for quorum
+    /// @param _requiredProposerStake Minimum stake to create proposal
+    /// @param _votingDurationMicros Voting period duration in microseconds (must be > 0)
+    /// @param _earlyResolutionThresholdBps Early resolution threshold in basis points (max 10000)
+    function setForNextEpoch(
+        uint128 _minVotingThreshold,
+        uint256 _requiredProposerStake,
+        uint64 _votingDurationMicros,
+        uint128 _earlyResolutionThresholdBps
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
 
+        // Validate parameters
+        _validateConfig(_votingDurationMicros, _earlyResolutionThresholdBps);
+
+        _pendingConfig = PendingConfig({
+            minVotingThreshold: _minVotingThreshold,
+            requiredProposerStake: _requiredProposerStake,
+            votingDurationMicros: _votingDurationMicros,
+            earlyResolutionThresholdBps: _earlyResolutionThresholdBps
+        });
+        hasPendingConfig = true;
+
+        emit PendingGovernanceConfigSet();
+    }
+
+    // ========================================================================
+    // EPOCH TRANSITION (RECONFIGURATION only)
+    // ========================================================================
+
+    /// @notice Apply pending configuration at epoch boundary
+    /// @dev Only callable by RECONFIGURATION during epoch transition.
+    ///      If no pending config exists, this is a no-op.
+    function applyPendingConfig() external {
+        requireAllowed(SystemAddresses.RECONFIGURATION);
+        _requireInitialized();
+
+        if (!hasPendingConfig) {
+            // No pending config, nothing to apply
+            return;
+        }
+
+        minVotingThreshold = _pendingConfig.minVotingThreshold;
+        requiredProposerStake = _pendingConfig.requiredProposerStake;
+        votingDurationMicros = _pendingConfig.votingDurationMicros;
+        earlyResolutionThresholdBps = _pendingConfig.earlyResolutionThresholdBps;
+
+        hasPendingConfig = false;
+
+        // Clear pending config storage
+        delete _pendingConfig;
+
+        emit GovernanceConfigUpdated();
+        emit PendingGovernanceConfigCleared();
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    /// @notice Validate configuration parameters
+    /// @param _votingDurationMicros Voting duration
+    /// @param _earlyResolutionThresholdBps Early resolution threshold
+    function _validateConfig(
+        uint64 _votingDurationMicros,
+        uint128 _earlyResolutionThresholdBps
+    ) internal pure {
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
         }
 
-        emit ConfigUpdated(keccak256("votingDurationMicros"), votingDurationMicros, _votingDurationMicros);
-        votingDurationMicros = _votingDurationMicros;
-    }
-
-    /// @notice Update early resolution threshold
-    /// @dev Only callable by GOVERNANCE
-    /// @param _earlyResolutionThresholdBps New threshold in basis points
-    function setEarlyResolutionThresholdBps(
-        uint128 _earlyResolutionThresholdBps
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
         if (_earlyResolutionThresholdBps > MAX_EARLY_RESOLUTION_THRESHOLD_BPS) {
             revert Errors.InvalidEarlyResolutionThreshold(_earlyResolutionThresholdBps);
         }
+    }
 
-        emit ConfigUpdated(
-            keccak256("earlyResolutionThresholdBps"), earlyResolutionThresholdBps, _earlyResolutionThresholdBps
-        );
-        earlyResolutionThresholdBps = _earlyResolutionThresholdBps;
+    /// @notice Require the contract to be initialized
+    function _requireInitialized() internal view {
+        if (!_initialized) {
+            revert Errors.GovernanceConfigNotInitialized();
+        }
     }
 }
-

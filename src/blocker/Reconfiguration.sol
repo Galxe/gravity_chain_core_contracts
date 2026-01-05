@@ -12,6 +12,11 @@ import { IDKG } from "../runtime/IDKG.sol";
 import { IRandomnessConfig } from "../runtime/IRandomnessConfig.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
 import { EpochConfig } from "../runtime/EpochConfig.sol";
+import { ConsensusConfig } from "../runtime/ConsensusConfig.sol";
+import { ExecutionConfig } from "../runtime/ExecutionConfig.sol";
+import { ValidatorConfig } from "../runtime/ValidatorConfig.sol";
+import { VersionConfig } from "../runtime/VersionConfig.sol";
+import { GovernanceConfig } from "../runtime/GovernanceConfig.sol";
 
 /// @title Reconfiguration
 /// @author Gravity Team
@@ -88,31 +93,19 @@ contract Reconfiguration is IReconfiguration {
             return false;
         }
 
-        // 3. Get validator consensus infos from ValidatorManagement
-        //    - Dealers: Current validators (active + pending_inactive) who run DKG
-        //    - Targets: Projected next epoch validators who receive DKG keys
-        //    Following Aptos's reconfiguration_with_dkg.move pattern
-        ValidatorConsensusInfo[] memory dealers =
-            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurValidatorConsensusInfos();
-        ValidatorConsensusInfo[] memory targets =
-            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getNextValidatorConsensusInfos();
-
-        // 4. Get randomness config
+        // 3. Get randomness config to check if DKG is enabled
         RandomnessConfig.RandomnessConfigData memory config =
             IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).getCurrentConfig();
 
-        // 5. Clear any stale DKG session
-        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
+        // 4. Handle based on DKG mode
+        if (config.variant == RandomnessConfig.ConfigVariant.Off) {
+            // Simple reconfiguration: DKG disabled, do immediate epoch transition
+            _doImmediateReconfigure();
+        } else {
+            // Async reconfiguration with DKG: start DKG session
+            _startDkgSession(config);
+        }
 
-        // 6. Start DKG session - emits DKGStartEvent for consensus engine
-        //    Dealers are current validators, targets are projected next epoch validators
-        IDKG(SystemAddresses.DKG).start(currentEpoch, config, dealers, targets);
-
-        // 7. Update state
-        _transitionState = TransitionState.DkgInProgress;
-        _transitionStartedAtEpoch = currentEpoch;
-
-        emit EpochTransitionStarted(currentEpoch);
         return true;
     }
 
@@ -137,7 +130,14 @@ contract Reconfiguration is IReconfiguration {
 
         // 3. Apply pending configs BEFORE validator changes
         //    This ensures new configs are active for the new epoch's first block
+        //    Following Aptos pattern: all config modules apply pending changes at epoch boundary
         IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
+        ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
+        ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
+        VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
+        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
         // 4. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
         //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
@@ -155,6 +155,31 @@ contract Reconfiguration is IReconfiguration {
 
         // 7. Emit transition event
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
+    }
+
+    /// @inheritdoc IReconfiguration
+    function governanceReconfigure() external override {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+
+        // If transition already in progress, governance can just call finishTransition() directly
+        if (_transitionState == TransitionState.DkgInProgress) {
+            revert Errors.ReconfigurationInProgress();
+        }
+
+        // Get randomness config to check if DKG is enabled
+        RandomnessConfig.RandomnessConfigData memory config =
+            IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).getCurrentConfig();
+
+        // If DKG is disabled (variant == Off), do immediate reconfigure
+        // Otherwise, start DKG and require finishTransition() to complete
+        if (config.variant == RandomnessConfig.ConfigVariant.Off) {
+            // DKG disabled: perform immediate reconfigure
+            _doImmediateReconfigure();
+        } else {
+            // DKG enabled: start DKG session
+            _startDkgSession(config);
+        }
     }
 
     // ========================================================================
@@ -215,6 +240,57 @@ contract Reconfiguration is IReconfiguration {
         if (!_initialized) {
             revert Errors.ReconfigurationNotInitialized();
         }
+    }
+
+    /// @notice Start a DKG session for epoch transition
+    /// @param config Randomness config for DKG
+    function _startDkgSession(
+        RandomnessConfig.RandomnessConfigData memory config
+    ) internal {
+        // Get validator consensus infos
+        ValidatorConsensusInfo[] memory dealers =
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurValidatorConsensusInfos();
+        ValidatorConsensusInfo[] memory targets =
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getNextValidatorConsensusInfos();
+
+        // Clear any stale DKG session
+        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
+
+        // Start DKG session
+        IDKG(SystemAddresses.DKG).start(currentEpoch, config, dealers, targets);
+
+        // Update state
+        _transitionState = TransitionState.DkgInProgress;
+        _transitionStartedAtEpoch = currentEpoch;
+
+        emit EpochTransitionStarted(currentEpoch);
+    }
+
+    /// @notice Perform immediate reconfigure when DKG is disabled
+    /// @dev Used by governanceReconfigure() when randomness variant is 0
+    function _doImmediateReconfigure() internal {
+        // Clear any stale DKG session
+        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
+
+        // Apply pending configs
+        IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
+        ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
+        ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
+        VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
+        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
+
+        // Notify validator manager
+        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
+
+        // Increment epoch and update timestamp
+        uint64 newEpoch = currentEpoch + 1;
+        currentEpoch = newEpoch;
+        lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+
+        // Emit transition event (no start event for immediate reconfigure)
+        emit EpochTransitioned(newEpoch, lastReconfigurationTime);
     }
 }
 

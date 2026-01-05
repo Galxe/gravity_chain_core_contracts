@@ -8,7 +8,7 @@ import { Errors } from "../../../src/foundation/Errors.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title VersionConfigTest
-/// @notice Unit tests for VersionConfig contract
+/// @notice Unit tests for VersionConfig contract with pending pattern
 contract VersionConfigTest is Test {
     VersionConfig public config;
 
@@ -26,6 +26,7 @@ contract VersionConfigTest is Test {
     function test_InitialState() public view {
         assertEq(config.majorVersion(), 0);
         assertFalse(config.isInitialized());
+        assertFalse(config.hasPendingConfig());
     }
 
     // ========================================================================
@@ -73,85 +74,135 @@ contract VersionConfigTest is Test {
     }
 
     // ========================================================================
-    // SETTER TESTS - setMajorVersion
+    // SETTER TESTS - setForNextEpoch
     // ========================================================================
 
-    function test_SetMajorVersion() public {
+    function test_SetForNextEpoch() public {
         _initializeConfig();
 
         uint64 newVersion = INITIAL_VERSION + 1;
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMajorVersion(newVersion);
+        config.setForNextEpoch(newVersion);
 
-        assertEq(config.majorVersion(), newVersion);
+        // Should not change current version, only set pending
+        assertEq(config.majorVersion(), INITIAL_VERSION);
+        assertTrue(config.hasPendingConfig());
+
+        (bool hasPending, uint64 pendingVersion) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pendingVersion, newVersion);
     }
 
-    function test_SetMajorVersion_MultipleIncrements() public {
-        _initializeConfig();
-
-        // Increment multiple times
-        for (uint64 i = 2; i <= 10; i++) {
-            vm.prank(SystemAddresses.GOVERNANCE);
-            config.setMajorVersion(i);
-            assertEq(config.majorVersion(), i);
-        }
-    }
-
-    function test_SetMajorVersion_SkipVersions() public {
+    function test_SetForNextEpoch_SkipVersions() public {
         _initializeConfig();
 
         // Can skip versions (e.g., go from 1 to 10)
         uint64 newVersion = 10;
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMajorVersion(newVersion);
+        config.setForNextEpoch(newVersion);
 
-        assertEq(config.majorVersion(), newVersion);
+        assertTrue(config.hasPendingConfig());
+        (bool hasPending, uint64 pendingVersion) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pendingVersion, newVersion);
     }
 
-    function test_RevertWhen_SetMajorVersion_SameVersion() public {
+    function test_RevertWhen_SetForNextEpoch_SameVersion() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.VersionMustIncrease.selector, INITIAL_VERSION, INITIAL_VERSION));
-        config.setMajorVersion(INITIAL_VERSION);
+        config.setForNextEpoch(INITIAL_VERSION);
     }
 
-    function test_RevertWhen_SetMajorVersion_LowerVersion() public {
+    function test_RevertWhen_SetForNextEpoch_LowerVersion() public {
         _initializeConfig();
 
-        // First increase version
+        // Try to set a lower version
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMajorVersion(5);
-
-        // Try to decrease
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.VersionMustIncrease.selector, 5, 3));
-        config.setMajorVersion(3);
+        vm.expectRevert(abi.encodeWithSelector(Errors.VersionMustIncrease.selector, INITIAL_VERSION, 0));
+        config.setForNextEpoch(0);
     }
 
-    function test_RevertWhen_SetMajorVersion_NotInitialized() public {
+    function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.VersionNotInitialized.selector);
-        config.setMajorVersion(INITIAL_VERSION);
+        config.setForNextEpoch(INITIAL_VERSION);
     }
 
-    function test_RevertWhen_SetMajorVersion_NotGovernance() public {
+    function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
         _initializeConfig();
 
         address notGovernance = address(0x1234);
         vm.prank(notGovernance);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
-        config.setMajorVersion(INITIAL_VERSION + 1);
+        config.setForNextEpoch(INITIAL_VERSION + 1);
     }
 
-    function test_Event_SetMajorVersion() public {
+    function test_Event_SetForNextEpoch() public {
         _initializeConfig();
 
         uint64 newVersion = INITIAL_VERSION + 1;
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
+        emit VersionConfig.PendingVersionSet(newVersion);
+        config.setForNextEpoch(newVersion);
+    }
+
+    // ========================================================================
+    // APPLY PENDING CONFIG TESTS
+    // ========================================================================
+
+    function test_ApplyPendingConfig() public {
+        _initializeConfig();
+
+        uint64 newVersion = INITIAL_VERSION + 1;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(newVersion);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.majorVersion(), newVersion);
+        assertFalse(config.hasPendingConfig());
+    }
+
+    function test_ApplyPendingConfig_NoPending() public {
+        _initializeConfig();
+
+        // Should be no-op when no pending config
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.majorVersion(), INITIAL_VERSION);
+        assertFalse(config.hasPendingConfig());
+    }
+
+    function test_RevertWhen_ApplyPendingConfig_NotReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(INITIAL_VERSION + 1);
+
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
+        config.applyPendingConfig();
+    }
+
+    function test_Event_ApplyPendingConfig() public {
+        _initializeConfig();
+
+        uint64 newVersion = INITIAL_VERSION + 1;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(newVersion);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectEmit(false, false, false, true);
         emit VersionConfig.VersionUpdated(INITIAL_VERSION, newVersion);
-        config.setMajorVersion(newVersion);
+        config.applyPendingConfig();
     }
 
     // ========================================================================
@@ -165,7 +216,7 @@ contract VersionConfigTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
         );
-        config.setMajorVersion(INITIAL_VERSION + 1);
+        config.setForNextEpoch(INITIAL_VERSION + 1);
     }
 
     function test_RevertWhen_SetterCalledBySystemCaller() public {
@@ -175,7 +226,7 @@ contract VersionConfigTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
         );
-        config.setMajorVersion(INITIAL_VERSION + 1);
+        config.setForNextEpoch(INITIAL_VERSION + 1);
     }
 
     // ========================================================================
@@ -192,7 +243,7 @@ contract VersionConfigTest is Test {
         assertTrue(config.isInitialized());
     }
 
-    function testFuzz_SetMajorVersion(
+    function testFuzz_SetForNextEpochAndApply(
         uint64 currentVersion,
         uint64 newVersion
     ) public {
@@ -202,12 +253,18 @@ contract VersionConfigTest is Test {
         config.initialize(currentVersion);
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMajorVersion(newVersion);
+        config.setForNextEpoch(newVersion);
+
+        assertTrue(config.hasPendingConfig());
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
 
         assertEq(config.majorVersion(), newVersion);
+        assertFalse(config.hasPendingConfig());
     }
 
-    function testFuzz_RevertWhen_SetMajorVersion_NotIncreasing(
+    function testFuzz_RevertWhen_SetForNextEpoch_NotIncreasing(
         uint64 currentVersion,
         uint64 newVersion
     ) public {
@@ -218,7 +275,7 @@ contract VersionConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.VersionMustIncrease.selector, currentVersion, newVersion));
-        config.setMajorVersion(newVersion);
+        config.setForNextEpoch(newVersion);
     }
 
     // ========================================================================
@@ -230,4 +287,3 @@ contract VersionConfigTest is Test {
         config.initialize(INITIAL_VERSION);
     }
 }
-

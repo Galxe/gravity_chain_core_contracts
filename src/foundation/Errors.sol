@@ -362,6 +362,20 @@ library Errors {
     error VersionAlreadyInitialized();
 
     // ========================================================================
+    // VALIDATOR CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Validator config has not been initialized
+    error ValidatorConfigNotInitialized();
+
+    // ========================================================================
+    // GOVERNANCE CONFIG ERRORS
+    // ========================================================================
+
+    /// @notice Governance config has not been initialized
+    error GovernanceConfigNotInitialized();
+
+    // ========================================================================
     // EPOCH CONFIG ERRORS
     // ========================================================================
 

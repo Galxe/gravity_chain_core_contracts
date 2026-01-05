@@ -16,6 +16,10 @@ import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
 import { EpochConfig } from "../../../src/runtime/EpochConfig.sol";
 import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
 import { ValidatorConfig } from "../../../src/runtime/ValidatorConfig.sol";
+import { ConsensusConfig } from "../../../src/runtime/ConsensusConfig.sol";
+import { ExecutionConfig } from "../../../src/runtime/ExecutionConfig.sol";
+import { VersionConfig } from "../../../src/runtime/VersionConfig.sol";
+import { GovernanceConfig } from "../../../src/runtime/GovernanceConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo, ValidatorStatus } from "../../../src/foundation/Types.sol";
@@ -41,6 +45,10 @@ contract ConsensusEngineFlowTest is Test {
     EpochConfig public epochConfig;
     StakingConfig public stakingConfig;
     ValidatorConfig public validatorConfig;
+    ConsensusConfig public consensusConfig;
+    ExecutionConfig public executionConfig;
+    VersionConfig public versionConfig;
+    GovernanceConfig public governanceConfig;
 
     // Test addresses
     address public alice = makeAddr("alice");
@@ -103,6 +111,18 @@ contract ConsensusEngineFlowTest is Test {
         vm.etch(SystemAddresses.EPOCH_CONFIG, address(new EpochConfig()).code);
         epochConfig = EpochConfig(SystemAddresses.EPOCH_CONFIG);
 
+        vm.etch(SystemAddresses.CONSENSUS_CONFIG, address(new ConsensusConfig()).code);
+        consensusConfig = ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG);
+
+        vm.etch(SystemAddresses.EXECUTION_CONFIG, address(new ExecutionConfig()).code);
+        executionConfig = ExecutionConfig(SystemAddresses.EXECUTION_CONFIG);
+
+        vm.etch(SystemAddresses.VERSION_CONFIG, address(new VersionConfig()).code);
+        versionConfig = VersionConfig(SystemAddresses.VERSION_CONFIG);
+
+        vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);
+        governanceConfig = GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG);
+
         vm.etch(SystemAddresses.RECONFIGURATION, address(new Reconfiguration()).code);
         reconfig = Reconfiguration(SystemAddresses.RECONFIGURATION);
 
@@ -123,6 +143,18 @@ contract ConsensusEngineFlowTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         randomnessConfig.initialize(_createV2Config());
+
+        vm.prank(SystemAddresses.GENESIS);
+        consensusConfig.initialize(hex"00");
+
+        vm.prank(SystemAddresses.GENESIS);
+        executionConfig.initialize(hex"00");
+
+        vm.prank(SystemAddresses.GENESIS);
+        versionConfig.initialize(1);
+
+        vm.prank(SystemAddresses.GENESIS);
+        governanceConfig.initialize(50, 100 ether, 7 days * 1_000_000, 6700);
 
         // Set initial timestamp BEFORE reconfig initialization
         // so lastReconfigurationTime is set correctly

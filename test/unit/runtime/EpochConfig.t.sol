@@ -8,7 +8,7 @@ import { Errors } from "../../../src/foundation/Errors.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title EpochConfigTest
-/// @notice Unit tests for EpochConfig contract
+/// @notice Unit tests for EpochConfig contract with pending pattern
 contract EpochConfigTest is Test {
     EpochConfig public config;
 
@@ -26,6 +26,7 @@ contract EpochConfigTest is Test {
     function test_InitialState() public view {
         assertEq(config.epochIntervalMicros(), 0);
         assertFalse(config.isInitialized());
+        assertFalse(config.hasPendingConfig());
     }
 
     // ========================================================================
@@ -70,50 +71,112 @@ contract EpochConfigTest is Test {
     }
 
     // ========================================================================
-    // SETTER TESTS - setEpochIntervalMicros
+    // SETTER TESTS - setForNextEpoch
     // ========================================================================
 
-    function test_SetEpochIntervalMicros() public {
+    function test_SetForNextEpoch() public {
         _initializeConfig();
 
         uint64 newInterval = 4 hours * 1_000_000; // 4 hours
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setEpochIntervalMicros(newInterval);
+        config.setForNextEpoch(newInterval);
 
-        assertEq(config.epochIntervalMicros(), newInterval);
+        // Should not change current value, only set pending
+        assertEq(config.epochIntervalMicros(), EPOCH_INTERVAL);
+        assertTrue(config.hasPendingConfig());
+
+        (bool hasPending, uint64 pendingInterval) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pendingInterval, newInterval);
     }
 
-    function test_RevertWhen_SetEpochIntervalMicros_Zero() public {
+    function test_RevertWhen_SetForNextEpoch_Zero() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidEpochInterval.selector);
-        config.setEpochIntervalMicros(0);
+        config.setForNextEpoch(0);
     }
 
-    function test_RevertWhen_SetEpochIntervalMicros_NotInitialized() public {
+    function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.EpochConfigNotInitialized.selector);
-        config.setEpochIntervalMicros(EPOCH_INTERVAL);
+        config.setForNextEpoch(EPOCH_INTERVAL);
     }
 
-    function test_RevertWhen_SetEpochIntervalMicros_NotGovernance() public {
+    function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
         _initializeConfig();
 
         address notGovernance = address(0x1234);
         vm.prank(notGovernance);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
-        config.setEpochIntervalMicros(EPOCH_INTERVAL * 2);
+        config.setForNextEpoch(EPOCH_INTERVAL * 2);
     }
 
-    function test_Event_SetEpochIntervalMicros() public {
+    function test_Event_SetForNextEpoch() public {
         _initializeConfig();
 
         uint64 newInterval = 4 hours * 1_000_000;
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
+        emit EpochConfig.PendingEpochIntervalSet(newInterval);
+        config.setForNextEpoch(newInterval);
+    }
+
+    // ========================================================================
+    // APPLY PENDING CONFIG TESTS
+    // ========================================================================
+
+    function test_ApplyPendingConfig() public {
+        _initializeConfig();
+
+        uint64 newInterval = 4 hours * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(newInterval);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.epochIntervalMicros(), newInterval);
+        assertFalse(config.hasPendingConfig());
+    }
+
+    function test_ApplyPendingConfig_NoPending() public {
+        _initializeConfig();
+
+        // Should be no-op when no pending config
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.epochIntervalMicros(), EPOCH_INTERVAL);
+        assertFalse(config.hasPendingConfig());
+    }
+
+    function test_RevertWhen_ApplyPendingConfig_NotReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(EPOCH_INTERVAL * 2);
+
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
+        config.applyPendingConfig();
+    }
+
+    function test_Event_ApplyPendingConfig() public {
+        _initializeConfig();
+
+        uint64 newInterval = 4 hours * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(newInterval);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectEmit(false, false, false, true);
         emit EpochConfig.EpochIntervalUpdated(EPOCH_INTERVAL, newInterval);
-        config.setEpochIntervalMicros(newInterval);
+        config.applyPendingConfig();
     }
 
     // ========================================================================
@@ -127,7 +190,7 @@ contract EpochConfigTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
         );
-        config.setEpochIntervalMicros(EPOCH_INTERVAL * 2);
+        config.setForNextEpoch(EPOCH_INTERVAL * 2);
     }
 
     function test_RevertWhen_SetterCalledBySystemCaller() public {
@@ -137,7 +200,7 @@ contract EpochConfigTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
         );
-        config.setEpochIntervalMicros(EPOCH_INTERVAL * 2);
+        config.setForNextEpoch(EPOCH_INTERVAL * 2);
     }
 
     // ========================================================================
@@ -156,16 +219,35 @@ contract EpochConfigTest is Test {
         assertTrue(config.isInitialized());
     }
 
-    function testFuzz_SetEpochIntervalMicros(
+    function testFuzz_SetForNextEpoch(
         uint64 newInterval
     ) public {
         vm.assume(newInterval > 0);
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setEpochIntervalMicros(newInterval);
+        config.setForNextEpoch(newInterval);
+
+        assertTrue(config.hasPendingConfig());
+        (bool hasPending, uint64 pendingInterval) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pendingInterval, newInterval);
+    }
+
+    function testFuzz_ApplyPendingConfig(
+        uint64 newInterval
+    ) public {
+        vm.assume(newInterval > 0);
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(newInterval);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
 
         assertEq(config.epochIntervalMicros(), newInterval);
+        assertFalse(config.hasPendingConfig());
     }
 
     // ========================================================================
@@ -177,4 +259,3 @@ contract EpochConfigTest is Test {
         config.initialize(EPOCH_INTERVAL);
     }
 }
-

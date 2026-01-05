@@ -8,7 +8,7 @@ import { Errors } from "../../../src/foundation/Errors.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
 /// @title ValidatorConfigTest
-/// @notice Unit tests for ValidatorConfig contract
+/// @notice Unit tests for ValidatorConfig contract with pending pattern
 contract ValidatorConfigTest is Test {
     ValidatorConfig public config;
 
@@ -44,6 +44,7 @@ contract ValidatorConfigTest is Test {
         assertEq(config.allowValidatorSetChange(), false);
         assertEq(config.votingPowerIncreaseLimitPct(), 0);
         assertEq(config.maxValidatorSetSize(), 0);
+        assertFalse(config.hasPendingConfig());
     }
 
     // ========================================================================
@@ -60,6 +61,7 @@ contract ValidatorConfigTest is Test {
         assertEq(config.allowValidatorSetChange(), ALLOW_CHANGES);
         assertEq(config.votingPowerIncreaseLimitPct(), VOTING_POWER_LIMIT);
         assertEq(config.maxValidatorSetSize(), MAX_VALIDATORS);
+        assertTrue(config.isInitialized());
     }
 
     function test_Initialize_MinEqualsMax() public {
@@ -68,20 +70,6 @@ contract ValidatorConfigTest is Test {
 
         assertEq(config.minimumBond(), MIN_BOND);
         assertEq(config.maximumBond(), MIN_BOND);
-    }
-
-    function test_Initialize_MaxVotingPowerLimit() public {
-        vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, 50, MAX_VALIDATORS);
-
-        assertEq(config.votingPowerIncreaseLimitPct(), 50);
-    }
-
-    function test_Initialize_MaxValidatorSetSize() public {
-        vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, 65536);
-
-        assertEq(config.maxValidatorSetSize(), 65536);
     }
 
     function test_RevertWhen_Initialize_ZeroMinimumBond() public {
@@ -143,331 +131,155 @@ contract ValidatorConfigTest is Test {
     }
 
     // ========================================================================
-    // SETTER TESTS - setMinimumBond
+    // SETTER TESTS - setForNextEpoch
     // ========================================================================
 
-    function test_SetMinimumBond() public {
+    function test_SetForNextEpoch() public {
         _initializeConfig();
 
         uint256 newMinBond = 200 ether;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMinimumBond(newMinBond);
-
-        assertEq(config.minimumBond(), newMinBond);
-    }
-
-    function test_SetMinimumBond_EqualToMax() public {
-        _initializeConfig();
+        uint256 newMaxBond = 2000 ether;
+        uint64 newUnbondingDelay = 28 days * 1_000_000;
+        bool newAllowChanges = false;
+        uint64 newVotingPowerLimit = 25;
+        uint256 newMaxValidators = 200;
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMinimumBond(MAX_BOND);
+        config.setForNextEpoch(
+            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators
+        );
 
-        assertEq(config.minimumBond(), MAX_BOND);
+        // Should not change current values, only set pending
+        assertEq(config.minimumBond(), MIN_BOND);
+        assertEq(config.maximumBond(), MAX_BOND);
+        assertTrue(config.hasPendingConfig());
+
+        (bool hasPending, ValidatorConfig.PendingConfig memory pendingConfig) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pendingConfig.minimumBond, newMinBond);
+        assertEq(pendingConfig.maximumBond, newMaxBond);
+        assertEq(pendingConfig.unbondingDelayMicros, newUnbondingDelay);
+        assertEq(pendingConfig.allowValidatorSetChange, newAllowChanges);
+        assertEq(pendingConfig.votingPowerIncreaseLimitPct, newVotingPowerLimit);
+        assertEq(pendingConfig.maxValidatorSetSize, newMaxValidators);
     }
 
-    function test_RevertWhen_SetMinimumBond_Zero() public {
+    function test_RevertWhen_SetForNextEpoch_ZeroMinBond() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidMinimumBond.selector);
-        config.setMinimumBond(0);
+        config.setForNextEpoch(0, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
     }
 
-    function test_RevertWhen_SetMinimumBond_ExceedsMax() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.MinimumBondExceedsMaximum.selector, MAX_BOND + 1, MAX_BOND));
-        config.setMinimumBond(MAX_BOND + 1);
-    }
-
-    function test_RevertWhen_SetMinimumBond_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setMinimumBond(200 ether);
-    }
-
-    function test_Event_SetMinimumBond() public {
-        _initializeConfig();
-
-        uint256 newMinBond = 200 ether;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(true, false, false, true);
-        emit ValidatorConfig.ConfigUpdated("minimumBond", MIN_BOND, newMinBond);
-        config.setMinimumBond(newMinBond);
-    }
-
-    // ========================================================================
-    // SETTER TESTS - setMaximumBond
-    // ========================================================================
-
-    function test_SetMaximumBond() public {
-        _initializeConfig();
-
-        uint256 newMaxBond = 2000 ether;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaximumBond(newMaxBond);
-
-        assertEq(config.maximumBond(), newMaxBond);
-    }
-
-    function test_SetMaximumBond_EqualToMin() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaximumBond(MIN_BOND);
-
-        assertEq(config.maximumBond(), MIN_BOND);
-    }
-
-    function test_RevertWhen_SetMaximumBond_LessThanMin() public {
+    function test_RevertWhen_SetForNextEpoch_MaxLessThanMin() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.MinimumBondExceedsMaximum.selector, MIN_BOND, MIN_BOND - 1));
-        config.setMaximumBond(MIN_BOND - 1);
+        config.setForNextEpoch(
+            MIN_BOND, MIN_BOND - 1, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
     }
 
-    function test_RevertWhen_SetMaximumBond_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setMaximumBond(2000 ether);
-    }
-
-    function test_Event_SetMaximumBond() public {
-        _initializeConfig();
-
-        uint256 newMaxBond = 2000 ether;
+    function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(true, false, false, true);
-        emit ValidatorConfig.ConfigUpdated("maximumBond", MAX_BOND, newMaxBond);
-        config.setMaximumBond(newMaxBond);
+        vm.expectRevert(Errors.ValidatorConfigNotInitialized.selector);
+        config.setForNextEpoch(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
     }
 
-    // ========================================================================
-    // SETTER TESTS - setUnbondingDelayMicros
-    // ========================================================================
-
-    function test_SetUnbondingDelayMicros() public {
+    function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
         _initializeConfig();
 
-        uint64 newDelay = 28 days * 1_000_000;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setUnbondingDelayMicros(newDelay);
-
-        assertEq(config.unbondingDelayMicros(), newDelay);
+        address notGovernance = address(0x1234);
+        vm.prank(notGovernance);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
     }
 
-    function test_RevertWhen_SetUnbondingDelayMicros_Zero() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
-        config.setUnbondingDelayMicros(0);
-    }
-
-    function test_RevertWhen_SetUnbondingDelayMicros_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setUnbondingDelayMicros(28 days * 1_000_000);
-    }
-
-    function test_Event_SetUnbondingDelayMicros() public {
-        _initializeConfig();
-
-        uint64 newDelay = 28 days * 1_000_000;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(true, false, false, true);
-        emit ValidatorConfig.ConfigUpdated("unbondingDelayMicros", UNBONDING_DELAY, newDelay);
-        config.setUnbondingDelayMicros(newDelay);
-    }
-
-    // ========================================================================
-    // SETTER TESTS - setAllowValidatorSetChange
-    // ========================================================================
-
-    function test_SetAllowValidatorSetChange_ToFalse() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setAllowValidatorSetChange(false);
-
-        assertEq(config.allowValidatorSetChange(), false);
-    }
-
-    function test_SetAllowValidatorSetChange_ToTrue() public {
-        _initializeConfig();
-
-        // First set to false
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setAllowValidatorSetChange(false);
-
-        // Then set back to true
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setAllowValidatorSetChange(true);
-
-        assertEq(config.allowValidatorSetChange(), true);
-    }
-
-    function test_RevertWhen_SetAllowValidatorSetChange_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setAllowValidatorSetChange(false);
-    }
-
-    function test_Event_SetAllowValidatorSetChange() public {
+    function test_Event_SetForNextEpoch() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
-        emit ValidatorConfig.ValidatorSetChangeAllowedUpdated(true, false);
-        config.setAllowValidatorSetChange(false);
+        emit ValidatorConfig.PendingValidatorConfigSet();
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
     }
 
     // ========================================================================
-    // SETTER TESTS - setVotingPowerIncreaseLimitPct
+    // APPLY PENDING CONFIG TESTS
     // ========================================================================
 
-    function test_SetVotingPowerIncreaseLimitPct() public {
+    function test_ApplyPendingConfig() public {
         _initializeConfig();
 
-        uint64 newLimit = 25;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setVotingPowerIncreaseLimitPct(newLimit);
-
-        assertEq(config.votingPowerIncreaseLimitPct(), newLimit);
-    }
-
-    function test_SetVotingPowerIncreaseLimitPct_Min() public {
-        _initializeConfig();
+        uint256 newMinBond = 200 ether;
+        uint256 newMaxBond = 2000 ether;
+        uint64 newUnbondingDelay = 28 days * 1_000_000;
+        bool newAllowChanges = false;
+        uint64 newVotingPowerLimit = 25;
+        uint256 newMaxValidators = 200;
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setVotingPowerIncreaseLimitPct(1);
+        config.setForNextEpoch(
+            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators
+        );
 
-        assertEq(config.votingPowerIncreaseLimitPct(), 1);
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.minimumBond(), newMinBond);
+        assertEq(config.maximumBond(), newMaxBond);
+        assertEq(config.unbondingDelayMicros(), newUnbondingDelay);
+        assertEq(config.allowValidatorSetChange(), newAllowChanges);
+        assertEq(config.votingPowerIncreaseLimitPct(), newVotingPowerLimit);
+        assertEq(config.maxValidatorSetSize(), newMaxValidators);
+        assertFalse(config.hasPendingConfig());
     }
 
-    function test_SetVotingPowerIncreaseLimitPct_Max() public {
+    function test_ApplyPendingConfig_NoPending() public {
         _initializeConfig();
 
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setVotingPowerIncreaseLimitPct(50);
+        // Should be no-op when no pending config
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
 
-        assertEq(config.votingPowerIncreaseLimitPct(), 50);
+        assertEq(config.minimumBond(), MIN_BOND);
+        assertFalse(config.hasPendingConfig());
     }
 
-    function test_RevertWhen_SetVotingPowerIncreaseLimitPct_Zero() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidVotingPowerIncreaseLimit.selector, 0));
-        config.setVotingPowerIncreaseLimitPct(0);
-    }
-
-    function test_RevertWhen_SetVotingPowerIncreaseLimitPct_TooHigh() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidVotingPowerIncreaseLimit.selector, 51));
-        config.setVotingPowerIncreaseLimitPct(51);
-    }
-
-    function test_RevertWhen_SetVotingPowerIncreaseLimitPct_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setVotingPowerIncreaseLimitPct(25);
-    }
-
-    function test_Event_SetVotingPowerIncreaseLimitPct() public {
-        _initializeConfig();
-
-        uint64 newLimit = 25;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(true, false, false, true);
-        emit ValidatorConfig.ConfigUpdated("votingPowerIncreaseLimitPct", VOTING_POWER_LIMIT, newLimit);
-        config.setVotingPowerIncreaseLimitPct(newLimit);
-    }
-
-    // ========================================================================
-    // SETTER TESTS - setMaxValidatorSetSize
-    // ========================================================================
-
-    function test_SetMaxValidatorSetSize() public {
-        _initializeConfig();
-
-        uint256 newMax = 200;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaxValidatorSetSize(newMax);
-
-        assertEq(config.maxValidatorSetSize(), newMax);
-    }
-
-    function test_SetMaxValidatorSetSize_Min() public {
+    function test_RevertWhen_ApplyPendingConfig_NotReconfiguration() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaxValidatorSetSize(1);
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
 
-        assertEq(config.maxValidatorSetSize(), 1);
+        address notReconfiguration = address(0x1234);
+        vm.prank(notReconfiguration);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, notReconfiguration, SystemAddresses.RECONFIGURATION)
+        );
+        config.applyPendingConfig();
     }
 
-    function test_SetMaxValidatorSetSize_Max() public {
+    function test_Event_ApplyPendingConfig() public {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaxValidatorSetSize(65536);
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
 
-        assertEq(config.maxValidatorSetSize(), 65536);
-    }
-
-    function test_RevertWhen_SetMaxValidatorSetSize_Zero() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidValidatorSetSize.selector, 0));
-        config.setMaxValidatorSetSize(0);
-    }
-
-    function test_RevertWhen_SetMaxValidatorSetSize_TooHigh() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidValidatorSetSize.selector, 65537));
-        config.setMaxValidatorSetSize(65537);
-    }
-
-    function test_RevertWhen_SetMaxValidatorSetSize_NotTimelock() public {
-        _initializeConfig();
-
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
-        config.setMaxValidatorSetSize(200);
-    }
-
-    function test_Event_SetMaxValidatorSetSize() public {
-        _initializeConfig();
-
-        uint256 newMax = 200;
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectEmit(true, false, false, true);
-        emit ValidatorConfig.ConfigUpdated("maxValidatorSetSize", MAX_VALIDATORS, newMax);
-        config.setMaxValidatorSetSize(newMax);
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectEmit(false, false, false, true);
+        emit ValidatorConfig.ValidatorConfigUpdated();
+        config.applyPendingConfig();
     }
 
     // ========================================================================
@@ -500,68 +312,38 @@ contract ValidatorConfigTest is Test {
         assertEq(config.maxValidatorSetSize(), maxValidators);
     }
 
-    function testFuzz_SetMinimumBond(
-        uint256 newMin
+    function testFuzz_SetForNextEpochAndApply(
+        uint256 minBond,
+        uint256 maxBond,
+        uint64 unbondingDelay,
+        bool allowChanges,
+        uint64 votingPowerLimit,
+        uint256 maxValidators
     ) public {
         _initializeConfig();
 
-        // Bound to valid range
-        newMin = bound(newMin, 1, MAX_BOND);
+        // Bound inputs to valid ranges
+        minBond = bound(minBond, 1, type(uint128).max);
+        maxBond = bound(maxBond, minBond, type(uint128).max);
+        vm.assume(unbondingDelay > 0);
+        votingPowerLimit = uint64(bound(votingPowerLimit, 1, 50));
+        maxValidators = bound(maxValidators, 1, 65536);
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMinimumBond(newMin);
+        config.setForNextEpoch(minBond, maxBond, unbondingDelay, allowChanges, votingPowerLimit, maxValidators);
 
-        assertEq(config.minimumBond(), newMin);
-    }
+        assertTrue(config.hasPendingConfig());
 
-    function testFuzz_SetMaximumBond(
-        uint256 newMax
-    ) public {
-        _initializeConfig();
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
 
-        // Bound to valid range
-        newMax = bound(newMax, MIN_BOND, type(uint128).max);
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaximumBond(newMax);
-
-        assertEq(config.maximumBond(), newMax);
-    }
-
-    function testFuzz_SetUnbondingDelayMicros(
-        uint64 newDelay
-    ) public {
-        vm.assume(newDelay > 0);
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setUnbondingDelayMicros(newDelay);
-
-        assertEq(config.unbondingDelayMicros(), newDelay);
-    }
-
-    function testFuzz_SetVotingPowerIncreaseLimitPct(
-        uint64 newLimit
-    ) public {
-        newLimit = uint64(bound(newLimit, 1, 50));
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setVotingPowerIncreaseLimitPct(newLimit);
-
-        assertEq(config.votingPowerIncreaseLimitPct(), newLimit);
-    }
-
-    function testFuzz_SetMaxValidatorSetSize(
-        uint256 newMax
-    ) public {
-        newMax = bound(newMax, 1, 65536);
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        config.setMaxValidatorSetSize(newMax);
-
-        assertEq(config.maxValidatorSetSize(), newMax);
+        assertEq(config.minimumBond(), minBond);
+        assertEq(config.maximumBond(), maxBond);
+        assertEq(config.unbondingDelayMicros(), unbondingDelay);
+        assertEq(config.allowValidatorSetChange(), allowChanges);
+        assertEq(config.votingPowerIncreaseLimitPct(), votingPowerLimit);
+        assertEq(config.maxValidatorSetSize(), maxValidators);
+        assertFalse(config.hasPendingConfig());
     }
 
     // ========================================================================
@@ -573,4 +355,3 @@ contract ValidatorConfigTest is Test {
         config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
     }
 }
-

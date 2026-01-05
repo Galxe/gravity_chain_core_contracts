@@ -52,6 +52,12 @@ interface IReconfiguration {
         bytes calldata dkgResult
     ) external;
 
+    /// @notice Force epoch transition via governance (emergency reconfigure)
+    /// @dev Only callable by GOVERNANCE. If DKG is disabled, does immediate reconfigure.
+    ///      If DKG is enabled, starts DKG and requires finishTransition() to complete.
+    ///      Use for emergency situations like removing a malicious validator.
+    function governanceReconfigure() external;
+
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================

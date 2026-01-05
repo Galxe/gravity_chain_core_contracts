@@ -8,6 +8,11 @@ import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 import { DKG } from "../../../src/runtime/DKG.sol";
 import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
 import { EpochConfig } from "../../../src/runtime/EpochConfig.sol";
+import { ConsensusConfig } from "../../../src/runtime/ConsensusConfig.sol";
+import { ExecutionConfig } from "../../../src/runtime/ExecutionConfig.sol";
+import { ValidatorConfig } from "../../../src/runtime/ValidatorConfig.sol";
+import { VersionConfig } from "../../../src/runtime/VersionConfig.sol";
+import { GovernanceConfig } from "../../../src/runtime/GovernanceConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
@@ -119,6 +124,47 @@ contract ReconfigurationTest is Test {
         // Initialize RandomnessConfig
         vm.prank(SystemAddresses.GENESIS);
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).initialize(_createV2Config());
+
+        // Deploy and initialize additional config contracts
+        vm.etch(SystemAddresses.CONSENSUS_CONFIG, address(new ConsensusConfig()).code);
+        vm.etch(SystemAddresses.EXECUTION_CONFIG, address(new ExecutionConfig()).code);
+        vm.etch(SystemAddresses.VALIDATOR_CONFIG, address(new ValidatorConfig()).code);
+        vm.etch(SystemAddresses.VERSION_CONFIG, address(new VersionConfig()).code);
+        vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);
+
+        // Initialize ConsensusConfig
+        vm.prank(SystemAddresses.GENESIS);
+        ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).initialize(hex"deadbeef");
+
+        // Initialize ExecutionConfig
+        vm.prank(SystemAddresses.GENESIS);
+        ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).initialize(hex"cafebabe");
+
+        // Initialize ValidatorConfig
+        vm.prank(SystemAddresses.GENESIS);
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .initialize(
+                10 ether, // minimumBond
+                1000 ether, // maximumBond
+                7 days * 1_000_000, // unbondingDelayMicros
+                true, // allowValidatorSetChange
+                20, // votingPowerIncreaseLimitPct
+                100 // maxValidatorSetSize
+            );
+
+        // Initialize VersionConfig
+        vm.prank(SystemAddresses.GENESIS);
+        VersionConfig(SystemAddresses.VERSION_CONFIG).initialize(1);
+
+        // Initialize GovernanceConfig
+        vm.prank(SystemAddresses.GENESIS);
+        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG)
+            .initialize(
+                1000 ether, // minVotingThreshold
+                100 ether, // requiredProposerStake
+                7 days * 1_000_000, // votingDurationMicros
+                5000 // earlyResolutionThresholdBps
+            );
 
         // Setup mock validators
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setValidators(_createValidators(3));
@@ -490,9 +536,13 @@ contract ReconfigurationTest is Test {
         // Use reasonable bounds for epoch interval (1 second to 1 week in microseconds)
         interval = uint64(bound(interval, 1_000_000, 604_800_000_000));
 
-        // Update interval in EpochConfig before initializing Reconfiguration
+        // Update interval in EpochConfig using pending pattern before initializing Reconfiguration
         vm.prank(SystemAddresses.GOVERNANCE);
-        EpochConfig(SystemAddresses.EPOCH_CONFIG).setEpochIntervalMicros(interval);
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).setForNextEpoch(interval);
+
+        // Apply the pending config via reconfiguration
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
         _initializeReconfiguration();
 

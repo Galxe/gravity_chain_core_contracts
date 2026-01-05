@@ -62,9 +62,6 @@ contract ValidatorManagement is IValidatorManagement {
     /// @notice Validators pending deactivation (will become INACTIVE at next epoch)
     address[] internal _pendingInactive;
 
-    /// @notice Current epoch number
-    uint64 public currentEpoch;
-
     /// @notice Total voting power of active validators (snapshotted at epoch boundary)
     uint256 public totalVotingPower;
 
@@ -335,12 +332,13 @@ contract ValidatorManagement is IValidatorManagement {
         // 6. Reassign indices for all active validators
         _reassignValidatorIndices();
 
-        // 7. Increment epoch (Aptos pattern: called before Reconfiguration increments its epoch)
-        uint64 newEpoch = currentEpoch + 1;
-        currentEpoch = newEpoch;
+        // 7. Update total voting power
+        //    Note: Epoch is managed by Reconfiguration contract (single source of truth)
         totalVotingPower = _calculateTotalVotingPower();
 
-        emit EpochProcessed(newEpoch, _activeValidators.length, totalVotingPower);
+        // Get next epoch from Reconfiguration (will be incremented after this call)
+        uint64 nextEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch() + 1;
+        emit EpochProcessed(nextEpoch, _activeValidators.length, totalVotingPower);
     }
 
     /// @notice Process validators leaving the active set
@@ -616,8 +614,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
+    /// @dev Queries Reconfiguration contract as the single source of truth for epoch number
     function getCurrentEpoch() external view returns (uint64) {
-        return currentEpoch;
+        return IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
     }
 
     /// @inheritdoc IValidatorManagement

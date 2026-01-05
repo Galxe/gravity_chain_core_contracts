@@ -18,6 +18,7 @@ import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
 /// @notice Mock Reconfiguration contract for testing
 contract MockReconfiguration {
     bool private _transitionInProgress;
+    uint64 public currentEpoch;
 
     function isTransitionInProgress() external view returns (bool) {
         return _transitionInProgress;
@@ -27,6 +28,11 @@ contract MockReconfiguration {
         bool inProgress
     ) external {
         _transitionInProgress = inProgress;
+    }
+
+    /// @notice Increment epoch (simulates epoch transition)
+    function incrementEpoch() external {
+        currentEpoch++;
     }
 }
 
@@ -146,8 +152,11 @@ contract ValidatorManagementTest is Test {
 
     /// @notice Process an epoch transition
     function _processEpoch() internal {
+        // onNewEpoch will query currentEpoch() + 1 for the event, so we need
+        // to increment the mock epoch AFTER the call (simulates Reconfiguration behavior)
         vm.prank(SystemAddresses.RECONFIGURATION);
         validatorManager.onNewEpoch();
+        mockReconfiguration.incrementEpoch();
     }
 
     // ========================================================================
@@ -293,9 +302,13 @@ contract ValidatorManagementTest is Test {
     function test_RevertWhen_joinValidatorSet_setChangesDisabled() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
 
-        // Disable validator set changes
+        // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
-        validatorConfig.setAllowValidatorSetChange(false);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
 
         vm.prank(alice);
         vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
@@ -828,9 +841,13 @@ contract ValidatorManagementTest is Test {
         _createRegisterAndJoin(bob, MIN_BOND, "bob");
         _processEpoch();
 
-        // Disable validator set changes
+        // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
-        validatorConfig.setAllowValidatorSetChange(false);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
 
         vm.prank(alice);
         vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
