@@ -128,33 +128,11 @@ contract Reconfiguration is IReconfiguration {
         }
         IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
 
-        // 3. Apply pending configs BEFORE validator changes
-        //    This ensures new configs are active for the new epoch's first block
-        //    Following Aptos pattern: all config modules apply pending changes at epoch boundary
-        IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
-        ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
-        ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
-        VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
-        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
-        EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
+        // 3. Apply reconfiguration (configs + validator manager + epoch increment)
+        _applyReconfiguration();
 
-        // 4. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
-        //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
-        //    before config_ref.epoch is incremented. This ensures validator set
-        //    changes are processed in the context of the current epoch.
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
-
-        // 5. NOW increment epoch and update timestamp
-        uint64 newEpoch = currentEpoch + 1;
-        currentEpoch = newEpoch;
-        lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-
-        // 6. Reset state
+        // 4. Reset state
         _transitionState = TransitionState.Idle;
-
-        // 7. Emit transition event
-        emit EpochTransitioned(newEpoch, lastReconfigurationTime);
     }
 
     /// @inheritdoc IReconfiguration
@@ -267,12 +245,21 @@ contract Reconfiguration is IReconfiguration {
     }
 
     /// @notice Perform immediate reconfigure when DKG is disabled
-    /// @dev Used by governanceReconfigure() when randomness variant is 0
+    /// @dev Used by checkAndStartTransition() and governanceReconfigure() when randomness variant is Off
     function _doImmediateReconfigure() internal {
         // Clear any stale DKG session
         IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
 
-        // Apply pending configs
+        // Apply reconfiguration (no start event for immediate reconfigure)
+        _applyReconfiguration();
+    }
+
+    /// @notice Apply pending configs, notify validator manager, and increment epoch
+    /// @dev Core reconfiguration logic shared by finishTransition() and _doImmediateReconfigure()
+    ///      Following Aptos pattern: all config modules apply pending changes at epoch boundary
+    function _applyReconfiguration() internal {
+        // 1. Apply pending configs BEFORE validator changes
+        //    This ensures new configs are active for the new epoch's first block
         IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
         ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
         ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
@@ -281,15 +268,18 @@ contract Reconfiguration is IReconfiguration {
         GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
         EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
-        // Notify validator manager
+        // 2. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
+        //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
+        //    before config_ref.epoch is incremented. This ensures validator set
+        //    changes are processed in the context of the current epoch.
         IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
 
-        // Increment epoch and update timestamp
+        // 3. Increment epoch and update timestamp
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
-        // Emit transition event (no start event for immediate reconfigure)
+        // 4. Emit transition event
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
     }
 }
