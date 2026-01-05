@@ -130,9 +130,6 @@ contract Reconfiguration is IReconfiguration {
 
         // 3. Apply reconfiguration (configs + validator manager + epoch increment)
         _applyReconfiguration();
-
-        // 4. Reset state
-        _transitionState = TransitionState.Idle;
     }
 
     /// @inheritdoc IReconfiguration
@@ -279,7 +276,10 @@ contract Reconfiguration is IReconfiguration {
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
-        // 4. Emit transition event
+        // 4. Reset state
+        _transitionState = TransitionState.Idle;
+
+        // 5. Emit transition event
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
     }
 }
