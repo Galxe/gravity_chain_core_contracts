@@ -47,6 +47,37 @@ contract ValidatorManagement is IValidatorManagement {
     uint256 internal constant PRECISION_FACTOR = 1e4;
 
     // ========================================================================
+    // TYPES
+    // ========================================================================
+
+    /// @notice Complete next epoch validator set with state transition info
+    /// @dev Single source of truth for both getNextValidatorConsensusInfos() and onNewEpoch()
+    ///      This struct captures:
+    ///      1. The exact validator set for the next epoch (validators array)
+    ///      2. State transition information for onNewEpoch() to apply changes
+    struct NextEpochValidatorSet {
+        /// @notice The complete next epoch validator set
+        /// @dev This is exactly what getNextValidatorConsensusInfos() returns
+        ValidatorConsensusInfo[] validators;
+        /// @notice Validators to deactivate (PENDING_INACTIVE -> INACTIVE)
+        address[] toDeactivate;
+        /// @notice Number of validators to deactivate
+        uint256 deactivateCount;
+        /// @notice Validators to activate (PENDING_ACTIVE -> ACTIVE)
+        address[] toActivate;
+        /// @notice Number of validators to activate
+        uint256 activateCount;
+        /// @notice Validators that dropped below minimum bond (PENDING_ACTIVE -> INACTIVE)
+        address[] toRevertInactive;
+        /// @notice Number of validators to revert to inactive
+        uint256 revertInactiveCount;
+        /// @notice Validators that remain pending (voting power limit exceeded)
+        address[] toKeepPending;
+        /// @notice Number of validators to keep pending
+        uint256 keepPendingCount;
+    }
+
+    // ========================================================================
     // STATE
     // ========================================================================
 
@@ -311,119 +342,128 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
+    /// @dev Uses _computeNextEpochValidatorSet() as single source of truth.
+    ///      This ensures getNextValidatorConsensusInfos() and onNewEpoch() produce identical results.
     function onNewEpoch() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
-        // 1. Process PENDING_INACTIVE → INACTIVE (clear indices, remove from active)
-        _processPendingInactive();
+        // 1. Compute next validator set (single source of truth)
+        //    This is the SAME computation used by getNextValidatorConsensusInfos()
+        NextEpochValidatorSet memory nextSet = _computeNextEpochValidatorSet();
 
-        // 2. Process PENDING_ACTIVE → ACTIVE (with voting power limit check)
-        _processPendingActive();
+        // 2. Apply deactivations (PENDING_INACTIVE → INACTIVE)
+        _applyDeactivations(nextSet.toDeactivate, nextSet.deactivateCount);
 
-        // 3. Auto-renew lockups for active validators (Aptos-style)
+        // 3. Apply activations (PENDING_ACTIVE → ACTIVE)
+        _applyActivations(nextSet.toActivate, nextSet.activateCount);
+
+        // 4. Handle validators that dropped below minimum bond
+        _applyRevertInactive(nextSet.toRevertInactive, nextSet.revertInactiveCount);
+
+        // 5. Update pending active array (keep those that couldn't be activated)
+        _updatePendingActive(nextSet.toKeepPending, nextSet.keepPendingCount);
+
+        // 6. Overwrite _activeValidators with computed set
+        //    This ensures _activeValidators matches exactly what getNextValidatorConsensusInfos() returned
+        _setActiveValidators(nextSet.validators);
+
+        // 7. Auto-renew lockups for active validators (Aptos-style)
         _renewActiveValidatorLockups();
 
-        // 4. Apply pending fee recipient changes for all active validators
+        // 8. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 5. Update owner/operator from stake pool for all active validators
+        // 9. Update owner/operator from stake pool for all active validators
         _syncValidatorRoles();
 
-        // 6. Reassign indices for all active validators
-        _reassignValidatorIndices();
-
-        // 7. Update total voting power
-        //    Note: Epoch is managed by Reconfiguration contract (single source of truth)
+        // 10. Update total voting power
+        //     Note: Epoch is managed by Reconfiguration contract (single source of truth)
         totalVotingPower = _calculateTotalVotingPower();
 
+        // TODO(lightman): validator's voting power needs to be uint64 on the consensus engine.
+        // TODO(yxia): where is the validator set update event?? CRITICAL.
         // Get next epoch from Reconfiguration (will be incremented after this call)
         uint64 nextEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch() + 1;
         emit EpochProcessed(nextEpoch, _activeValidators.length, totalVotingPower);
     }
 
-    /// @notice Process validators leaving the active set
-    function _processPendingInactive() internal {
-        uint256 length = _pendingInactive.length;
-        for (uint256 i = 0; i < length; i++) {
-            address pool = _pendingInactive[i];
+    /// @notice Apply deactivations for validators leaving the active set
+    /// @param validators Array of validators to deactivate
+    /// @param count Number of validators to process
+    function _applyDeactivations(
+        address[] memory validators,
+        uint256 count
+    ) internal {
+        for (uint256 i = 0; i < count; i++) {
+            address pool = validators[i];
             ValidatorRecord storage validator = _validators[pool];
 
-            // Update status
             validator.status = ValidatorStatus.INACTIVE;
             validator.validatorIndex = type(uint64).max; // Clear index
-
-            // Remove from active validators array
-            _removeFromActiveValidators(pool);
 
             emit ValidatorDeactivated(pool);
         }
         delete _pendingInactive;
     }
 
-    /// @notice Process validators joining the active set (with voting power limit)
-    function _processPendingActive() internal {
-        if (_pendingActive.length == 0) return;
-
-        // Calculate current total voting power (before adding new validators)
-        uint256 currentTotal = _calculateTotalVotingPower();
-        uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
-        uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
-        uint256 addedPower = 0;
-
-        // Track which validators we activate and which remain pending
-        address[] memory toActivate = new address[](_pendingActive.length);
-        address[] memory toKeepPending = new address[](_pendingActive.length);
-        uint256 activateCount = 0;
-        uint256 keepPendingCount = 0;
-
-        uint256 length = _pendingActive.length;
-        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-
-        for (uint256 i = 0; i < length; i++) {
-            address pool = _pendingActive[i];
-
-            // Get current voting power (may have changed since join request)
-            uint256 power = _getValidatorVotingPower(pool);
-
-            // Check minimum bond still met
-            if (power < minimumBond) {
-                // Validator dropped below minimum, revert to INACTIVE
-                _validators[pool].status = ValidatorStatus.INACTIVE;
-                continue;
-            }
-
-            // Check voting power increase limit
-            // Note: if currentTotal is 0 (first validators), no limit applies
-            if (currentTotal > 0 && addedPower + power > maxIncrease) {
-                // Keep in pending for next epoch (status remains PENDING_ACTIVE)
-                toKeepPending[keepPendingCount] = pool;
-                keepPendingCount++;
-                continue;
-            }
-
-            // Mark for activation
-            toActivate[activateCount] = pool;
-            activateCount++;
-            addedPower += power;
-        }
-
-        // Clear pending active array and repopulate with those that couldn't be activated
-        delete _pendingActive;
-        for (uint256 i = 0; i < keepPendingCount; i++) {
-            _pendingActive.push(toKeepPending[i]);
-        }
-
-        // Activate validators
-        for (uint256 i = 0; i < activateCount; i++) {
-            address pool = toActivate[i];
+    /// @notice Apply activations for validators joining the active set
+    /// @param validators Array of validators to activate
+    /// @param count Number of validators to process
+    function _applyActivations(
+        address[] memory validators,
+        uint256 count
+    ) internal {
+        for (uint256 i = 0; i < count; i++) {
+            address pool = validators[i];
             ValidatorRecord storage validator = _validators[pool];
 
             validator.status = ValidatorStatus.ACTIVE;
-            validator.bond = _getValidatorVotingPower(pool); // Snapshot voting power
+            // Note: bond and validatorIndex will be set in _setActiveValidators
+
+            emit ValidatorActivated(pool, 0, _getValidatorVotingPower(pool));
+        }
+    }
+
+    /// @notice Handle validators that dropped below minimum bond
+    /// @param validators Array of validators to revert to inactive
+    /// @param count Number of validators to process
+    function _applyRevertInactive(
+        address[] memory validators,
+        uint256 count
+    ) internal {
+        for (uint256 i = 0; i < count; i++) {
+            _validators[validators[i]].status = ValidatorStatus.INACTIVE;
+        }
+    }
+
+    /// @notice Update pending active array with validators that remain pending
+    /// @param validators Array of validators to keep pending
+    /// @param count Number of validators to keep
+    function _updatePendingActive(
+        address[] memory validators,
+        uint256 count
+    ) internal {
+        delete _pendingActive;
+        for (uint256 i = 0; i < count; i++) {
+            _pendingActive.push(validators[i]);
+        }
+    }
+
+    /// @notice Overwrite _activeValidators with the computed validator set
+    /// @dev This ensures _activeValidators matches exactly what _computeNextEpochValidatorSet() computed
+    /// @param validators The computed validator set with fresh indices
+    function _setActiveValidators(
+        ValidatorConsensusInfo[] memory validators
+    ) internal {
+        delete _activeValidators;
+        for (uint256 i = 0; i < validators.length; i++) {
+            address pool = validators[i].validator;
             _activeValidators.push(pool);
 
-            // Index will be assigned in _reassignValidatorIndices
-            emit ValidatorActivated(pool, 0, validator.bond); // Index updated after reassignment
+            // Update validator record with computed values
+            ValidatorRecord storage record = _validators[pool];
+            record.validatorIndex = validators[i].validatorIndex;
+            record.bond = validators[i].votingPower;
         }
     }
 
@@ -468,29 +508,6 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
-    /// @notice Reassign validator indices (0 to n-1)
-    function _reassignValidatorIndices() internal {
-        uint256 length = _activeValidators.length;
-        for (uint64 i = 0; i < length; i++) {
-            _validators[_activeValidators[i]].validatorIndex = i;
-        }
-    }
-
-    /// @notice Remove a validator from the active validators array
-    function _removeFromActiveValidators(
-        address pool
-    ) internal {
-        uint256 length = _activeValidators.length;
-        for (uint256 i = 0; i < length; i++) {
-            if (_activeValidators[i] == pool) {
-                // Swap with last element and pop
-                _activeValidators[i] = _activeValidators[length - 1];
-                _activeValidators.pop();
-                return;
-            }
-        }
-    }
-
     /// @notice Remove a validator from the pending active array
     /// @dev Used when a validator cancels their join request (leaves from PENDING_ACTIVE state)
     function _removeFromPendingActive(
@@ -525,6 +542,109 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
+    }
+
+    /// @notice Compute the complete next epoch validator set
+    /// @dev Single source of truth for both getNextValidatorConsensusInfos() and onNewEpoch().
+    ///      This function computes:
+    ///      1. Validators to deactivate (from _pendingInactive)
+    ///      2. Active validators that stay (active minus pending_inactive)
+    ///      3. Pending validators to activate (with min bond and voting power limit checks)
+    ///      4. The complete validators array with fresh indices (0, 1, 2, ...)
+    /// @return result The complete next epoch validator set with all transition info
+    function _computeNextEpochValidatorSet() internal view returns (NextEpochValidatorSet memory result) {
+        uint256 activeLen = _activeValidators.length;
+        uint256 pendingActiveLen = _pendingActive.length;
+        uint256 pendingInactiveLen = _pendingInactive.length;
+
+        // Pre-allocate transition arrays
+        result.toDeactivate = new address[](pendingInactiveLen);
+        result.deactivateCount = pendingInactiveLen;
+        result.toActivate = new address[](pendingActiveLen);
+        result.toRevertInactive = new address[](pendingActiveLen);
+        result.toKeepPending = new address[](pendingActiveLen);
+
+        // Step 1: Identify validators to deactivate (all pending_inactive)
+        for (uint256 i = 0; i < pendingInactiveLen; i++) {
+            result.toDeactivate[i] = _pendingInactive[i];
+        }
+
+        // Step 2: Count staying active validators (active minus pending_inactive)
+        uint256 stayingActiveCount = 0;
+        for (uint256 i = 0; i < activeLen; i++) {
+            if (!_isInPendingInactive(_activeValidators[i])) {
+                stayingActiveCount++;
+            }
+        }
+
+        // Step 3: Compute pending activation with voting power limits
+        uint256 currentTotal = _calculateTotalVotingPower();
+        uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
+        uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        uint256 addedPower = 0;
+
+        for (uint256 i = 0; i < pendingActiveLen; i++) {
+            address pool = _pendingActive[i];
+            uint256 power = _getValidatorVotingPower(pool);
+
+            // Check minimum bond requirement
+            if (power < minimumBond) {
+                result.toRevertInactive[result.revertInactiveCount] = pool;
+                result.revertInactiveCount++;
+                continue;
+            }
+
+            // Check voting power increase limit
+            // Note: if currentTotal is 0 (first validators), no limit applies
+            if (currentTotal > 0 && addedPower + power > maxIncrease) {
+                result.toKeepPending[result.keepPendingCount] = pool;
+                result.keepPendingCount++;
+                continue;
+            }
+
+            // Will be activated
+            result.toActivate[result.activateCount] = pool;
+            result.activateCount++;
+            addedPower += power;
+        }
+
+        // Step 4: Build complete validators array with fresh indices
+        uint256 totalValidators = stayingActiveCount + result.activateCount;
+        result.validators = new ValidatorConsensusInfo[](totalValidators);
+        uint256 idx = 0;
+
+        // Add staying active validators (excluding pending_inactive)
+        for (uint256 i = 0; i < activeLen; i++) {
+            address pool = _activeValidators[i];
+            if (!_isInPendingInactive(pool)) {
+                ValidatorRecord storage validator = _validators[pool];
+                result.validators[idx] = ValidatorConsensusInfo({
+                    validator: pool,
+                    consensusPubkey: validator.consensusPubkey,
+                    consensusPop: validator.consensusPop,
+                    votingPower: _getValidatorVotingPower(pool),
+                    validatorIndex: uint64(idx)
+                });
+                idx++;
+            }
+        }
+
+        // Add validators being activated
+        for (uint256 i = 0; i < result.activateCount; i++) {
+            address pool = result.toActivate[i];
+            ValidatorRecord storage validator = _validators[pool];
+            result.validators[idx] = ValidatorConsensusInfo({
+                validator: pool,
+                consensusPubkey: validator.consensusPubkey,
+                consensusPop: validator.consensusPop,
+                votingPower: _getValidatorVotingPower(pool),
+                validatorIndex: uint64(idx)
+            });
+            idx++;
+        }
+
+        return result;
     }
 
     // ========================================================================
@@ -670,79 +790,16 @@ contract ValidatorManagement is IValidatorManagement {
 
     /// @inheritdoc IValidatorManagement
     /// @dev Computes the projected next epoch validator set for DKG targets.
-    ///      Returns (active - pending_inactive) + pending_active (subject to min stake).
+    ///      Uses _computeNextEpochValidatorSet() as single source of truth.
     ///      IMPORTANT: Indices are FRESHLY ASSIGNED (0, 1, 2, ...) based on position in the
     ///      returned array. This matches Aptos's next_validator_consensus_infos() behavior.
+    ///
+    ///      NOTE: This function reads current voting power which depends on lockup state.
+    ///      During reconfiguration, all staking operations are blocked (see whenNotReconfiguring),
+    ///      so the validator set is effectively frozen. The DKG captures validators at the start
+    ///      of reconfiguration via the DKGStartEvent, ensuring immutability during the DKG window.
     function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory) {
-        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-
-        // Step 1: Count validators that will be in next epoch
-        // Active validators that are NOT in pending_inactive
-        uint256 activeLen = _activeValidators.length;
-        uint256 pendingActiveLen = _pendingActive.length;
-
-        // Count active validators NOT leaving
-        uint256 stayingActiveCount = 0;
-        for (uint256 i = 0; i < activeLen; i++) {
-            address pool = _activeValidators[i];
-            if (!_isInPendingInactive(pool)) {
-                stayingActiveCount++;
-            }
-        }
-
-        // Count pending_active that meet minimum bond
-        uint256 joiningCount = 0;
-        for (uint256 i = 0; i < pendingActiveLen; i++) {
-            address pool = _pendingActive[i];
-            uint256 power = _getValidatorVotingPower(pool);
-            if (power >= minimumBond) {
-                joiningCount++;
-            }
-        }
-
-        uint256 totalLen = stayingActiveCount + joiningCount;
-        if (totalLen == 0) {
-            return new ValidatorConsensusInfo[](0);
-        }
-
-        // Step 2: Build result array with fresh indices
-        ValidatorConsensusInfo[] memory result = new ValidatorConsensusInfo[](totalLen);
-        uint256 idx = 0;
-
-        // Add staying active validators (excluding pending_inactive)
-        for (uint256 i = 0; i < activeLen; i++) {
-            address pool = _activeValidators[i];
-            if (!_isInPendingInactive(pool)) {
-                ValidatorRecord storage validator = _validators[pool];
-                result[idx] = ValidatorConsensusInfo({
-                    validator: pool,
-                    consensusPubkey: validator.consensusPubkey,
-                    consensusPop: validator.consensusPop,
-                    votingPower: _getValidatorVotingPower(pool),
-                    validatorIndex: uint64(idx)
-                });
-                idx++;
-            }
-        }
-
-        // Add pending_active validators that meet minimum bond
-        for (uint256 i = 0; i < pendingActiveLen; i++) {
-            address pool = _pendingActive[i];
-            uint256 power = _getValidatorVotingPower(pool);
-            if (power >= minimumBond) {
-                ValidatorRecord storage validator = _validators[pool];
-                result[idx] = ValidatorConsensusInfo({
-                    validator: pool,
-                    consensusPubkey: validator.consensusPubkey,
-                    consensusPop: validator.consensusPop,
-                    votingPower: power,
-                    validatorIndex: uint64(idx)
-                });
-                idx++;
-            }
-        }
-
-        return result;
+        return _computeNextEpochValidatorSet().validators;
     }
 
     /// @notice Check if a pool is in the pending_inactive array

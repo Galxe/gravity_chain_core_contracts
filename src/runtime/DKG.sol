@@ -100,6 +100,7 @@ contract DKG is IDKG {
         uint64 startTimeUs = _getCurrentTimeMicros();
 
         // Store essential session info on-chain
+        // TODO(lightman): validator's voting power needs to be uint64 on the consensus engine.
         _inProgress = IDKG.DKGSessionInfo({
             dealerEpoch: dealerEpoch,
             configVariant: randomnessConfig.variant,

@@ -1117,12 +1117,14 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test getNextValidatorConsensusInfos includes pending_active that meet min stake
+    /// @dev Uses 100 ether for alice so 20% voting power limit (20 ether) allows bob (10 ether) to join
     function test_getNextValidatorConsensusInfos_includesPendingActive() public {
-        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        // Alice with 100 ether -> 20% voting power increase limit = 20 ether
+        address pool1 = _createRegisterAndJoin(alice, 100 ether, "alice");
         _processEpoch();
 
-        // Bob joins - becomes PENDING_ACTIVE
-        address pool2 = _createAndRegisterValidator(bob, 20 ether, "bob");
+        // Bob joins with MIN_BOND (10 ether) - fits within 20 ether limit
+        address pool2 = _createAndRegisterValidator(bob, MIN_BOND, "bob");
         vm.prank(bob);
         validatorManager.joinValidatorSet(pool2);
 
@@ -1133,6 +1135,7 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test getNextValidatorConsensusInfos assigns fresh indices (0, 1, 2, ...)
+    /// @dev Total active power = 60 ether -> 20% limit = 12 ether. David uses MIN_BOND to fit.
     function test_getNextValidatorConsensusInfos_freshIndices() public {
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         address pool2 = _createRegisterAndJoin(bob, 20 ether, "bob");
@@ -1144,7 +1147,9 @@ contract ValidatorManagementTest is Test {
         validatorManager.leaveValidatorSet(pool2);
 
         // New validator david joins (becomes pending_active)
-        address pool4 = _createAndRegisterValidator(david, 40 ether, "david");
+        // Total active power = 10 + 20 + 30 = 60 ether -> 20% limit = 12 ether
+        // David uses MIN_BOND (10 ether) to fit within the limit
+        address pool4 = _createAndRegisterValidator(david, MIN_BOND, "david");
         vm.prank(david);
         validatorManager.joinValidatorSet(pool4);
 
@@ -1182,7 +1187,8 @@ contract ValidatorManagementTest is Test {
 
     /// @notice Test that cur and next can differ when validators are joining/leaving
     /// @dev Cur returns _activeValidators (which includes pending_inactive until epoch boundary)
-    ///      Next returns (active - pending_inactive) + pending_active
+    ///      Next returns (active - pending_inactive) + pending_active (respecting voting power limit)
+    ///      Total active power = 60 ether -> 20% limit = 12 ether. David uses MIN_BOND to fit.
     function test_curAndNextValidatorsDiffer() public {
         // Start with 3 validators
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
@@ -1195,7 +1201,9 @@ contract ValidatorManagementTest is Test {
         validatorManager.leaveValidatorSet(pool2);
 
         // David joins (pending_active)
-        address pool4 = _createAndRegisterValidator(david, 40 ether, "david");
+        // Total active power = 10 + 20 + 30 = 60 ether -> 20% limit = 12 ether
+        // David uses MIN_BOND (10 ether) to fit within the limit
+        address pool4 = _createAndRegisterValidator(david, MIN_BOND, "david");
         vm.prank(david);
         validatorManager.joinValidatorSet(pool4);
 

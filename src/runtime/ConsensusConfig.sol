@@ -11,6 +11,8 @@ import { Errors } from "../foundation/Errors.sol";
 /// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
 ///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 ///      The config is stored as opaque bytes (BCS-serialized), interpreted off-chain by nodes.
+///      TODO(yxia): encoding format must be BCS or anything else?
+///      TODO(yxia): initialize config with default values?
 contract ConsensusConfig {
     // ========================================================================
     // STATE

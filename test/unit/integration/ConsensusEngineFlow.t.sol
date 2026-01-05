@@ -399,6 +399,8 @@ contract ConsensusEngineFlowTest is Test {
     /// @notice Test that DKG dealers and targets differ when validators are joining/leaving
     /// @dev Dealers = current validators (including pending_inactive)
     ///      Targets = next epoch validators (excluding pending_inactive, including pending_active)
+    ///      Note: David uses MIN_BOND to fit within the 20% voting power increase limit
+    ///            (Total active = 60 ether -> 20% limit = 12 ether)
     function test_dkgDealersAndTargetsDiffer() public {
         // Setup initial validators
         _createRegisterAndJoin(alice, MIN_BOND, "alice");
@@ -411,7 +413,8 @@ contract ConsensusEngineFlowTest is Test {
         validatorManager.leaveValidatorSet(pool2);
 
         // David joins (will be in targets but not dealers)
-        address pool4 = _createAndRegisterValidator(david, MIN_BOND * 4, "david");
+        // Uses MIN_BOND (10 ether) to fit within 20% limit of 60 ether = 12 ether
+        address pool4 = _createAndRegisterValidator(david, MIN_BOND, "david");
         vm.prank(david);
         validatorManager.joinValidatorSet(pool4);
 

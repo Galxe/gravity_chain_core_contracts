@@ -10,6 +10,7 @@ import { Errors } from "../foundation/Errors.sol";
 /// @notice Configuration parameters for governance staking
 /// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
 ///      Anyone can stake tokens to participate in governance voting.
+///      TODO(yxia): onNewEpoch() and pending config pattern?
 contract StakingConfig {
     // ========================================================================
     // STATE

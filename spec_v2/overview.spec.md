@@ -40,7 +40,7 @@ Gravity Core Contracts form the on-chain infrastructure for the Gravity blockcha
 │                      STAKING & VALIDATOR (Layers 2-3)                       │
 │                                                                             │
 │  ┌─────────────────────────────┐   ┌─────────────────────────────────────┐  │
-│  │      STAKING (Layer 2)      │   │   VALIDATOR MANAGEMENT (Layer 3)   │  │
+│  │      STAKING (Layer 2)      │   │   VALIDATOR MANAGEMENT (Layer 3)    │  │
 │  │                             │   │                                     │  │
 │  │  • StakePool Factory        │◄──│  • Validator Registration           │  │
 │  │  • Individual Pools         │   │  • Join/Leave Lifecycle             │  │
