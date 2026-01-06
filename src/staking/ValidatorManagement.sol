@@ -301,6 +301,37 @@ contract ValidatorManagement is IValidatorManagement {
         emit ValidatorLeaveRequested(stakePool);
     }
 
+    /// @inheritdoc IValidatorManagement
+    function forceLeaveValidatorSet(
+        address stakePool
+    ) external validatorExists(stakePool) whenNotReconfiguring {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+
+        ValidatorRecord storage validator = _validators[stakePool];
+
+        // Handle from PENDING_ACTIVE: remove from queue, revert to INACTIVE
+        if (validator.status == ValidatorStatus.PENDING_ACTIVE) {
+            _removeFromPendingActive(stakePool);
+            validator.status = ValidatorStatus.INACTIVE;
+            emit ValidatorForceLeaveRequested(stakePool);
+            return;
+        }
+
+        // Must be ACTIVE to force leave (PENDING_INACTIVE already leaving, INACTIVE already left)
+        if (validator.status != ValidatorStatus.ACTIVE) {
+            revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
+        }
+
+        // Unlike voluntary leave, governance CAN remove the last validator
+        // (emergency scenario where even consensus halt is acceptable)
+
+        // Change status to PENDING_INACTIVE
+        validator.status = ValidatorStatus.PENDING_INACTIVE;
+        _pendingInactive.push(stakePool);
+
+        emit ValidatorForceLeaveRequested(stakePool);
+    }
+
     // ========================================================================
     // OPERATOR FUNCTIONS
     // ========================================================================

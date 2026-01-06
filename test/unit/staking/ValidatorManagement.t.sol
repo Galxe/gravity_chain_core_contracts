@@ -1328,5 +1328,172 @@ contract ValidatorManagementTest is Test {
 
         vm.stopPrank();
     }
+
+    // ========================================================================
+    // FORCE LEAVE VALIDATOR SET TESTS (Governance Privilege)
+    // ========================================================================
+
+    /// @notice Test that governance can force an ACTIVE validator to PENDING_INACTIVE
+    function test_forceLeaveValidatorSet_fromActive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.ACTIVE));
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(pool1);
+
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        address[] memory pending = validatorManager.getPendingInactiveValidators();
+        assertEq(pending.length, 1);
+        assertEq(pending[0], pool1);
+    }
+
+    /// @notice Test that governance can force a PENDING_ACTIVE validator to INACTIVE
+    function test_forceLeaveValidatorSet_fromPendingActive() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(pool);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(pool);
+
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(validatorManager.getPendingActiveValidators().length, 0);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet emits ValidatorForceLeaveRequested event
+    function test_forceLeaveValidatorSet_emitsEvent() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectEmit(true, false, false, false);
+        emit IValidatorManagement.ValidatorForceLeaveRequested(pool1);
+        validatorManager.forceLeaveValidatorSet(pool1);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet reverts when called by non-governance
+    function test_RevertWhen_forceLeaveValidatorSet_notGovernance() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        vm.prank(alice);
+        vm.expectRevert(); // SystemAccessControl reverts
+        validatorManager.forceLeaveValidatorSet(pool1);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet reverts when validator not found
+    function test_RevertWhen_forceLeaveValidatorSet_validatorNotFound() public {
+        address fakePool = makeAddr("fakePool");
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorNotFound.selector, fakePool));
+        validatorManager.forceLeaveValidatorSet(fakePool);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet reverts when validator is INACTIVE
+    function test_RevertWhen_forceLeaveValidatorSet_alreadyInactive() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.InvalidStatus.selector, uint8(ValidatorStatus.ACTIVE), uint8(ValidatorStatus.INACTIVE)
+            )
+        );
+        validatorManager.forceLeaveValidatorSet(pool);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet reverts when validator is already PENDING_INACTIVE
+    function test_RevertWhen_forceLeaveValidatorSet_alreadyPendingInactive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        // Alice voluntarily leaves - becomes PENDING_INACTIVE
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // Governance tries to force leave - should revert
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.InvalidStatus.selector, uint8(ValidatorStatus.ACTIVE), uint8(ValidatorStatus.PENDING_INACTIVE)
+            )
+        );
+        validatorManager.forceLeaveValidatorSet(pool1);
+    }
+
+    /// @notice Test that forceLeaveValidatorSet is blocked during reconfiguration
+    function test_RevertWhen_forceLeaveValidatorSet_duringReconfiguration() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.forceLeaveValidatorSet(pool1);
+    }
+
+    /// @notice Test that governance CAN force remove the last active validator (unlike voluntary leave)
+    /// @dev This is an emergency capability - governance can force even the last validator to leave
+    function test_forceLeaveValidatorSet_canRemoveLastValidator() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Should have exactly 1 validator");
+
+        // Voluntary leave would fail with CannotRemoveLastValidator
+        vm.prank(alice);
+        vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
+        validatorManager.leaveValidatorSet(pool);
+
+        // But governance force leave should succeed
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(pool);
+
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // After epoch, validator becomes inactive and set is empty
+        _processEpoch();
+        assertEq(validatorManager.getActiveValidatorCount(), 0, "Validator set should be empty");
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+    }
+
+    /// @notice Test forceLeaveValidatorSet takes effect at next epoch (not immediately)
+    function test_forceLeaveValidatorSet_effectiveAtNextEpoch() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2);
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(pool1);
+
+        // Still 2 active validators until epoch processes
+        assertEq(validatorManager.getActiveValidatorCount(), 2);
+
+        // Next validator set excludes the force-leaving validator
+        ValidatorConsensusInfo[] memory next = validatorManager.getNextValidatorConsensusInfos();
+        assertEq(next.length, 1, "Next set should only have bob");
+        assertEq(next[0].validator, pool2);
+
+        // Process epoch - now alice is fully deactivated
+        _processEpoch();
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.INACTIVE));
+    }
 }
 

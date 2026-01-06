@@ -33,6 +33,10 @@ interface IValidatorManagement {
     /// @param stakePool Address of the validator's stake pool
     event ValidatorLeaveRequested(address indexed stakePool);
 
+    /// @notice Emitted when governance forces a validator to leave the active set
+    /// @param stakePool Address of the validator's stake pool
+    event ValidatorForceLeaveRequested(address indexed stakePool);
+
     /// @notice Emitted when a validator becomes inactive (at epoch boundary)
     /// @param stakePool Address of the validator's stake pool
     event ValidatorDeactivated(address indexed stakePool);
@@ -95,6 +99,16 @@ interface IValidatorManagement {
     ///      Transition to INACTIVE happens at next epoch boundary via onNewEpoch().
     /// @param stakePool Address of the validator's stake pool
     function leaveValidatorSet(
+        address stakePool
+    ) external;
+
+    /// @notice Force a validator to leave the active set (governance only)
+    /// @dev Only callable by GOVERNANCE contract.
+    ///      If validator is PENDING_ACTIVE: immediately reverts to INACTIVE.
+    ///      If validator is ACTIVE: sets to PENDING_INACTIVE for deactivation at next epoch.
+    ///      Unlike voluntary leaveValidatorSet, this can remove the last validator (emergency).
+    /// @param stakePool Address of the validator's stake pool
+    function forceLeaveValidatorSet(
         address stakePool
     ) external;
 
