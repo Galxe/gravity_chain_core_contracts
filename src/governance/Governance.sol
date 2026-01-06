@@ -27,8 +27,8 @@ contract Governance is IGovernance {
     /// @notice Mapping of proposal ID to Proposal struct
     mapping(uint64 => Proposal) internal _proposals;
 
-    /// @notice Voting power used per (pool, proposal): keccak256(pool, proposalId) => used power
-    mapping(bytes32 => uint128) public usedVotingPower;
+    /// @notice Voting power used per pool per proposal: pool => proposalId => used power
+    mapping(address => mapping(uint64 => uint128)) public usedVotingPower;
 
     /// @notice Whether a proposal has been executed
     mapping(uint64 => bool) public executed;
@@ -70,14 +70,6 @@ contract Governance is IGovernance {
     /// @notice Get staking contract
     function _staking() internal view returns (IStaking) {
         return IStaking(SystemAddresses.STAKING);
-    }
-
-    /// @notice Compute the key for usedVotingPower mapping
-    function _votingKey(
-        address stakePool,
-        uint64 proposalId
-    ) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(stakePool, proposalId));
     }
 
     /// @notice Verify caller is the pool's voter
@@ -181,8 +173,7 @@ contract Governance is IGovernance {
 
         // Get voting power at proposal's expiration time
         uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
-        bytes32 key = _votingKey(stakePool, proposalId);
-        uint128 used = usedVotingPower[key];
+        uint128 used = usedVotingPower[stakePool][proposalId];
 
         if (poolPower <= used) {
             return 0;
@@ -326,8 +317,7 @@ contract Governance is IGovernance {
         }
 
         // Update used voting power
-        bytes32 key = _votingKey(stakePool, proposalId);
-        usedVotingPower[key] += votingPower;
+        usedVotingPower[stakePool][proposalId] += votingPower;
 
         // Update votes
         if (support) {
