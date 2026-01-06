@@ -16,7 +16,6 @@ contract GovernanceConfigTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 1000 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 100 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days in microseconds
-    uint128 constant EARLY_RESOLUTION_THRESHOLD_BPS = 5000; // 50%
 
     function setUp() public {
         // Deploy config at the expected system address
@@ -32,7 +31,6 @@ contract GovernanceConfigTest is Test {
         assertEq(config.minVotingThreshold(), 0);
         assertEq(config.requiredProposerStake(), 0);
         assertEq(config.votingDurationMicros(), 0);
-        assertEq(config.earlyResolutionThresholdBps(), 0);
         assertFalse(config.hasPendingConfig());
     }
 
@@ -43,15 +41,12 @@ contract GovernanceConfigTest is Test {
     function test_Initialize() public {
         // Call initialize as GENESIS
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
         // Verify values
         assertEq(config.minVotingThreshold(), MIN_VOTING_THRESHOLD);
         assertEq(config.requiredProposerStake(), REQUIRED_PROPOSER_STAKE);
         assertEq(config.votingDurationMicros(), VOTING_DURATION_MICROS);
-        assertEq(config.earlyResolutionThresholdBps(), EARLY_RESOLUTION_THRESHOLD_BPS);
         assertTrue(config.isInitialized());
     }
 
@@ -60,36 +55,24 @@ contract GovernanceConfigTest is Test {
 
         vm.prank(notGenesis);
         vm.expectRevert();
-        config.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 
     function test_RevertWhen_InitializeTwice() public {
         // First initialization
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
         // Second initialization should fail
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.AlreadyInitialized.selector);
-        config.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 
     function test_RevertWhen_InitializeZeroVotingDuration() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidVotingDuration.selector);
-        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0, EARLY_RESOLUTION_THRESHOLD_BPS);
-    }
-
-    function test_RevertWhen_InitializeInvalidEarlyResolutionThreshold() public {
-        vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidEarlyResolutionThreshold.selector, uint128(10001)));
-        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, 10001);
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
     }
 
     // ========================================================================
@@ -102,10 +85,9 @@ contract GovernanceConfigTest is Test {
         uint128 newMinThreshold = 2000 ether;
         uint256 newProposerStake = 200 ether;
         uint64 newVotingDuration = 14 days * 1_000_000;
-        uint128 newEarlyThreshold = 6000;
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(newMinThreshold, newProposerStake, newVotingDuration, newEarlyThreshold);
+        config.setForNextEpoch(newMinThreshold, newProposerStake, newVotingDuration);
 
         // Should not change current values, only set pending
         assertEq(config.minVotingThreshold(), MIN_VOTING_THRESHOLD);
@@ -116,7 +98,6 @@ contract GovernanceConfigTest is Test {
         assertEq(pendingConfig.minVotingThreshold, newMinThreshold);
         assertEq(pendingConfig.requiredProposerStake, newProposerStake);
         assertEq(pendingConfig.votingDurationMicros, newVotingDuration);
-        assertEq(pendingConfig.earlyResolutionThresholdBps, newEarlyThreshold);
     }
 
     function test_RevertWhen_SetForNextEpoch_ZeroVotingDuration() public {
@@ -124,23 +105,13 @@ contract GovernanceConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidVotingDuration.selector);
-        config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0, EARLY_RESOLUTION_THRESHOLD_BPS);
-    }
-
-    function test_RevertWhen_SetForNextEpoch_InvalidEarlyThreshold() public {
-        _initializeConfig();
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidEarlyResolutionThreshold.selector, uint128(10001)));
-        config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, 10001);
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
     }
 
     function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.GovernanceConfigNotInitialized.selector);
-        config.setForNextEpoch(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 
     function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
@@ -149,9 +120,7 @@ contract GovernanceConfigTest is Test {
         address notGovernance = address(0x5678);
         vm.prank(notGovernance);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
-        config.setForNextEpoch(
-            MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 
     function test_Event_SetForNextEpoch() public {
@@ -160,9 +129,7 @@ contract GovernanceConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectEmit(false, false, false, true);
         emit GovernanceConfig.PendingGovernanceConfigSet();
-        config.setForNextEpoch(
-            MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 
     // ========================================================================
@@ -175,10 +142,9 @@ contract GovernanceConfigTest is Test {
         uint128 newMinThreshold = 2000 ether;
         uint256 newProposerStake = 200 ether;
         uint64 newVotingDuration = 14 days * 1_000_000;
-        uint128 newEarlyThreshold = 6000;
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(newMinThreshold, newProposerStake, newVotingDuration, newEarlyThreshold);
+        config.setForNextEpoch(newMinThreshold, newProposerStake, newVotingDuration);
 
         vm.prank(SystemAddresses.RECONFIGURATION);
         config.applyPendingConfig();
@@ -186,7 +152,6 @@ contract GovernanceConfigTest is Test {
         assertEq(config.minVotingThreshold(), newMinThreshold);
         assertEq(config.requiredProposerStake(), newProposerStake);
         assertEq(config.votingDurationMicros(), newVotingDuration);
-        assertEq(config.earlyResolutionThresholdBps(), newEarlyThreshold);
         assertFalse(config.hasPendingConfig());
     }
 
@@ -205,9 +170,7 @@ contract GovernanceConfigTest is Test {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(
-            MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
         address notReconfiguration = address(0x1234);
         vm.prank(notReconfiguration);
@@ -221,9 +184,7 @@ contract GovernanceConfigTest is Test {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(
-            MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
         vm.prank(SystemAddresses.RECONFIGURATION);
         vm.expectEmit(false, false, false, true);
@@ -238,36 +199,29 @@ contract GovernanceConfigTest is Test {
     function testFuzz_Initialize(
         uint128 minVotingThreshold,
         uint256 requiredProposerStake,
-        uint64 votingDurationMicros,
-        uint128 earlyResolutionThresholdBps
+        uint64 votingDurationMicros
     ) public {
         vm.assume(votingDurationMicros > 0);
-        vm.assume(earlyResolutionThresholdBps <= 10000);
 
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(minVotingThreshold, requiredProposerStake, votingDurationMicros, earlyResolutionThresholdBps);
+        config.initialize(minVotingThreshold, requiredProposerStake, votingDurationMicros);
 
         assertEq(config.minVotingThreshold(), minVotingThreshold);
         assertEq(config.requiredProposerStake(), requiredProposerStake);
         assertEq(config.votingDurationMicros(), votingDurationMicros);
-        assertEq(config.earlyResolutionThresholdBps(), earlyResolutionThresholdBps);
     }
 
     function testFuzz_SetForNextEpochAndApply(
         uint128 minVotingThreshold,
         uint256 requiredProposerStake,
-        uint64 votingDurationMicros,
-        uint128 earlyResolutionThresholdBps
+        uint64 votingDurationMicros
     ) public {
         _initializeConfig();
 
         vm.assume(votingDurationMicros > 0);
-        vm.assume(earlyResolutionThresholdBps <= 10000);
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(
-            minVotingThreshold, requiredProposerStake, votingDurationMicros, earlyResolutionThresholdBps
-        );
+        config.setForNextEpoch(minVotingThreshold, requiredProposerStake, votingDurationMicros);
 
         assertTrue(config.hasPendingConfig());
 
@@ -277,7 +231,6 @@ contract GovernanceConfigTest is Test {
         assertEq(config.minVotingThreshold(), minVotingThreshold);
         assertEq(config.requiredProposerStake(), requiredProposerStake);
         assertEq(config.votingDurationMicros(), votingDurationMicros);
-        assertEq(config.earlyResolutionThresholdBps(), earlyResolutionThresholdBps);
         assertFalse(config.hasPendingConfig());
     }
 
@@ -287,8 +240,6 @@ contract GovernanceConfigTest is Test {
 
     function _initializeConfig() internal {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
     }
 }

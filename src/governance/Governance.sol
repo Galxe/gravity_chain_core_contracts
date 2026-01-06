@@ -16,7 +16,7 @@ import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 /// @notice On-chain governance for Gravity blockchain
 /// @dev Voting power comes from StakePools via the Staking factory.
 ///      The pool's `voter` address casts votes using the pool's voting power.
-///      Supports partial voting and early resolution.
+///      Supports partial voting.
 ///      Proposal execution is restricted to authorized executors managed by the owner.
 contract Governance is IGovernance, Ownable2Step {
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -99,26 +99,6 @@ contract Governance is IGovernance, Ownable2Step {
         }
     }
 
-    /// @notice Calculate early resolution threshold based on total staked
-    /// @dev Returns 0 if early resolution is disabled (threshold = 0)
-    function _getEarlyResolutionVotes() internal view returns (uint128) {
-        uint128 thresholdBps = _config().earlyResolutionThresholdBps();
-        if (thresholdBps == 0) {
-            return type(uint128).max; // Effectively disabled
-        }
-
-        // Get total staked from all pools - we use a simplified approach
-        // In production, you might want to track total staked separately
-        // For now, we use the config's minVotingThreshold as a reference
-        // A more accurate implementation would sum all pool voting powers
-        // But that's expensive, so we use a percentage of a reference total
-
-        // For early resolution, we check if yes or no votes exceed threshold
-        // The threshold is based on basis points of the minVotingThreshold
-        // This is a simplification - in production you might track total supply
-        return type(uint128).max; // Disable for now, enable via config
-    }
-
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
@@ -198,20 +178,8 @@ contract Governance is IGovernance, Ownable2Step {
             return false;
         }
 
-        uint64 now_ = _now();
-
         // Can resolve if voting period ended
-        if (now_ >= p.expirationTime) {
-            return true;
-        }
-
-        // Can resolve early if threshold met
-        uint128 earlyThreshold = _getEarlyResolutionVotes();
-        if (p.yesVotes >= earlyThreshold || p.noVotes >= earlyThreshold) {
-            return true;
-        }
-
-        return false;
+        return _now() >= p.expirationTime;
     }
 
     /// @inheritdoc IGovernance

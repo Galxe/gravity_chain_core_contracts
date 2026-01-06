@@ -243,10 +243,6 @@ library Errors {
     /// @notice Voting duration must be greater than zero
     error InvalidVotingDuration();
 
-    /// @notice Early resolution threshold out of range (must be <= 10000 bps)
-    /// @param value The invalid value provided
-    error InvalidEarlyResolutionThreshold(uint128 value);
-
     /// @notice Proposal execution failed
     /// @param proposalId ID of the proposal
     error ExecutionFailed(uint64 proposalId);

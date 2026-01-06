@@ -51,7 +51,6 @@ contract GovernanceTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 100 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 50 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days
-    uint128 constant EARLY_RESOLUTION_THRESHOLD_BPS = 5000; // 50%
 
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION_MICROS = 30 days * 1_000_000; // 30 days
@@ -90,9 +89,7 @@ contract GovernanceTest is Test {
 
         // Initialize GovernanceConfig
         vm.prank(SystemAddresses.GENESIS);
-        govConfig.initialize(
-            MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
-        );
+        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
         // Deploy Governance with owner
         // Deploy to a temporary address first, then copy bytecode and storage to system address

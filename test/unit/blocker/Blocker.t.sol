@@ -156,8 +156,7 @@ contract BlockerTest is Test {
             .initialize(
                 1000 ether, // minVotingThreshold
                 100 ether, // requiredProposerStake
-                7 days * 1_000_000, // votingDurationMicros
-                5000 // earlyResolutionThresholdBps
+                7 days * 1_000_000 // votingDurationMicros
             );
 
         // Setup mock validators

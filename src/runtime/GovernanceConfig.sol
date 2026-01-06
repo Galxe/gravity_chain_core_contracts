@@ -12,13 +12,6 @@ import { Errors } from "../foundation/Errors.sol";
 ///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 contract GovernanceConfig {
     // ========================================================================
-    // CONSTANTS
-    // ========================================================================
-
-    /// @notice Maximum allowed early resolution threshold (100% = 10000 basis points)
-    uint128 public constant MAX_EARLY_RESOLUTION_THRESHOLD_BPS = 10000;
-
-    // ========================================================================
     // TYPES
     // ========================================================================
 
@@ -27,7 +20,6 @@ contract GovernanceConfig {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
-        uint128 earlyResolutionThresholdBps;
     }
 
     // ========================================================================
@@ -42,10 +34,6 @@ contract GovernanceConfig {
 
     /// @notice Duration of voting period in microseconds
     uint64 public votingDurationMicros;
-
-    /// @notice Threshold for early resolution (basis points, e.g., 5000 = 50%)
-    /// @dev If yes or no votes exceed this % of total staked, proposal can resolve early
-    uint128 public earlyResolutionThresholdBps;
 
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
@@ -78,12 +66,10 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds
-    /// @param _earlyResolutionThresholdBps Early resolution threshold in basis points
     function initialize(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros,
-        uint128 _earlyResolutionThresholdBps
+        uint64 _votingDurationMicros
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
@@ -92,12 +78,11 @@ contract GovernanceConfig {
         }
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros, _earlyResolutionThresholdBps);
+        _validateConfig(_votingDurationMicros);
 
         minVotingThreshold = _minVotingThreshold;
         requiredProposerStake = _requiredProposerStake;
         votingDurationMicros = _votingDurationMicros;
-        earlyResolutionThresholdBps = _earlyResolutionThresholdBps;
 
         _initialized = true;
 
@@ -131,24 +116,21 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds (must be > 0)
-    /// @param _earlyResolutionThresholdBps Early resolution threshold in basis points (max 10000)
     function setForNextEpoch(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros,
-        uint128 _earlyResolutionThresholdBps
+        uint64 _votingDurationMicros
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros, _earlyResolutionThresholdBps);
+        _validateConfig(_votingDurationMicros);
 
         _pendingConfig = PendingConfig({
             minVotingThreshold: _minVotingThreshold,
             requiredProposerStake: _requiredProposerStake,
-            votingDurationMicros: _votingDurationMicros,
-            earlyResolutionThresholdBps: _earlyResolutionThresholdBps
+            votingDurationMicros: _votingDurationMicros
         });
         hasPendingConfig = true;
 
@@ -174,7 +156,6 @@ contract GovernanceConfig {
         minVotingThreshold = _pendingConfig.minVotingThreshold;
         requiredProposerStake = _pendingConfig.requiredProposerStake;
         votingDurationMicros = _pendingConfig.votingDurationMicros;
-        earlyResolutionThresholdBps = _pendingConfig.earlyResolutionThresholdBps;
 
         hasPendingConfig = false;
 
@@ -191,17 +172,11 @@ contract GovernanceConfig {
 
     /// @notice Validate configuration parameters
     /// @param _votingDurationMicros Voting duration
-    /// @param _earlyResolutionThresholdBps Early resolution threshold
     function _validateConfig(
-        uint64 _votingDurationMicros,
-        uint128 _earlyResolutionThresholdBps
+        uint64 _votingDurationMicros
     ) internal pure {
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
-        }
-
-        if (_earlyResolutionThresholdBps > MAX_EARLY_RESOLUTION_THRESHOLD_BPS) {
-            revert Errors.InvalidEarlyResolutionThreshold(_earlyResolutionThresholdBps);
         }
     }
 

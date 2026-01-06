@@ -157,7 +157,7 @@ contract ConsensusEngineFlowTest is Test {
         versionConfig.initialize(1);
 
         vm.prank(SystemAddresses.GENESIS);
-        governanceConfig.initialize(50, 100 ether, 7 days * 1_000_000, 6700);
+        governanceConfig.initialize(50, 100 ether, 7 days * 1_000_000);
 
         // Set initial timestamp BEFORE reconfig initialization
         // so lastReconfigurationTime is set correctly
