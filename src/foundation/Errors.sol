@@ -255,6 +255,14 @@ library Errors {
     /// @param lastVoteTime The timestamp of the last vote
     error ResolutionCannotBeAtomic(uint64 lastVoteTime);
 
+    /// @notice Proposal targets and datas arrays have mismatched lengths
+    /// @param targetsLength Length of targets array
+    /// @param datasLength Length of datas array
+    error ProposalArrayLengthMismatch(uint256 targetsLength, uint256 datasLength);
+
+    /// @notice Proposal batch cannot be empty
+    error EmptyProposalBatch();
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================

@@ -252,9 +252,18 @@ contract Governance is IGovernance, Ownable2Step {
     /// @inheritdoc IGovernance
     function createProposal(
         address stakePool,
-        bytes32 executionHash,
+        address[] calldata targets,
+        bytes[] calldata datas,
         string calldata metadataUri
     ) external returns (uint64 proposalId) {
+        // Validate batch arrays
+        if (targets.length != datas.length) {
+            revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
+        }
+        if (targets.length == 0) {
+            revert Errors.EmptyProposalBatch();
+        }
+
         // Verify pool is valid
         _requireValidPool(stakePool);
 
@@ -274,6 +283,9 @@ contract Governance is IGovernance, Ownable2Step {
         if (votingPower < requiredStake) {
             revert Errors.InsufficientVotingPower(requiredStake, votingPower);
         }
+
+        // Compute execution hash from batch arrays
+        bytes32 executionHash = keccak256(abi.encode(targets, datas));
 
         // Create proposal
         proposalId = nextProposalId++;
@@ -440,9 +452,17 @@ contract Governance is IGovernance, Ownable2Step {
     /// @inheritdoc IGovernance
     function execute(
         uint64 proposalId,
-        address target,
-        bytes calldata data
+        address[] calldata targets,
+        bytes[] calldata datas
     ) external onlyExecutor {
+        // Validate batch arrays
+        if (targets.length != datas.length) {
+            revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
+        }
+        if (targets.length == 0) {
+            revert Errors.EmptyProposalBatch();
+        }
+
         // Verify proposal exists
         if (_proposals[proposalId].id == 0) {
             revert Errors.ProposalNotFound(proposalId);
@@ -461,21 +481,31 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Verify execution hash matches
         bytes32 expectedHash = _proposals[proposalId].executionHash;
-        bytes32 actualHash = keccak256(abi.encodePacked(target, data));
+        bytes32 actualHash = keccak256(abi.encode(targets, datas));
         if (actualHash != expectedHash) {
             revert Errors.ExecutionHashMismatch(expectedHash, actualHash);
         }
 
-        // Mark as executed BEFORE external call (CEI pattern)
+        // Mark as executed BEFORE external calls (CEI pattern)
         executed[proposalId] = true;
 
-        // Execute the call
-        (bool success,) = target.call(data);
-        if (!success) {
-            revert Errors.ExecutionFailed(proposalId);
+        // Execute all calls atomically
+        for (uint256 i = 0; i < targets.length; ++i) {
+            (bool success,) = targets[i].call(datas[i]);
+            if (!success) {
+                revert Errors.ExecutionFailed(proposalId);
+            }
         }
 
-        emit ProposalExecuted(proposalId, msg.sender, target, data);
+        emit ProposalExecuted(proposalId, msg.sender, targets, datas);
+    }
+
+    /// @inheritdoc IGovernance
+    function computeExecutionHash(
+        address[] calldata targets,
+        bytes[] calldata datas
+    ) external pure returns (bytes32) {
+        return keccak256(abi.encode(targets, datas));
     }
 
     // ========================================================================
