@@ -5,10 +5,11 @@ import { IGovernance } from "./IGovernance.sol";
 import { GovernanceConfig } from "../runtime/GovernanceConfig.sol";
 import { Proposal, ProposalState } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
-import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStaking } from "../staking/IStaking.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
+import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 
 /// @title Governance
 /// @author Gravity Team
@@ -16,13 +17,15 @@ import { ITimestamp } from "../runtime/ITimestamp.sol";
 /// @dev Voting power comes from StakePools via the Staking factory.
 ///      The pool's `voter` address casts votes using the pool's voting power.
 ///      Supports partial voting and early resolution.
-contract Governance is IGovernance {
+///      Proposal execution is restricted to authorized executors managed by the owner.
+contract Governance is IGovernance, Ownable2Step {
+    using EnumerableSet for EnumerableSet.AddressSet;
     // ========================================================================
     // STATE
     // ========================================================================
 
     /// @notice Next proposal ID to be assigned
-    uint64 public nextProposalId;
+    uint64 public nextProposalId = 1;
 
     /// @notice Mapping of proposal ID to Proposal struct
     mapping(uint64 => Proposal) internal _proposals;
@@ -33,24 +36,29 @@ contract Governance is IGovernance {
     /// @notice Whether a proposal has been executed
     mapping(uint64 => bool) public executed;
 
-    /// @notice Whether contract has been initialized
-    bool private _initialized;
+    /// @notice Set of authorized executors
+    EnumerableSet.AddressSet private _executors;
 
     // ========================================================================
-    // INITIALIZATION
+    // CONSTRUCTOR
     // ========================================================================
 
-    /// @notice Initialize the governance contract
-    /// @dev Can only be called once by GENESIS. Sets nextProposalId to 1.
-    function initialize() external {
-        requireAllowed(SystemAddresses.GENESIS);
+    /// @notice Initialize the Governance contract with an owner
+    /// @param initialOwner Address of the initial contract owner
+    constructor(
+        address initialOwner
+    ) Ownable(initialOwner) { }
 
-        if (_initialized) {
-            revert Errors.AlreadyInitialized();
+    // ========================================================================
+    // MODIFIERS
+    // ========================================================================
+
+    /// @notice Restricts function access to authorized executors
+    modifier onlyExecutor() {
+        if (!_executors.contains(msg.sender)) {
+            revert Errors.NotExecutor(msg.sender);
         }
-
-        nextProposalId = 1; // Start proposal IDs at 1
-        _initialized = true;
+        _;
     }
 
     // ========================================================================
@@ -63,12 +71,12 @@ contract Governance is IGovernance {
     }
 
     /// @notice Get governance config
-    function _config() internal view returns (GovernanceConfig) {
+    function _config() internal pure returns (GovernanceConfig) {
         return GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG);
     }
 
     /// @notice Get staking contract
-    function _staking() internal view returns (IStaking) {
+    function _staking() internal pure returns (IStaking) {
         return IStaking(SystemAddresses.STAKING);
     }
 
@@ -228,6 +236,23 @@ contract Governance is IGovernance {
         return executed[proposalId];
     }
 
+    /// @inheritdoc IGovernance
+    function isExecutor(
+        address account
+    ) external view returns (bool) {
+        return _executors.contains(account);
+    }
+
+    /// @inheritdoc IGovernance
+    function getExecutors() external view returns (address[] memory) {
+        return _executors.values();
+    }
+
+    /// @inheritdoc IGovernance
+    function getExecutorCount() external view returns (uint256) {
+        return _executors.length();
+    }
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -285,6 +310,52 @@ contract Governance is IGovernance {
         uint128 votingPower,
         bool support
     ) external {
+        // For single vote(), preserve original behavior: revert if exceeding remaining power
+        uint128 remaining = getRemainingVotingPower(stakePool, proposalId);
+        if (votingPower > remaining) {
+            revert Errors.VotingPowerOverflow(votingPower, remaining);
+        }
+        _voteInternal(stakePool, proposalId, votingPower, support);
+    }
+
+    /// @inheritdoc IGovernance
+    function batchVote(
+        address[] calldata stakePools,
+        uint64 proposalId,
+        bool support
+    ) external {
+        uint256 len = stakePools.length;
+        for (uint256 i = 0; i < len; ++i) {
+            // Use type(uint128).max to vote with all remaining power (similar to Aptos's MAX_U64)
+            _voteInternal(stakePools[i], proposalId, type(uint128).max, support);
+        }
+    }
+
+    /// @inheritdoc IGovernance
+    function batchPartialVote(
+        address[] calldata stakePools,
+        uint64 proposalId,
+        uint128 votingPower,
+        bool support
+    ) external {
+        uint256 len = stakePools.length;
+        for (uint256 i = 0; i < len; ++i) {
+            _voteInternal(stakePools[i], proposalId, votingPower, support);
+        }
+    }
+
+    /// @notice Internal voting logic for a single stake pool
+    /// @dev If votingPower exceeds remaining power, uses all remaining power (no revert).
+    /// @param stakePool Address of the stake pool to vote with
+    /// @param proposalId ID of the proposal to vote on
+    /// @param votingPower Amount of voting power to use (capped at remaining power)
+    /// @param support True to vote yes, false to vote no
+    function _voteInternal(
+        address stakePool,
+        uint64 proposalId,
+        uint128 votingPower,
+        bool support
+    ) internal {
         Proposal storage p = _proposals[proposalId];
 
         // Verify proposal exists
@@ -312,8 +383,15 @@ contract Governance is IGovernance {
         // Calculate remaining voting power (uses voting power at expiration time,
         // which inherently checks that lockup covers the voting period)
         uint128 remaining = getRemainingVotingPower(stakePool, proposalId);
+
+        // Cap voting power at remaining (similar to Aptos's min(voting_power, staking_pool_voting_power))
         if (votingPower > remaining) {
-            revert Errors.VotingPowerOverflow(votingPower, remaining);
+            votingPower = remaining;
+        }
+
+        // Skip if no voting power to use
+        if (votingPower == 0) {
+            return;
         }
 
         // Update used voting power
@@ -364,7 +442,7 @@ contract Governance is IGovernance {
         uint64 proposalId,
         address target,
         bytes calldata data
-    ) external {
+    ) external onlyExecutor {
         // Verify proposal exists
         if (_proposals[proposalId].id == 0) {
             revert Errors.ProposalNotFound(proposalId);
@@ -398,6 +476,28 @@ contract Governance is IGovernance {
         }
 
         emit ProposalExecuted(proposalId, msg.sender, target, data);
+    }
+
+    // ========================================================================
+    // EXECUTOR MANAGEMENT
+    // ========================================================================
+
+    /// @inheritdoc IGovernance
+    function addExecutor(
+        address executor
+    ) external onlyOwner {
+        if (_executors.add(executor)) {
+            emit ExecutorAdded(executor);
+        }
+    }
+
+    /// @inheritdoc IGovernance
+    function removeExecutor(
+        address executor
+    ) external onlyOwner {
+        if (_executors.remove(executor)) {
+            emit ExecutorRemoved(executor);
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { Governance } from "src/governance/Governance.sol";
 import { IGovernance } from "src/governance/IGovernance.sol";
 import { GovernanceConfig } from "src/runtime/GovernanceConfig.sol";
@@ -13,6 +13,7 @@ import { StakingConfig } from "src/runtime/StakingConfig.sol";
 import { Proposal, ProposalState, ValidatorStatus } from "src/foundation/Types.sol";
 import { SystemAddresses } from "src/foundation/SystemAddresses.sol";
 import { Errors } from "src/foundation/Errors.sol";
+import { Ownable } from "@openzeppelin/access/Ownable.sol";
 
 /// @notice Mock ValidatorManagement for testing - all pools are non-validators
 contract MockValidatorManagement {
@@ -39,9 +40,12 @@ contract GovernanceTest is Test {
     StakingConfig public stakingConfig;
 
     // Test accounts
+    address public owner = address(0x0BEEF);
     address public alice = address(0xA11CE);
     address public bob = address(0xB0B);
     address public charlie = address(0xC4A1E);
+    address public executor1 = address(0xE1);
+    address public executor2 = address(0xE2);
 
     // Test values
     uint128 constant MIN_VOTING_THRESHOLD = 100 ether;
@@ -90,13 +94,23 @@ contract GovernanceTest is Test {
             MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, EARLY_RESOLUTION_THRESHOLD_BPS
         );
 
-        // Deploy Governance
-        vm.etch(SystemAddresses.GOVERNANCE, address(new Governance()).code);
+        // Deploy Governance with owner
+        // Deploy to a temporary address first, then copy bytecode and storage to system address
+        Governance tempGov = new Governance(owner);
+        vm.etch(SystemAddresses.GOVERNANCE, address(tempGov).code);
         governance = Governance(SystemAddresses.GOVERNANCE);
 
-        // Initialize Governance
-        vm.prank(SystemAddresses.GENESIS);
-        governance.initialize();
+        // Copy storage slots from temp deployment
+        // Slot 0: _owner (address at offset 0)
+        // Slot 1: _pendingOwner (address at offset 0) + nextProposalId (uint64 at offset 20)
+        bytes32 slot0Value = vm.load(address(tempGov), bytes32(uint256(0)));
+        bytes32 slot1Value = vm.load(address(tempGov), bytes32(uint256(1)));
+        vm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(0)), slot0Value);
+        vm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(1)), slot1Value);
+
+        // Add default executor for tests (address(this) will be the executor for most tests)
+        vm.prank(owner);
+        governance.addExecutor(address(this));
 
         // Deploy mock target
         mockTarget = new MockTarget();
@@ -112,12 +126,12 @@ contract GovernanceTest is Test {
     // ========================================================================
 
     function _createStakePool(
-        address owner,
+        address poolOwner,
         uint256 amount
     ) internal returns (address) {
         uint64 lockedUntil = timestamp.nowMicroseconds() + LOCKUP_DURATION_MICROS;
-        vm.prank(owner);
-        return staking.createPool{ value: amount }(owner, owner, owner, owner, lockedUntil);
+        vm.prank(poolOwner);
+        return staking.createPool{ value: amount }(poolOwner, poolOwner, poolOwner, poolOwner, lockedUntil);
     }
 
     function _computeExecutionHash(
@@ -694,6 +708,489 @@ contract GovernanceTest is Test {
         vm.expectEmit(true, true, false, true);
         emit IGovernance.ProposalExecuted(proposalId, address(this), address(mockTarget), data);
         governance.execute(proposalId, address(mockTarget), data);
+    }
+
+    // ========================================================================
+    // EXECUTOR MANAGEMENT TESTS
+    // ========================================================================
+
+    function test_AddExecutor() public {
+        // Owner adds an executor
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        // Verify executor was added
+        assertTrue(governance.isExecutor(executor1));
+        assertEq(governance.getExecutorCount(), 2); // address(this) + executor1
+    }
+
+    function test_AddExecutor_EmitsEvent() public {
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit IGovernance.ExecutorAdded(executor1);
+        governance.addExecutor(executor1);
+    }
+
+    function test_AddExecutor_NoEventIfAlreadyExecutor() public {
+        // Add executor first time
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        // Adding again should not emit event (EnumerableSet.add returns false)
+        vm.prank(owner);
+        vm.recordLogs();
+        governance.addExecutor(executor1);
+
+        // Should have no ExecutorAdded event
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != keccak256("ExecutorAdded(address)"));
+        }
+    }
+
+    function test_RemoveExecutor() public {
+        // Add executor first
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        assertTrue(governance.isExecutor(executor1));
+
+        // Remove executor
+        vm.prank(owner);
+        governance.removeExecutor(executor1);
+
+        assertFalse(governance.isExecutor(executor1));
+    }
+
+    function test_RemoveExecutor_EmitsEvent() public {
+        // Add executor first
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        // Remove and check event
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true);
+        emit IGovernance.ExecutorRemoved(executor1);
+        governance.removeExecutor(executor1);
+    }
+
+    function test_RemoveExecutor_NoEventIfNotExecutor() public {
+        // Try to remove non-existent executor
+        vm.prank(owner);
+        vm.recordLogs();
+        governance.removeExecutor(executor1);
+
+        // Should have no ExecutorRemoved event
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != keccak256("ExecutorRemoved(address)"));
+        }
+    }
+
+    function test_RevertWhen_AddExecutorNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        governance.addExecutor(executor1);
+    }
+
+    function test_RevertWhen_RemoveExecutorNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        governance.removeExecutor(executor1);
+    }
+
+    function test_GetExecutors() public {
+        // Add two executors
+        vm.startPrank(owner);
+        governance.addExecutor(executor1);
+        governance.addExecutor(executor2);
+        vm.stopPrank();
+
+        address[] memory executors = governance.getExecutors();
+        assertEq(executors.length, 3); // address(this) + executor1 + executor2
+
+        // Check all executors are in the array (order may vary)
+        bool foundThis;
+        bool foundExecutor1;
+        bool foundExecutor2;
+        for (uint256 i = 0; i < executors.length; i++) {
+            if (executors[i] == address(this)) foundThis = true;
+            if (executors[i] == executor1) foundExecutor1 = true;
+            if (executors[i] == executor2) foundExecutor2 = true;
+        }
+        assertTrue(foundThis);
+        assertTrue(foundExecutor1);
+        assertTrue(foundExecutor2);
+    }
+
+    function test_GetExecutorCount() public {
+        assertEq(governance.getExecutorCount(), 1); // address(this)
+
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+        assertEq(governance.getExecutorCount(), 2);
+
+        vm.prank(owner);
+        governance.addExecutor(executor2);
+        assertEq(governance.getExecutorCount(), 3);
+
+        vm.prank(owner);
+        governance.removeExecutor(executor1);
+        assertEq(governance.getExecutorCount(), 2);
+    }
+
+    function test_IsExecutor() public {
+        assertFalse(governance.isExecutor(executor1));
+
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        assertTrue(governance.isExecutor(executor1));
+        assertFalse(governance.isExecutor(executor2));
+    }
+
+    function test_RevertWhen_ExecuteNotExecutor() public {
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
+        bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 100 ether, true);
+
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+        governance.resolve(proposalId);
+
+        // Bob (not an executor) tries to execute
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotExecutor.selector, bob));
+        governance.execute(proposalId, address(mockTarget), data);
+    }
+
+    function test_ExecuteAsAddedExecutor() public {
+        // Add executor1 as an executor
+        vm.prank(owner);
+        governance.addExecutor(executor1);
+
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
+        bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 100 ether, true);
+
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+        governance.resolve(proposalId);
+
+        // executor1 executes the proposal
+        vm.prank(executor1);
+        governance.execute(proposalId, address(mockTarget), data);
+
+        // Verify execution
+        assertEq(mockTarget.value(), 42);
+        assertTrue(governance.isExecuted(proposalId));
+    }
+
+    function test_RevertWhen_ExecuteAfterExecutorRemoved() public {
+        // Add and then remove executor1
+        vm.startPrank(owner);
+        governance.addExecutor(executor1);
+        governance.removeExecutor(executor1);
+        vm.stopPrank();
+
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
+        bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 100 ether, true);
+
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+        governance.resolve(proposalId);
+
+        // executor1 (now removed) tries to execute
+        vm.prank(executor1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotExecutor.selector, executor1));
+        governance.execute(proposalId, address(mockTarget), data);
+    }
+
+    // ========================================================================
+    // BATCH VOTING TESTS
+    // ========================================================================
+
+    function test_BatchVote() public {
+        // Create pools for alice and bob
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 50 ether);
+
+        // Bob delegates voting to alice so she can vote with both pools
+        vm.prank(bob);
+        IStakePool(bobPool).setVoter(alice);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Alice batch votes with both pools using full power
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = bobPool;
+
+        vm.prank(alice);
+        governance.batchVote(pools, proposalId, true);
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 150 ether); // 100 + 50
+        assertEq(proposal.noVotes, 0);
+
+        // Verify all voting power was used
+        assertEq(governance.getRemainingVotingPower(alicePool, proposalId), 0);
+        assertEq(governance.getRemainingVotingPower(bobPool, proposalId), 0);
+    }
+
+    function test_BatchVote_EmitsEventsForEachPool() public {
+        // Create pools for alice and bob
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 50 ether);
+
+        // Bob delegates voting to alice
+        vm.prank(bob);
+        IStakePool(bobPool).setVoter(alice);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = bobPool;
+
+        // Expect events for each pool
+        vm.expectEmit(true, true, true, true);
+        emit IGovernance.VoteCast(proposalId, alice, alicePool, 100 ether, true);
+        vm.expectEmit(true, true, true, true);
+        emit IGovernance.VoteCast(proposalId, alice, bobPool, 50 ether, true);
+
+        vm.prank(alice);
+        governance.batchVote(pools, proposalId, true);
+    }
+
+    function test_BatchVote_SkipsPoolsWithZeroRemainingPower() public {
+        // Create pool
+        address alicePool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Vote with all power first
+        vm.prank(alice);
+        governance.vote(alicePool, proposalId, 100 ether, true);
+
+        // Batch vote with same pool again - should skip silently
+        address[] memory pools = new address[](1);
+        pools[0] = alicePool;
+
+        vm.prank(alice);
+        governance.batchVote(pools, proposalId, true); // Should not revert
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 100 ether); // No additional votes
+    }
+
+    function test_BatchPartialVote() public {
+        // Create pools for alice and bob
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 50 ether);
+
+        // Bob delegates voting to alice
+        vm.prank(bob);
+        IStakePool(bobPool).setVoter(alice);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Alice batch partial votes with 30 ether from each pool
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = bobPool;
+
+        vm.prank(alice);
+        governance.batchPartialVote(pools, proposalId, 30 ether, false);
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 0);
+        assertEq(proposal.noVotes, 60 ether); // 30 + 30
+
+        // Verify remaining voting power
+        assertEq(governance.getRemainingVotingPower(alicePool, proposalId), 70 ether);
+        assertEq(governance.getRemainingVotingPower(bobPool, proposalId), 20 ether);
+    }
+
+    function test_BatchPartialVote_CapsAtRemainingPower() public {
+        // Create a large pool and a small pool
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 20 ether);
+
+        // Bob delegates voting to alice
+        vm.prank(bob);
+        IStakePool(bobPool).setVoter(alice);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Try to batch partial vote with more than bob's pool has available
+        address[] memory pools = new address[](1);
+        pools[0] = bobPool;
+
+        vm.prank(alice);
+        governance.batchPartialVote(pools, proposalId, 100 ether, true); // Request 100, only 20 available
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 20 ether); // Capped at 20
+
+        assertEq(governance.getRemainingVotingPower(bobPool, proposalId), 0);
+    }
+
+    function test_BatchVote_RevertWhen_ProposalNotFound() public {
+        address alicePool = _createStakePool(alice, 100 ether);
+
+        address[] memory pools = new address[](1);
+        pools[0] = alicePool;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ProposalNotFound.selector, uint64(999)));
+        governance.batchVote(pools, 999, true);
+    }
+
+    function test_BatchVote_RevertWhen_VotingPeriodEnded() public {
+        address alicePool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Advance time past voting period
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+
+        address[] memory pools = new address[](1);
+        pools[0] = alicePool;
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.VotingPeriodEnded.selector, proposal.expirationTime));
+        governance.batchVote(pools, proposalId, true);
+    }
+
+    function test_BatchVote_RevertWhen_NotDelegatedVoter() public {
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 50 ether); // Bob is voter of his own pool
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Alice tries to batch vote with bob's pool (not delegated to her)
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = bobPool;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotDelegatedVoter.selector, bob, alice));
+        governance.batchVote(pools, proposalId, true);
+    }
+
+    function test_BatchVote_RevertWhen_InvalidPool() public {
+        address alicePool = _createStakePool(alice, 100 ether);
+        address invalidPool = address(0x1234);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = invalidPool;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, invalidPool));
+        governance.batchVote(pools, proposalId, true);
+    }
+
+    function test_BatchVote_EmptyArray() public {
+        address alicePool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        address[] memory pools = new address[](0);
+
+        // Should not revert, just do nothing
+        vm.prank(alice);
+        governance.batchVote(pools, proposalId, true);
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 0);
+        assertEq(proposal.noVotes, 0);
+    }
+
+    function test_BatchPartialVote_MultipleRounds() public {
+        // Create pools
+        address alicePool = _createStakePool(alice, 100 ether);
+        address bobPool = _createStakePool(bob, 50 ether);
+
+        // Bob delegates voting to alice
+        vm.prank(bob);
+        IStakePool(bobPool).setVoter(alice);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        address[] memory pools = new address[](2);
+        pools[0] = alicePool;
+        pools[1] = bobPool;
+
+        // First round: vote yes with 20 ether each
+        vm.prank(alice);
+        governance.batchPartialVote(pools, proposalId, 20 ether, true);
+
+        // Second round: vote no with 15 ether each
+        vm.prank(alice);
+        governance.batchPartialVote(pools, proposalId, 15 ether, false);
+
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertEq(proposal.yesVotes, 40 ether); // 20 + 20
+        assertEq(proposal.noVotes, 30 ether); // 15 + 15
+
+        // Verify remaining voting power
+        assertEq(governance.getRemainingVotingPower(alicePool, proposalId), 65 ether); // 100 - 35
+        assertEq(governance.getRemainingVotingPower(bobPool, proposalId), 15 ether); // 50 - 35
     }
 }
 

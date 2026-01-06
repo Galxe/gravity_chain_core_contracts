@@ -49,6 +49,14 @@ interface IGovernance {
     /// @param data Calldata that was sent
     event ProposalExecuted(uint64 indexed proposalId, address indexed executor, address target, bytes data);
 
+    /// @notice Emitted when an executor is added
+    /// @param executor Address of the added executor
+    event ExecutorAdded(address indexed executor);
+
+    /// @notice Emitted when an executor is removed
+    /// @param executor Address of the removed executor
+    event ExecutorRemoved(address indexed executor);
+
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
@@ -101,6 +109,21 @@ interface IGovernance {
         uint64 proposalId
     ) external view returns (bool);
 
+    /// @notice Check if an address is an authorized executor
+    /// @param account Address to check
+    /// @return True if the address is an executor
+    function isExecutor(
+        address account
+    ) external view returns (bool);
+
+    /// @notice Get all authorized executors
+    /// @return Array of executor addresses
+    function getExecutors() external view returns (address[] memory);
+
+    /// @notice Get the number of authorized executors
+    /// @return Number of executors
+    function getExecutorCount() external view returns (uint256);
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -132,6 +155,33 @@ interface IGovernance {
         bool support
     ) external;
 
+    /// @notice Vote on a proposal using full voting power from multiple stake pools
+    /// @dev Caller must be the voter address of all stake pools.
+    ///      Pools' lockups must extend past proposal expiration.
+    /// @param stakePools Array of stake pool addresses to vote with
+    /// @param proposalId ID of the proposal to vote on
+    /// @param support True to vote yes, false to vote no
+    function batchVote(
+        address[] calldata stakePools,
+        uint64 proposalId,
+        bool support
+    ) external;
+
+    /// @notice Vote on a proposal using specified voting power from multiple stake pools
+    /// @dev Caller must be the voter address of all stake pools.
+    ///      Pools' lockups must extend past proposal expiration.
+    ///      If votingPower exceeds remaining power for a pool, uses all remaining power.
+    /// @param stakePools Array of stake pool addresses to vote with
+    /// @param proposalId ID of the proposal to vote on
+    /// @param votingPower Amount of voting power to use from each pool
+    /// @param support True to vote yes, false to vote no
+    function batchPartialVote(
+        address[] calldata stakePools,
+        uint64 proposalId,
+        uint128 votingPower,
+        bool support
+    ) external;
+
     /// @notice Resolve a proposal after voting ends or early threshold is met
     /// @dev Anyone can call this function.
     /// @param proposalId ID of the proposal to resolve
@@ -140,7 +190,7 @@ interface IGovernance {
     ) external;
 
     /// @notice Execute an approved proposal
-    /// @dev Anyone can call this function.
+    /// @dev Only authorized executors can call this function.
     ///      The hash of (target, data) must match the stored execution hash.
     /// @param proposalId ID of the proposal to execute
     /// @param target Contract address to call
@@ -149,6 +199,24 @@ interface IGovernance {
         uint64 proposalId,
         address target,
         bytes calldata data
+    ) external;
+
+    // ========================================================================
+    // EXECUTOR MANAGEMENT
+    // ========================================================================
+
+    /// @notice Add an address to the authorized executors set
+    /// @dev Only the contract owner can call this function.
+    /// @param executor Address to add as an executor
+    function addExecutor(
+        address executor
+    ) external;
+
+    /// @notice Remove an address from the authorized executors set
+    /// @dev Only the contract owner can call this function.
+    /// @param executor Address to remove from executors
+    function removeExecutor(
+        address executor
     ) external;
 }
 

@@ -251,6 +251,10 @@ library Errors {
     /// @param proposalId ID of the proposal
     error ExecutionFailed(uint64 proposalId);
 
+    /// @notice Caller is not an authorized executor
+    /// @param caller The unauthorized caller address
+    error NotExecutor(address caller);
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
