@@ -490,7 +490,8 @@ contract Governance is IGovernance, Ownable2Step {
         executed[proposalId] = true;
 
         // Execute all calls atomically
-        for (uint256 i = 0; i < targets.length; ++i) {
+        uint256 len = targets.length;
+        for (uint256 i = 0; i < len; ++i) {
             (bool success,) = targets[i].call(datas[i]);
             if (!success) {
                 revert Errors.ExecutionFailed(proposalId);
@@ -500,7 +501,11 @@ contract Governance is IGovernance, Ownable2Step {
         emit ProposalExecuted(proposalId, msg.sender, targets, datas);
     }
 
-    /// @inheritdoc IGovernance
+    /// @notice Compute the execution hash for a batch of calls
+    /// @dev Useful for off-chain computation before creating proposals
+    /// @param targets Array of contract addresses
+    /// @param datas Array of calldata
+    /// @return The keccak256 hash of abi.encode(targets, datas)
     function computeExecutionHash(
         address[] calldata targets,
         bytes[] calldata datas
