@@ -116,6 +116,14 @@ interface IGovernance {
         address account
     ) external view returns (bool);
 
+    /// @notice Get the last vote time for a proposal (atomicity guard)
+    /// @dev Resolution must happen strictly after this time to prevent flash loan attacks
+    /// @param proposalId ID of the proposal
+    /// @return The timestamp of the last vote (0 if no votes cast)
+    function getLastVoteTime(
+        uint64 proposalId
+    ) external view returns (uint64);
+
     /// @notice Get all authorized executors
     /// @return Array of executor addresses
     function getExecutors() external view returns (address[] memory);

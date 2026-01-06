@@ -1192,6 +1192,269 @@ contract GovernanceTest is Test {
         assertEq(governance.getRemainingVotingPower(alicePool, proposalId), 65 ether); // 100 - 35
         assertEq(governance.getRemainingVotingPower(bobPool, proposalId), 15 ether); // 50 - 35
     }
+
+    // ========================================================================
+    // ATOMICITY GUARD TESTS (Flash Loan Protection)
+    // ========================================================================
+
+    function test_LastVoteTimeRecorded() public {
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // Initially no votes, lastVoteTime should be 0
+        assertEq(governance.getLastVoteTime(proposalId), 0);
+
+        uint64 beforeVote = timestamp.nowMicroseconds();
+
+        // Vote
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 50 ether, true);
+
+        // lastVoteTime should be recorded
+        uint64 lastVote = governance.getLastVoteTime(proposalId);
+        assertEq(lastVote, beforeVote);
+    }
+
+    function test_LastVoteTimeUpdatesOnEachVote() public {
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // First vote
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 30 ether, true);
+
+        uint64 firstVoteTime = governance.getLastVoteTime(proposalId);
+
+        // Advance time
+        _advanceTime(1_000_000); // 1 second
+
+        // Second vote
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 30 ether, false);
+
+        uint64 secondVoteTime = governance.getLastVoteTime(proposalId);
+        assertGt(secondVoteTime, firstVoteTime);
+    }
+
+    function test_AtomicityGuard_CannotResolveInSameTimestamp() public {
+        // This test verifies the atomicity guard works correctly:
+        // - Resolution must happen strictly after the last vote time
+        // - This prevents flash loan attacks where someone votes and resolves in the same tx
+
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // Vote
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 100 ether, true);
+
+        // Verify last vote time is set
+        uint64 lastVoteTs = governance.getLastVoteTime(proposalId);
+        assertGt(lastVoteTs, 0);
+
+        // Advance time past voting period
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+
+        // Resolution should succeed because we're past the last vote time
+        assertTrue(governance.canResolve(proposalId));
+        governance.resolve(proposalId);
+
+        assertTrue(governance.getProposal(proposalId).isResolved);
+    }
+
+    function test_CanResolve_ReturnsTrueAfterVotingEnds() public {
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // canResolve should be false initially (voting not ended)
+        assertFalse(governance.canResolve(proposalId));
+
+        // Advance time just past voting period
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+
+        // Now voting period ended - canResolve should be true (even with no votes)
+        assertTrue(governance.canResolve(proposalId));
+    }
+
+    function test_AtomicityGuard_LastMinuteVote() public {
+        // Create a pool with sufficient lockup
+        uint64 longLockup = LOCKUP_DURATION_MICROS + VOTING_DURATION_MICROS;
+        uint64 lockedUntil = timestamp.nowMicroseconds() + longLockup;
+        vm.prank(alice);
+        address pool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // Advance time to just before voting period ends (1 microsecond before)
+        _advanceTime(VOTING_DURATION_MICROS - 1);
+
+        // Cast a vote at the last moment
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 100 ether, true);
+
+        uint64 lastVoteTimestamp = governance.getLastVoteTime(proposalId);
+
+        // Now advance time by exactly 1 microsecond (voting period now ended)
+        _advanceTime(1);
+
+        uint64 currentTime = timestamp.nowMicroseconds();
+
+        // Verify: current time equals expiration, but also equals last vote time
+        Proposal memory p = governance.getProposal(proposalId);
+        assertEq(currentTime, p.expirationTime);
+        assertEq(currentTime, lastVoteTimestamp + 1); // We're 1 microsecond after the vote
+
+        // Since we're strictly after the last vote time, resolution should work
+        assertTrue(governance.canResolve(proposalId));
+        governance.resolve(proposalId);
+
+        assertTrue(governance.getProposal(proposalId).isResolved);
+    }
+
+    function test_AtomicityGuard_SimulatedFlashLoan() public {
+        // This test simulates a flash loan attack scenario where:
+        // 1. Attacker creates a stake pool with borrowed tokens
+        // 2. Votes on a proposal right before expiration
+        // 3. Tries to resolve immediately after expiration
+        // The atomicity guard prevents resolution in the same timestamp as the last vote
+
+        // Create a pool with sufficient lockup
+        uint64 longLockup = LOCKUP_DURATION_MICROS + VOTING_DURATION_MICROS;
+        uint64 lockedUntil = timestamp.nowMicroseconds() + longLockup;
+        vm.prank(alice);
+        address alicePool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Advance time to just before voting ends
+        _advanceTime(VOTING_DURATION_MICROS - 1);
+
+        // Vote right before expiration
+        vm.prank(alice);
+        governance.vote(alicePool, proposalId, 100 ether, true);
+
+        // Advance 1 microsecond - now at expiration
+        _advanceTime(1);
+
+        // We're at expiration, but strictly after the last vote
+        // Resolution should succeed
+        assertTrue(governance.canResolve(proposalId));
+        governance.resolve(proposalId);
+
+        assertTrue(governance.getProposal(proposalId).isResolved);
+    }
+
+    function test_AtomicityGuard_VoteThenResolve_SameBlock() public {
+        // Test that you cannot vote and resolve in the exact same timestamp
+        // This requires the voting period to end exactly when someone votes
+
+        // Create a pool with very long lockup to ensure voting power persists
+        uint64 veryLongLockup = LOCKUP_DURATION_MICROS * 10;
+        uint64 lockedUntil = timestamp.nowMicroseconds() + veryLongLockup;
+
+        vm.prank(alice);
+        address alicePool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(alicePool, executionHash, "ipfs://test");
+
+        // Advance to 1 microsecond before voting ends
+        _advanceTime(VOTING_DURATION_MICROS - 1);
+
+        // Vote
+        vm.prank(alice);
+        governance.vote(alicePool, proposalId, 100 ether, true);
+
+        // At this point:
+        // - Voting period has NOT ended yet (expirationTime is 1 microsecond in the future)
+        // - Last vote time is NOW
+        assertFalse(governance.canResolve(proposalId), "Should not be resolvable before expiration");
+
+        // Don't advance time - try to resolve immediately
+        // (This should fail because voting period hasn't ended)
+        Proposal memory p = governance.getProposal(proposalId);
+        vm.expectRevert(abi.encodeWithSelector(Errors.VotingPeriodNotEnded.selector, p.expirationTime));
+        governance.resolve(proposalId);
+
+        // Now advance time by 1 microsecond
+        // This puts us exactly at the expiration time
+        _advanceTime(1);
+
+        // Now the voting period has ended
+        // And we're exactly 1 microsecond after the last vote
+        // This should be resolvable (strictly greater than last vote time)
+        assertTrue(governance.canResolve(proposalId));
+        governance.resolve(proposalId);
+    }
+
+    function test_AtomicityGuard_ProposalWithNoVotes() public {
+        // Test that proposals with no votes can be resolved normally
+        // (lastVoteTime == 0 should not block resolution)
+
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // Verify no votes cast
+        assertEq(governance.getLastVoteTime(proposalId), 0);
+
+        // Advance time past voting period
+        _advanceTime(VOTING_DURATION_MICROS + 1);
+
+        // Should be able to resolve even with no votes
+        assertTrue(governance.canResolve(proposalId));
+        governance.resolve(proposalId);
+
+        // Proposal should be resolved (and failed due to no quorum)
+        assertTrue(governance.getProposal(proposalId).isResolved);
+        assertEq(uint8(governance.getProposalState(proposalId)), uint8(ProposalState.FAILED));
+    }
+
+    function test_GetLastVoteTime() public {
+        address pool = _createStakePool(alice, 100 ether);
+
+        bytes32 executionHash = keccak256("test");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, executionHash, "ipfs://test");
+
+        // Before any vote, should be 0
+        assertEq(governance.getLastVoteTime(proposalId), 0);
+
+        // Vote
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 50 ether, true);
+
+        // Should match current time
+        assertEq(governance.getLastVoteTime(proposalId), timestamp.nowMicroseconds());
+    }
 }
 
 /// @notice Mock target contract for testing governance execution

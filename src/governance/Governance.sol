@@ -36,6 +36,10 @@ contract Governance is IGovernance, Ownable2Step {
     /// @notice Whether a proposal has been executed
     mapping(uint64 => bool) public executed;
 
+    /// @notice Last vote time for each proposal (for atomicity guard / flash loan protection)
+    /// @dev Resolution must happen in a later timestamp than the last vote
+    mapping(uint64 => uint64) public lastVoteTime;
+
     /// @notice Set of authorized executors
     EnumerableSet.AddressSet private _executors;
 
@@ -178,8 +182,21 @@ contract Governance is IGovernance, Ownable2Step {
             return false;
         }
 
+        uint64 now_ = _now();
+
         // Can resolve if voting period ended
-        return _now() >= p.expirationTime;
+        if (now_ < p.expirationTime) {
+            return false;
+        }
+
+        // Atomicity guard: resolution must happen strictly after the last vote
+        // This prevents flash loan attacks where someone borrows tokens, votes, and resolves in the same tx
+        uint64 lastVote = lastVoteTime[proposalId];
+        if (lastVote > 0 && now_ <= lastVote) {
+            return false;
+        }
+
+        return true;
     }
 
     /// @inheritdoc IGovernance
@@ -219,6 +236,13 @@ contract Governance is IGovernance, Ownable2Step {
     /// @inheritdoc IGovernance
     function getExecutorCount() external view returns (uint256) {
         return _executors.length();
+    }
+
+    /// @inheritdoc IGovernance
+    function getLastVoteTime(
+        uint64 proposalId
+    ) external view returns (uint64) {
+        return lastVoteTime[proposalId];
     }
 
     // ========================================================================
@@ -367,6 +391,10 @@ contract Governance is IGovernance, Ownable2Step {
             p.noVotes += votingPower;
         }
 
+        // Record last vote time for atomicity guard (flash loan protection)
+        // Resolution cannot happen in the same timestamp as the last vote
+        lastVoteTime[proposalId] = now_;
+
         emit VoteCast(proposalId, msg.sender, stakePool, votingPower, support);
     }
 
@@ -386,14 +414,23 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalAlreadyResolved(proposalId);
         }
 
-        // Check if can resolve
-        if (!canResolve(proposalId)) {
+        uint64 now_ = _now();
+
+        // Check voting period has ended
+        if (now_ < p.expirationTime) {
             revert Errors.VotingPeriodNotEnded(p.expirationTime);
+        }
+
+        // Atomicity guard: resolution must happen strictly after the last vote
+        // This prevents flash loan attacks where someone borrows tokens, votes, and resolves in the same tx
+        uint64 lastVote = lastVoteTime[proposalId];
+        if (lastVote > 0 && now_ <= lastVote) {
+            revert Errors.ResolutionCannotBeAtomic(lastVote);
         }
 
         // Mark as resolved
         p.isResolved = true;
-        p.resolutionTime = _now();
+        p.resolutionTime = now_;
 
         // Emit event with final state
         ProposalState state = getProposalState(proposalId);

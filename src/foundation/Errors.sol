@@ -251,6 +251,10 @@ library Errors {
     /// @param caller The unauthorized caller address
     error NotExecutor(address caller);
 
+    /// @notice Resolution cannot happen atomically with the last vote (flash loan protection)
+    /// @param lastVoteTime The timestamp of the last vote
+    error ResolutionCannotBeAtomic(uint64 lastVoteTime);
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
