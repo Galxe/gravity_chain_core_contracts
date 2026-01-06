@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { ValidatorManagement } from "../../../src/staking/ValidatorManagement.sol";
-import { IValidatorManagement } from "../../../src/staking/IValidatorManagement.sol";
+import { IValidatorManagement, GenesisValidator } from "../../../src/staking/IValidatorManagement.sol";
 import { Staking } from "../../../src/staking/Staking.sol";
 import { IStaking } from "../../../src/staking/IStaking.sol";
 import { IStakePool } from "../../../src/staking/IStakePool.sol";
@@ -1494,6 +1494,327 @@ contract ValidatorManagementTest is Test {
         _processEpoch();
         assertEq(validatorManager.getActiveValidatorCount(), 1);
         assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.INACTIVE));
+    }
+
+    // ========================================================================
+    // INITIALIZATION TESTS
+    // ========================================================================
+
+    /// @notice Test successful initialization with genesis validators
+    function test_initialize_success() public {
+        // Deploy a fresh ValidatorManagement for initialization testing
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        // Create genesis validator data
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](2);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+        genesisValidators[1] = GenesisValidator({
+            stakePool: bob,
+            moniker: "genesis-bob",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: bob,
+            votingPower: 200 ether
+        });
+
+        // Initialize from GENESIS
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        // Verify initialization state
+        assertTrue(freshManager.isInitialized(), "Should be initialized");
+        assertEq(freshManager.getActiveValidatorCount(), 2, "Should have 2 active validators");
+        assertEq(freshManager.getTotalVotingPower(), 300 ether, "Total voting power should be 300 ether");
+    }
+
+    /// @notice Test initialization sets correct validator state
+    function test_initialize_setsCorrectState() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: bob, // Different fee recipient
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        // Verify validator record
+        ValidatorRecord memory record = freshManager.getValidator(alice);
+        assertEq(record.validator, alice, "Validator should match stakePool");
+        assertEq(record.moniker, "genesis-alice", "Moniker should match");
+        assertEq(uint8(record.status), uint8(ValidatorStatus.ACTIVE), "Status should be ACTIVE");
+        assertEq(record.bond, 100 ether, "Bond should match voting power");
+        assertEq(record.feeRecipient, bob, "Fee recipient should match");
+        assertEq(record.validatorIndex, 0, "Index should be 0");
+        assertEq(record.consensusPubkey, CONSENSUS_PUBKEY, "Consensus pubkey should match");
+        assertEq(record.consensusPop, CONSENSUS_POP, "Consensus pop should match");
+
+        // Verify isValidator
+        assertTrue(freshManager.isValidator(alice), "Should be a validator");
+    }
+
+    /// @notice Test initialization with multiple validators assigns correct indices
+    function test_initialize_assignsCorrectIndices() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](3);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "alice",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+        genesisValidators[1] = GenesisValidator({
+            stakePool: bob,
+            moniker: "bob",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: bob,
+            votingPower: 200 ether
+        });
+        genesisValidators[2] = GenesisValidator({
+            stakePool: charlie,
+            moniker: "charlie",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: charlie,
+            votingPower: 300 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        // Verify indices are assigned correctly
+        ValidatorRecord memory aliceRecord = freshManager.getValidator(alice);
+        ValidatorRecord memory bobRecord = freshManager.getValidator(bob);
+        ValidatorRecord memory charlieRecord = freshManager.getValidator(charlie);
+
+        assertEq(aliceRecord.validatorIndex, 0, "Alice should have index 0");
+        assertEq(bobRecord.validatorIndex, 1, "Bob should have index 1");
+        assertEq(charlieRecord.validatorIndex, 2, "Charlie should have index 2");
+
+        // Verify getActiveValidatorByIndex works
+        ValidatorConsensusInfo memory v0 = freshManager.getActiveValidatorByIndex(0);
+        ValidatorConsensusInfo memory v1 = freshManager.getActiveValidatorByIndex(1);
+        ValidatorConsensusInfo memory v2 = freshManager.getActiveValidatorByIndex(2);
+
+        assertEq(v0.validator, alice, "Index 0 should be alice");
+        assertEq(v1.validator, bob, "Index 1 should be bob");
+        assertEq(v2.validator, charlie, "Index 2 should be charlie");
+    }
+
+    /// @notice Test initialization emits correct events
+    function test_initialize_emitsEvents() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+
+        // Expect ValidatorRegistered event
+        vm.expectEmit(true, false, false, true);
+        emit IValidatorManagement.ValidatorRegistered(alice, "genesis-alice");
+
+        // Expect ValidatorActivated event
+        vm.expectEmit(true, false, false, true);
+        emit IValidatorManagement.ValidatorActivated(alice, 0, 100 ether);
+
+        // Expect ValidatorManagementInitialized event
+        vm.expectEmit(false, false, false, true);
+        emit IValidatorManagement.ValidatorManagementInitialized(1, 100 ether);
+
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test initialization with empty validator set
+    function test_initialize_emptyValidatorSet() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](0);
+
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        assertTrue(freshManager.isInitialized(), "Should be initialized");
+        assertEq(freshManager.getActiveValidatorCount(), 0, "Should have 0 validators");
+        assertEq(freshManager.getTotalVotingPower(), 0, "Total voting power should be 0");
+    }
+
+    /// @notice Test isInitialized returns false before initialization
+    function test_isInitialized_falseBeforeInit() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+        assertFalse(freshManager.isInitialized(), "Should not be initialized");
+    }
+
+    /// @notice Test revert when caller is not GENESIS
+    function test_RevertWhen_initialize_notGenesis() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](0);
+
+        vm.prank(alice);
+        vm.expectRevert(); // AccessControl revert
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when already initialized
+    function test_RevertWhen_initialize_alreadyInitialized() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](0);
+
+        // First initialization succeeds
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        // Second initialization reverts
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.AlreadyInitialized.selector);
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when moniker is too long
+    function test_RevertWhen_initialize_monikerTooLong() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        // Create a moniker that's 32 bytes (exceeds 31 byte limit)
+        string memory longMoniker = "12345678901234567890123456789012"; // 32 chars
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: longMoniker,
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.MonikerTooLong.selector, 31, 32));
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test that getActiveValidators returns correct data after initialization
+    function test_initialize_getActiveValidators() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](2);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "alice",
+            consensusPubkey: hex"1111",
+            consensusPop: hex"2222",
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+        genesisValidators[1] = GenesisValidator({
+            stakePool: bob,
+            moniker: "bob",
+            consensusPubkey: hex"3333",
+            consensusPop: hex"4444",
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: bob,
+            votingPower: 200 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        // Get active validators
+        ValidatorConsensusInfo[] memory activeValidators = freshManager.getActiveValidators();
+        assertEq(activeValidators.length, 2, "Should have 2 active validators");
+
+        // Verify alice's consensus info
+        assertEq(activeValidators[0].validator, alice);
+        assertEq(activeValidators[0].votingPower, 100 ether);
+        assertEq(activeValidators[0].validatorIndex, 0);
+        assertEq(activeValidators[0].consensusPubkey, hex"1111");
+
+        // Verify bob's consensus info
+        assertEq(activeValidators[1].validator, bob);
+        assertEq(activeValidators[1].votingPower, 200 ether);
+        assertEq(activeValidators[1].validatorIndex, 1);
+        assertEq(activeValidators[1].consensusPubkey, hex"3333");
+    }
+
+    /// @notice Fuzz test for initialization with varying validator counts
+    function testFuzz_initialize_varyingCounts(
+        uint8 validatorCount
+    ) public {
+        // Limit to reasonable range to avoid gas issues
+        vm.assume(validatorCount <= 20);
+
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](validatorCount);
+        uint256 expectedTotalPower = 0;
+
+        for (uint256 i = 0; i < validatorCount; i++) {
+            address validator = address(uint160(i + 1000)); // Create unique addresses
+            uint256 power = (i + 1) * 10 ether;
+            expectedTotalPower += power;
+
+            genesisValidators[i] = GenesisValidator({
+                stakePool: validator,
+                moniker: "validator",
+                consensusPubkey: CONSENSUS_PUBKEY,
+                consensusPop: CONSENSUS_POP,
+                networkAddresses: NETWORK_ADDRESSES,
+                fullnodeAddresses: FULLNODE_ADDRESSES,
+                feeRecipient: validator,
+                votingPower: power
+            });
+        }
+
+        vm.prank(SystemAddresses.GENESIS);
+        freshManager.initialize(genesisValidators);
+
+        assertEq(freshManager.getActiveValidatorCount(), validatorCount, "Validator count should match");
+        assertEq(freshManager.getTotalVotingPower(), expectedTotalPower, "Total voting power should match");
+        assertTrue(freshManager.isInitialized(), "Should be initialized");
     }
 }
 

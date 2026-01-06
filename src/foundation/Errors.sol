@@ -374,6 +374,13 @@ library Errors {
     error VersionAlreadyInitialized();
 
     // ========================================================================
+    // VALIDATOR MANAGEMENT ERRORS
+    // ========================================================================
+
+    /// @notice ValidatorManagement has not been initialized
+    error ValidatorManagementNotInitialized();
+
+    // ========================================================================
     // VALIDATOR CONFIG ERRORS
     // ========================================================================
 

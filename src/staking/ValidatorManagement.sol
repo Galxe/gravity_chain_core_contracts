@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IValidatorManagement } from "./IValidatorManagement.sol";
+import { IValidatorManagement, GenesisValidator } from "./IValidatorManagement.sol";
 import { IStaking } from "./IStaking.sol";
 import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
@@ -98,6 +98,64 @@ contract ValidatorManagement is IValidatorManagement {
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @inheritdoc IValidatorManagement
+    function initialize(
+        GenesisValidator[] calldata validators
+    ) external {
+        requireAllowed(SystemAddresses.GENESIS);
+
+        if (_initialized) {
+            revert Errors.AlreadyInitialized();
+        }
+
+        uint256 length = validators.length;
+        uint256 totalPower = 0;
+
+        for (uint256 i = 0; i < length; i++) {
+            GenesisValidator calldata v = validators[i];
+
+            // Validate moniker length
+            if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
+                revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
+            }
+
+            // Create validator record
+            ValidatorRecord storage record = _validators[v.stakePool];
+            record.validator = v.stakePool;
+            record.moniker = v.moniker;
+            record.stakingPool = v.stakePool;
+            record.status = ValidatorStatus.ACTIVE;
+            record.bond = v.votingPower;
+            record.consensusPubkey = v.consensusPubkey;
+            record.consensusPop = v.consensusPop;
+            record.networkAddresses = v.networkAddresses;
+            record.fullnodeAddresses = v.fullnodeAddresses;
+            record.feeRecipient = v.feeRecipient;
+            record.validatorIndex = uint64(i);
+
+            // Add to active validators
+            _activeValidators.push(v.stakePool);
+            totalPower += v.votingPower;
+
+            emit ValidatorRegistered(v.stakePool, v.moniker);
+            emit ValidatorActivated(v.stakePool, uint64(i), v.votingPower);
+        }
+
+        totalVotingPower = totalPower;
+        _initialized = true;
+
+        emit ValidatorManagementInitialized(length, totalPower);
+    }
+
+    /// @inheritdoc IValidatorManagement
+    function isInitialized() external view returns (bool) {
+        return _initialized;
+    }
 
     // ========================================================================
     // MODIFIERS

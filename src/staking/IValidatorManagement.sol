@@ -3,6 +3,27 @@ pragma solidity ^0.8.30;
 
 import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../foundation/Types.sol";
 
+/// @notice Genesis validator info for initialization
+/// @dev Used to initialize the validator set at genesis
+struct GenesisValidator {
+    /// @notice Stake pool address (also serves as validator identity)
+    address stakePool;
+    /// @notice Display name (max 31 bytes)
+    string moniker;
+    /// @notice BLS public key for consensus
+    bytes consensusPubkey;
+    /// @notice Proof of possession for BLS key
+    bytes consensusPop;
+    /// @notice Network addresses for P2P
+    bytes networkAddresses;
+    /// @notice Fullnode addresses
+    bytes fullnodeAddresses;
+    /// @notice Fee recipient address
+    address feeRecipient;
+    /// @notice Initial voting power
+    uint256 votingPower;
+}
+
 /// @title IValidatorManagement
 /// @author Gravity Team
 /// @notice Interface for the ValidatorManager contract
@@ -56,6 +77,27 @@ interface IValidatorManagement {
     /// @param activeCount Number of active validators
     /// @param totalVotingPower Total voting power of active validators
     event EpochProcessed(uint64 epoch, uint256 activeCount, uint256 totalVotingPower);
+
+    /// @notice Emitted when the contract is initialized with genesis validators
+    /// @param validatorCount Number of genesis validators
+    /// @param totalVotingPower Total voting power of genesis validators
+    event ValidatorManagementInitialized(uint256 validatorCount, uint256 totalVotingPower);
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @notice Initialize the validator set with genesis validators
+    /// @dev Only callable by GENESIS contract. Can only be called once.
+    ///      Genesis validators are added directly to the active set.
+    /// @param validators Array of genesis validator info
+    function initialize(
+        GenesisValidator[] calldata validators
+    ) external;
+
+    /// @notice Check if the contract has been initialized
+    /// @return True if initialized
+    function isInitialized() external view returns (bool);
 
     // ========================================================================
     // REGISTRATION
