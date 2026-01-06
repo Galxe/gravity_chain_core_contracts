@@ -291,6 +291,16 @@ contract StakingConfigTest is Test {
         config.setMinimumStake(5 ether);
     }
 
+    function test_RevertWhen_SetterCalledByReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
+        );
+        config.setMinimumStake(5 ether);
+    }
+
     // ========================================================================
     // FUZZ TESTS
     // ========================================================================

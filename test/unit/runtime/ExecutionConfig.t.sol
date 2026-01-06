@@ -267,6 +267,26 @@ contract ExecutionConfigTest is Test {
         config.setForNextEpoch(NEW_CONFIG);
     }
 
+    function test_RevertWhen_SetForNextEpoch_CalledBySystemCaller() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(NEW_CONFIG);
+    }
+
+    function test_RevertWhen_SetForNextEpoch_CalledByReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(NEW_CONFIG);
+    }
+
     function test_RevertWhen_ApplyPendingConfig_CalledByGovernance() public {
         _initializeConfig();
 

@@ -208,12 +208,42 @@ contract RandomnessConfigTest is Test {
         assertEq(pendingConfig.configV2.secrecyThreshold, THREE_QUARTERS);
     }
 
-    function test_RevertWhen_SetForNextEpoch_NotTimelock() public {
+    function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
         _initializeWithV2();
 
-        address notTimelock = address(0x1234);
-        vm.prank(notTimelock);
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notTimelock, SystemAddresses.GOVERNANCE));
+        address notGovernance = address(0x1234);
+        vm.prank(notGovernance);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
+        config.setForNextEpoch(_createOffConfig());
+    }
+
+    function test_RevertWhen_SetForNextEpoch_CalledByGenesis() public {
+        _initializeWithV2();
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(_createOffConfig());
+    }
+
+    function test_RevertWhen_SetForNextEpoch_CalledBySystemCaller() public {
+        _initializeWithV2();
+
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(_createOffConfig());
+    }
+
+    function test_RevertWhen_SetForNextEpoch_CalledByReconfiguration() public {
+        _initializeWithV2();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
+        );
         config.setForNextEpoch(_createOffConfig());
     }
 

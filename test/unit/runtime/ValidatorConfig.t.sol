@@ -283,6 +283,46 @@ contract ValidatorConfigTest is Test {
     }
 
     // ========================================================================
+    // GOVERNANCE-ONLY ACCESS CONTROL TESTS
+    // ========================================================================
+
+    function test_RevertWhen_SetterCalledByGenesis() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
+    }
+
+    function test_RevertWhen_SetterCalledBySystemCaller() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
+    }
+
+    function test_RevertWhen_SetterCalledByReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+        );
+    }
+
+    // ========================================================================
     // FUZZ TESTS
     // ========================================================================
 

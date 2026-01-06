@@ -193,6 +193,40 @@ contract GovernanceConfigTest is Test {
     }
 
     // ========================================================================
+    // GOVERNANCE-ONLY ACCESS CONTROL TESTS
+    // ========================================================================
+
+    function test_RevertWhen_SetterCalledByGenesis() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+    }
+
+    function test_RevertWhen_SetterCalledBySystemCaller() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+    }
+
+    function test_RevertWhen_SetterCalledByReconfiguration() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
+        );
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD * 2, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+    }
+
+    // ========================================================================
     // FUZZ TESTS
     // ========================================================================
 
