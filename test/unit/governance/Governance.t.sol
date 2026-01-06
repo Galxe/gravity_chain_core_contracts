@@ -338,7 +338,7 @@ contract GovernanceTest is Test {
         governance.vote(alicePool, proposalId, 100 ether, true);
     }
 
-    function test_RevertWhen_VoteExceedsRemainingPower() public {
+    function test_VoteSilentlyCapsPowerWhenExceedsRemaining() public {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes32 executionHash = keccak256("test");
@@ -350,10 +350,13 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
 
-        // Try to vote again
+        // Try to vote again - should silently do nothing (cap at 0 remaining power)
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.VotingPowerOverflow.selector, uint128(1 ether), uint128(0)));
         governance.vote(pool, proposalId, 1 ether, true);
+
+        // Verify yesVotes unchanged (still 100 ether, not 101 ether)
+        Proposal memory p = governance.getProposal(proposalId);
+        assertEq(p.yesVotes, 100 ether, "yesVotes should remain at 100 ether");
     }
 
     // ========================================================================

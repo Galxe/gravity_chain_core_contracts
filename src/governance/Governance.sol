@@ -278,11 +278,6 @@ contract Governance is IGovernance, Ownable2Step {
         uint128 votingPower,
         bool support
     ) external {
-        // For single vote(), preserve original behavior: revert if exceeding remaining power
-        uint128 remaining = getRemainingVotingPower(stakePool, proposalId);
-        if (votingPower > remaining) {
-            revert Errors.VotingPowerOverflow(votingPower, remaining);
-        }
         _voteInternal(stakePool, proposalId, votingPower, support);
     }
 
