@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { NativeTokenMinter } from "../../../src/oracle/NativeTokenMinter.sol";
-import { INativeTokenMinter, INativeMintPrecompile } from "../../../src/oracle/INativeTokenMinter.sol";
-import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
-import { Errors } from "../../../src/foundation/Errors.sol";
+import { NativeTokenMinter } from "@src/oracle/evm/native_token_bridge/NativeTokenMinter.sol";
+import { INativeTokenMinter, INativeMintPrecompile } from "@src/oracle/evm/native_token_bridge/INativeTokenMinter.sol";
+import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title MockNativeMintPrecompile
 /// @notice Mock precompile for testing native token minting
@@ -14,7 +14,10 @@ contract MockNativeMintPrecompile is INativeMintPrecompile {
     uint256 public totalMinted;
     bool public shouldFail;
 
-    function mint(address recipient, uint256 amount) external override {
+    function mint(
+        address recipient,
+        uint256 amount
+    ) external override {
         if (shouldFail) {
             revert("MockPrecompile: mint failed");
         }
@@ -22,7 +25,9 @@ contract MockNativeMintPrecompile is INativeMintPrecompile {
         totalMinted += amount;
     }
 
-    function setFail(bool _shouldFail) external {
+    function setFail(
+        bool _shouldFail
+    ) external {
         shouldFail = _shouldFail;
     }
 }
@@ -116,11 +121,7 @@ contract NativeTokenMinterTest is Test {
         bytes32 dataHash = keccak256(message);
 
         vm.prank(router);
-        vm.expectRevert(abi.encodeWithSelector(
-            INativeTokenMinter.InvalidSender.selector,
-            fakeBridge,
-            trustedBridge
-        ));
+        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.InvalidSender.selector, fakeBridge, trustedBridge));
         minter.handleMessage(dataHash, fakeBridge, 0, message);
     }
 
@@ -136,10 +137,7 @@ contract NativeTokenMinterTest is Test {
 
         // Second call with same nonce fails
         vm.prank(router);
-        vm.expectRevert(abi.encodeWithSelector(
-            INativeTokenMinter.AlreadyProcessed.selector,
-            nonce
-        ));
+        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, nonce));
         minter.handleMessage(dataHash, trustedBridge, nonce, message);
     }
 
@@ -193,7 +191,11 @@ contract NativeTokenMinterTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_HandleMessage(uint256 amount, address recipient, uint256 nonce) public {
+    function testFuzz_HandleMessage(
+        uint256 amount,
+        address recipient,
+        uint256 nonce
+    ) public {
         vm.assume(recipient != address(0));
         vm.assume(!minter.isProcessed(nonce));
 
@@ -206,7 +208,9 @@ contract NativeTokenMinterTest is Test {
         assertTrue(minter.isProcessed(nonce));
     }
 
-    function testFuzz_ReplayProtection(uint256 nonce) public {
+    function testFuzz_ReplayProtection(
+        uint256 nonce
+    ) public {
         bytes memory message = abi.encode(uint256(100), alice);
         bytes32 dataHash = keccak256(message);
 
@@ -216,10 +220,7 @@ contract NativeTokenMinterTest is Test {
 
         // Second call fails
         vm.prank(router);
-        vm.expectRevert(abi.encodeWithSelector(
-            INativeTokenMinter.AlreadyProcessed.selector,
-            nonce
-        ));
+        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, nonce));
         minter.handleMessage(dataHash, trustedBridge, nonce, message);
     }
 }

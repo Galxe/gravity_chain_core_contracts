@@ -411,7 +411,12 @@ mapping(bytes32 => DataRecord) private _dataRecords;
 /// @dev sourceName = keccak256(abi.encode(sourceType, sourceId))
 mapping(bytes32 => SyncStatus) private _syncStatus;
 
-/// @notice Callback handlers: sourceName => callback contract
+/// @notice Default callback handlers: sourceType => callback contract
+/// @dev Fallback callback for all sources of a given type
+mapping(uint32 => address) private _defaultCallbacks;
+
+/// @notice Specialized callback handlers: sourceName => callback contract
+/// @dev Overrides default callback for specific (sourceType, sourceId) pairs
 mapping(bytes32 => address) private _callbacks;
 
 /// @notice Total number of records stored
@@ -474,11 +479,26 @@ interface INativeOracle {
     ) external;
 
     // ========== Callback Management (GOVERNANCE Only) ==========
+    //
+    // Callbacks use a 2-layer resolution system:
+    //   1. Default callback per sourceType - applies to all sources of that type
+    //   2. Specialized callback per (sourceType, sourceId) - overrides default
+    //
+    // When an oracle event is recorded, the system first checks for a specialized
+    // callback. If none is set, it falls back to the default callback for that
+    // source type.
 
-    /// @notice Register callback for a source
+    /// @notice Register default callback for a source type
+    function setDefaultCallback(uint32 sourceType, address callback) external;
+
+    /// @notice Get default callback for a source type
+    function getDefaultCallback(uint32 sourceType) external view returns (address);
+
+    /// @notice Register specialized callback for a specific source (overrides default)
     function setCallback(uint32 sourceType, uint256 sourceId, address callback) external;
 
-    /// @notice Get callback for a source
+    /// @notice Get effective callback for a source (2-layer resolution)
+    /// @dev Returns specialized if set, otherwise default
     function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address);
 
     // ========== Verification ==========
@@ -522,9 +542,28 @@ interface IOracleCallback {
 }
 ```
 
-### Callback Execution
+### Callback Resolution (2-Layer System)
+
+The callback system uses a 2-layer resolution:
+
+1. **Default callback per sourceType**: Applies to all sources of that type (e.g., all blockchain events)
+2. **Specialized callback per (sourceType, sourceId)**: Overrides the default for specific sources (e.g., only Ethereum events)
 
 ```solidity
+/// @notice Resolve callback using 2-layer lookup
+function _resolveCallback(
+    bytes32 sourceName,
+    uint32 sourceType
+) internal view returns (address callback) {
+    // First check for specialized callback
+    address specialized = _callbacks[sourceName];
+    if (specialized != address(0)) {
+        return specialized;
+    }
+    // Fall back to default callback for this source type
+    return _defaultCallbacks[sourceType];
+}
+
 function _invokeCallback(
     bytes32 sourceName,
     uint32 sourceType,
@@ -532,7 +571,7 @@ function _invokeCallback(
     bytes32 dataHash,
     bytes calldata payload
 ) internal {
-    address callback = _callbacks[sourceName];
+    address callback = _resolveCallback(sourceName, sourceType);
     if (callback == address(0)) return;
 
     try IOracleCallback(callback).onOracleEvent{gas: CALLBACK_GAS_LIMIT}(dataHash, payload) {
@@ -541,6 +580,20 @@ function _invokeCallback(
         emit CallbackFailed(sourceType, sourceId, dataHash, callback, reason);
     }
 }
+```
+
+**Example Usage:**
+
+```
+// Set BlockchainEventRouter as default callback for all BLOCKCHAIN events
+governance.setDefaultCallback(0, blockchainEventRouterAddress);
+
+// Now all blockchain events (Ethereum, Arbitrum, BSC, etc.) route to BlockchainEventRouter
+
+// Optionally, set a specialized callback for a specific chain (e.g., Optimism chain ID 10)
+governance.setCallback(0, 10, optimismSpecialHandlerAddress);
+
+// Now: Optimism events → optimismSpecialHandler, all other chains → BlockchainEventRouter
 ```
 
 ### Events
@@ -566,6 +619,12 @@ event SyncStatusUpdated(
     uint256 indexed sourceId,
     uint128 previousSyncId,
     uint128 newSyncId
+);
+
+event DefaultCallbackSet(
+    uint32 indexed sourceType,
+    address indexed oldCallback,
+    address newCallback
 );
 
 event CallbackSet(
@@ -862,7 +921,9 @@ error MinterNotInitialized();
 3. NativeOracle on Gravity:
    └─> Validates syncId >= 1 and increasing
    └─> Stores record
-   └─> Looks up callback for (sourceType=0, sourceId=1) → BlockchainEventRouter
+   └─> Resolves callback using 2-layer lookup:
+       └─> First checks specialized callback for (sourceType=0, sourceId=1)
+       └─> Falls back to default callback for sourceType=0 → BlockchainEventRouter
    └─> Calls router.onOracleEvent{gas: 500,000}(payloadHash, payload)
 
 4. BlockchainEventRouter:
@@ -900,6 +961,7 @@ error MinterNotInitialized();
 |                           | recordData()          | SYSTEM_CALLER               |
 |                           | recordHashBatch()     | SYSTEM_CALLER               |
 |                           | recordDataBatch()     | SYSTEM_CALLER               |
+|                           | setDefaultCallback()  | GOVERNANCE                  |
 |                           | setCallback()         | GOVERNANCE                  |
 |                           | View functions        | Anyone                      |
 | **BlockchainEventRouter** |                       |                             |
@@ -964,7 +1026,12 @@ error MinterNotInitialized();
    - Sync ID validation (must start from 1, must increase)
    - Callback invocation
    - Callback failure handling
-   - GOVERNANCE callback registration
+   - 2-layer callback resolution:
+     - Default callback per sourceType
+     - Specialized callback per (sourceType, sourceId)
+     - Specialized overrides default
+     - Fallback to default when no specialized set
+   - GOVERNANCE callback registration (setDefaultCallback, setCallback)
    - Source name computation
 
 3. **BlockchainEventRouter**

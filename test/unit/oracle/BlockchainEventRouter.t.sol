@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { BlockchainEventRouter } from "../../../src/oracle/BlockchainEventRouter.sol";
-import { IBlockchainEventRouter, IMessageHandler } from "../../../src/oracle/IBlockchainEventRouter.sol";
-import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
-import { Errors } from "../../../src/foundation/Errors.sol";
+import { BlockchainEventRouter } from "@src/oracle/evm/BlockchainEventRouter.sol";
+import { IBlockchainEventRouter, IMessageHandler } from "@src/oracle/evm/IBlockchainEventRouter.sol";
+import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title MockMessageHandler
 /// @notice Mock handler for testing
@@ -38,11 +38,15 @@ contract MockMessageHandler is IMessageHandler {
         callCount++;
     }
 
-    function setRevert(bool _shouldRevert) external {
+    function setRevert(
+        bool _shouldRevert
+    ) external {
         shouldRevert = _shouldRevert;
     }
 
-    function setConsumeAllGas(bool _shouldConsumeAllGas) external {
+    function setConsumeAllGas(
+        bool _shouldConsumeAllGas
+    ) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
     }
 }
@@ -237,7 +241,10 @@ contract BlockchainEventRouterTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_RegisterMultipleHandlers(address[5] calldata senders, address[5] calldata handlers) public {
+    function testFuzz_RegisterMultipleHandlers(
+        address[5] calldata senders,
+        address[5] calldata handlers
+    ) public {
         for (uint256 i = 0; i < 5; i++) {
             if (handlers[i] != address(0)) {
                 vm.prank(governance);
@@ -247,7 +254,11 @@ contract BlockchainEventRouterTest is Test {
         }
     }
 
-    function testFuzz_OnOracleEvent(address sender, uint256 nonce, bytes calldata message) public {
+    function testFuzz_OnOracleEvent(
+        address sender,
+        uint256 nonce,
+        bytes calldata message
+    ) public {
         // Register handler
         vm.prank(governance);
         router.registerHandler(sender, address(mockHandler));

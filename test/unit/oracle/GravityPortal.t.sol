@@ -2,9 +2,9 @@
 pragma solidity ^0.8.30;
 
 import { Test, Vm } from "forge-std/Test.sol";
-import { GravityPortal } from "../../../src/oracle/GravityPortal.sol";
-import { IGravityPortal } from "../../../src/oracle/IGravityPortal.sol";
-import { PortalMessage } from "../../../src/oracle/PortalMessage.sol";
+import { GravityPortal } from "@src/oracle/evm/GravityPortal.sol";
+import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
+import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 
 /// @title GravityPortalTest
@@ -27,12 +27,7 @@ contract GravityPortalTest is Test {
         bob = makeAddr("bob");
 
         // Deploy portal
-        portal = new GravityPortal(
-            owner,
-            INITIAL_BASE_FEE,
-            INITIAL_FEE_PER_BYTE,
-            feeRecipient
-        );
+        portal = new GravityPortal(owner, INITIAL_BASE_FEE, INITIAL_FEE_PER_BYTE, feeRecipient);
 
         // Fund test accounts
         vm.deal(alice, 100 ether);
@@ -205,7 +200,9 @@ contract GravityPortalTest is Test {
         assertEq(portal.calculateFee(100), INITIAL_BASE_FEE + 152 * INITIAL_FEE_PER_BYTE);
     }
 
-    function testFuzz_CalculateFee(uint256 messageLength) public view {
+    function testFuzz_CalculateFee(
+        uint256 messageLength
+    ) public view {
         messageLength = bound(messageLength, 0, 10000);
 
         uint256 fee = portal.calculateFee(messageLength);
@@ -437,7 +434,10 @@ contract GravityPortalTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_SendMessage(bytes calldata message, uint256 extraFee) public {
+    function testFuzz_SendMessage(
+        bytes calldata message,
+        uint256 extraFee
+    ) public {
         extraFee = bound(extraFee, 0, 1 ether);
         uint256 requiredFee = portal.calculateFee(message.length);
 
@@ -448,7 +448,10 @@ contract GravityPortalTest is Test {
         assertGe(address(portal).balance, requiredFee);
     }
 
-    function testFuzz_FeeConfiguration(uint256 baseFee, uint256 feePerByte) public {
+    function testFuzz_FeeConfiguration(
+        uint256 baseFee,
+        uint256 feePerByte
+    ) public {
         baseFee = bound(baseFee, 0, 1 ether);
         feePerByte = bound(feePerByte, 0, 10000 wei);
 
@@ -461,7 +464,10 @@ contract GravityPortalTest is Test {
         assertEq(portal.feePerByte(), feePerByte);
     }
 
-    function testFuzz_PayloadEncodingConsistency(address sender, bytes memory message) public {
+    function testFuzz_PayloadEncodingConsistency(
+        address sender,
+        bytes memory message
+    ) public {
         // Verify that the portal's encoding matches the library's encoding
         uint256 fee = portal.calculateFee(message.length);
 

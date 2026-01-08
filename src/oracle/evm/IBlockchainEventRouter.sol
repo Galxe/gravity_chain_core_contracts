@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IOracleCallback } from "./INativeOracle.sol";
+import { IOracleCallback } from "../INativeOracle.sol";
 
 /// @title IBlockchainEventRouter
 /// @author Gravity Team
@@ -65,12 +65,17 @@ interface IBlockchainEventRouter is IOracleCallback {
     /// @dev Only callable by GOVERNANCE
     /// @param sender The sender address on the source chain (e.g., GTokenBridge on Ethereum)
     /// @param handler The handler contract address on Gravity
-    function registerHandler(address sender, address handler) external;
+    function registerHandler(
+        address sender,
+        address handler
+    ) external;
 
     /// @notice Unregister a handler for a sender address
     /// @dev Only callable by GOVERNANCE
     /// @param sender The sender address to unregister
-    function unregisterHandler(address sender) external;
+    function unregisterHandler(
+        address sender
+    ) external;
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -79,7 +84,9 @@ interface IBlockchainEventRouter is IOracleCallback {
     /// @notice Get the handler for a sender address
     /// @param sender The sender address
     /// @return handler The handler contract address (address(0) if not registered)
-    function getHandler(address sender) external view returns (address handler);
+    function getHandler(
+        address sender
+    ) external view returns (address handler);
 
     /// @notice Check if the router is initialized
     /// @return True if initialized

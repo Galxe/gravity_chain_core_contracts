@@ -2,9 +2,9 @@
 pragma solidity ^0.8.30;
 
 import { IBlockchainEventRouter, IMessageHandler } from "./IBlockchainEventRouter.sol";
-import { SystemAddresses } from "../foundation/SystemAddresses.sol";
-import { requireAllowed } from "../foundation/SystemAccessControl.sol";
-import { Errors } from "../foundation/Errors.sol";
+import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { requireAllowed } from "@src/foundation/SystemAccessControl.sol";
+import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title BlockchainEventRouter
 /// @author Gravity Team
@@ -63,7 +63,10 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     // ========================================================================
 
     /// @inheritdoc IBlockchainEventRouter
-    function registerHandler(address sender, address handler) external whenInitialized {
+    function registerHandler(
+        address sender,
+        address handler
+    ) external whenInitialized {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         _handlers[sender] = handler;
@@ -72,7 +75,9 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     }
 
     /// @inheritdoc IBlockchainEventRouter
-    function unregisterHandler(address sender) external whenInitialized {
+    function unregisterHandler(
+        address sender
+    ) external whenInitialized {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         delete _handlers[sender];
@@ -88,17 +93,17 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     /// @dev Decodes payload and routes to appropriate handler
     /// @param dataHash The hash of the recorded data
     /// @param payload The event payload: abi.encode(sender, nonce, message)
-    function onOracleEvent(bytes32 dataHash, bytes calldata payload) external whenInitialized {
+    function onOracleEvent(
+        bytes32 dataHash,
+        bytes calldata payload
+    ) external whenInitialized {
         // Only NativeOracle can call this
         if (msg.sender != SystemAddresses.NATIVE_ORACLE) {
             revert OnlyNativeOracle();
         }
 
         // Decode blockchain event payload: (sender, nonce, message)
-        (address sender, uint256 eventNonce, bytes memory message) = abi.decode(
-            payload,
-            (address, uint256, bytes)
-        );
+        (address sender, uint256 eventNonce, bytes memory message) = abi.decode(payload, (address, uint256, bytes));
 
         // Look up handler for this sender
         address handler = _handlers[sender];
@@ -109,12 +114,7 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
         }
 
         // Route to handler with limited gas
-        try IMessageHandler(handler).handleMessage{ gas: HANDLER_GAS_LIMIT }(
-            dataHash,
-            sender,
-            eventNonce,
-            message
-        ) {
+        try IMessageHandler(handler).handleMessage{ gas: HANDLER_GAS_LIMIT }(dataHash, sender, eventNonce, message) {
             emit MessageRouted(dataHash, sender, handler);
         } catch (bytes memory reason) {
             emit RoutingFailed(dataHash, sender, reason);
@@ -126,7 +126,9 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     // ========================================================================
 
     /// @inheritdoc IBlockchainEventRouter
-    function getHandler(address sender) external view returns (address handler) {
+    function getHandler(
+        address sender
+    ) external view returns (address handler) {
         return _handlers[sender];
     }
 

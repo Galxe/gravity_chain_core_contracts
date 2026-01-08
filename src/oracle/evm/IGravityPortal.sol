@@ -18,12 +18,7 @@ interface IGravityPortal {
     /// @param sender The address that called sendMessage (msg.sender)
     /// @param nonce The unique nonce for this message
     /// @param payload The full payload: sender (20B) || nonce (32B) || message
-    event MessageSent(
-        bytes32 indexed payloadHash,
-        address indexed sender,
-        uint256 indexed nonce,
-        bytes payload
-    );
+    event MessageSent(bytes32 indexed payloadHash, address indexed sender, uint256 indexed nonce, bytes payload);
 
     /// @notice Emitted when a message is sent (data mode, stored on Gravity)
     /// @param payloadHash The keccak256 hash of the full payload
@@ -31,10 +26,7 @@ interface IGravityPortal {
     /// @param nonce The unique nonce for this message
     /// @param payload The full payload: sender (20B) || nonce (32B) || message
     event MessageSentWithData(
-        bytes32 indexed payloadHash,
-        address indexed sender,
-        uint256 indexed nonce,
-        bytes payload
+        bytes32 indexed payloadHash, address indexed sender, uint256 indexed nonce, bytes payload
     );
 
     /// @notice Emitted when fee configuration is updated
@@ -76,14 +68,18 @@ interface IGravityPortal {
     ///      Only the hash is stored on Gravity; users must provide pre-image for verification.
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
-    function sendMessage(bytes calldata message) external payable returns (uint256 messageNonce);
+    function sendMessage(
+        bytes calldata message
+    ) external payable returns (uint256 messageNonce);
 
     /// @notice Send a message to Gravity (data mode, stored on-chain)
     /// @dev The full payload uses compact encoding: sender (20B) || nonce (32B) || message
     ///      The full payload is stored on Gravity for direct access.
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
-    function sendMessageWithData(bytes calldata message) external payable returns (uint256 messageNonce);
+    function sendMessageWithData(
+        bytes calldata message
+    ) external payable returns (uint256 messageNonce);
 
     // ========================================================================
     // FEE MANAGEMENT (Owner Only)
@@ -91,15 +87,21 @@ interface IGravityPortal {
 
     /// @notice Set the base fee for bridge operations
     /// @param newBaseFee The new base fee in wei
-    function setBaseFee(uint256 newBaseFee) external;
+    function setBaseFee(
+        uint256 newBaseFee
+    ) external;
 
     /// @notice Set the fee per byte of payload
     /// @param newFeePerByte The new fee per byte in wei
-    function setFeePerByte(uint256 newFeePerByte) external;
+    function setFeePerByte(
+        uint256 newFeePerByte
+    ) external;
 
     /// @notice Set the fee recipient address
     /// @param newRecipient The new fee recipient
-    function setFeeRecipient(address newRecipient) external;
+    function setFeeRecipient(
+        address newRecipient
+    ) external;
 
     /// @notice Withdraw collected fees to the fee recipient
     function withdrawFees() external;
@@ -129,5 +131,7 @@ interface IGravityPortal {
     ///      Encoded payload = 52 bytes (sender + nonce) + message length
     /// @param messageLength Length of the message in bytes
     /// @return requiredFee The required fee in wei
-    function calculateFee(uint256 messageLength) external view returns (uint256 requiredFee);
+    function calculateFee(
+        uint256 messageLength
+    ) external view returns (uint256 requiredFee);
 }

@@ -318,6 +318,31 @@ contract NativeOracleTest is Test {
     // CALLBACK TESTS
     // ========================================================================
 
+    function test_SetDefaultCallback() public {
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
+
+        assertEq(oracle.getDefaultCallback(SOURCE_TYPE_BLOCKCHAIN), address(mockCallback));
+    }
+
+    function test_SetDefaultCallback_RevertWhenNotGovernance() public {
+        vm.expectRevert();
+        vm.prank(alice);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
+    }
+
+    function test_SetDefaultCallback_Unregister() public {
+        // Register default callback
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
+
+        // Unregister by setting to zero
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(0));
+
+        assertEq(oracle.getDefaultCallback(SOURCE_TYPE_BLOCKCHAIN), address(0));
+    }
+
     function test_SetCallback() public {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
@@ -343,6 +368,34 @@ contract NativeOracleTest is Test {
         assertEq(oracle.getCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), address(0));
     }
 
+    function test_GetCallback_TwoLayerResolution() public {
+        MockOracleCallback defaultCallback = new MockOracleCallback();
+        MockOracleCallback specializedCallback = new MockOracleCallback();
+
+        // Set default callback for BLOCKCHAIN type
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(defaultCallback));
+
+        // Before specialized is set, getCallback returns default
+        assertEq(oracle.getCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), address(defaultCallback));
+
+        // Set specialized callback for ETHEREUM_SOURCE_ID
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(specializedCallback));
+
+        // Now getCallback returns specialized
+        assertEq(oracle.getCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), address(specializedCallback));
+
+        // Other source IDs still use default
+        uint256 arbitrumSourceId = 42161;
+        assertEq(oracle.getCallback(SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId), address(defaultCallback));
+
+        // Unregister specialized, falls back to default
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(0));
+        assertEq(oracle.getCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), address(defaultCallback));
+    }
+
     function test_CallbackInvoked() public {
         // Register callback
         vm.prank(governance);
@@ -359,6 +412,81 @@ contract NativeOracleTest is Test {
         assertEq(mockCallback.callCount(), 1);
         assertEq(mockCallback.lastDataHash(), dataHash);
         assertEq(mockCallback.lastPayload(), payload);
+    }
+
+    function test_DefaultCallbackInvoked() public {
+        // Register default callback for BLOCKCHAIN type
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
+
+        // Record hash (no specialized callback set)
+        bytes memory payload = abi.encode(alice, uint256(100));
+        bytes32 dataHash = keccak256(payload);
+
+        vm.prank(systemCaller);
+        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+
+        // Verify default callback was invoked
+        assertEq(mockCallback.callCount(), 1);
+        assertEq(mockCallback.lastDataHash(), dataHash);
+        assertEq(mockCallback.lastPayload(), payload);
+    }
+
+    function test_SpecializedCallbackOverridesDefault() public {
+        MockOracleCallback defaultCallback = new MockOracleCallback();
+        MockOracleCallback specializedCallback = new MockOracleCallback();
+
+        // Set default callback
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(defaultCallback));
+
+        // Set specialized callback for ETHEREUM_SOURCE_ID
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(specializedCallback));
+
+        // Record hash
+        bytes memory payload = abi.encode(alice, uint256(100));
+        bytes32 dataHash = keccak256(payload);
+
+        vm.prank(systemCaller);
+        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+
+        // Specialized callback should be invoked, not default
+        assertEq(specializedCallback.callCount(), 1);
+        assertEq(defaultCallback.callCount(), 0);
+    }
+
+    function test_DefaultCallbackForDifferentSourceIds() public {
+        MockOracleCallback defaultCallback = new MockOracleCallback();
+        MockOracleCallback specializedCallback = new MockOracleCallback();
+        uint256 arbitrumSourceId = 42161;
+
+        // Set default callback for BLOCKCHAIN type
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(defaultCallback));
+
+        // Set specialized callback only for ETHEREUM_SOURCE_ID
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(specializedCallback));
+
+        // Record hash for Arbitrum (should use default)
+        bytes memory payload1 = abi.encode("arbitrum event");
+        bytes32 dataHash1 = keccak256(payload1);
+        vm.prank(systemCaller);
+        oracle.recordHash(dataHash1, SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId, 1000, payload1);
+
+        // Record hash for Ethereum (should use specialized)
+        bytes memory payload2 = abi.encode("ethereum event");
+        bytes32 dataHash2 = keccak256(payload2);
+        vm.prank(systemCaller);
+        oracle.recordHash(dataHash2, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payload2);
+
+        // Verify correct callbacks were invoked
+        assertEq(defaultCallback.callCount(), 1);
+        assertEq(defaultCallback.lastDataHash(), dataHash1);
+
+        assertEq(specializedCallback.callCount(), 1);
+        assertEq(specializedCallback.lastDataHash(), dataHash2);
     }
 
     function test_CallbackFailureDoesNotRevert() public {
@@ -632,6 +760,14 @@ contract NativeOracleTest is Test {
 
         vm.prank(systemCaller);
         oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
+    }
+
+    function test_Events_DefaultCallbackSet() public {
+        vm.expectEmit(true, true, true, true);
+        emit INativeOracle.DefaultCallbackSet(SOURCE_TYPE_BLOCKCHAIN, address(0), address(mockCallback));
+
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
     }
 
     function test_Events_CallbackSet() public {

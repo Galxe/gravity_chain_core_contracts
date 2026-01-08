@@ -57,7 +57,9 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
-    function sendMessage(bytes calldata message) external payable returns (uint256 messageNonce) {
+    function sendMessage(
+        bytes calldata message
+    ) external payable returns (uint256 messageNonce) {
         // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
         messageNonce = nonce++;
         bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
@@ -76,7 +78,9 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     }
 
     /// @inheritdoc IGravityPortal
-    function sendMessageWithData(bytes calldata message) external payable returns (uint256 messageNonce) {
+    function sendMessageWithData(
+        bytes calldata message
+    ) external payable returns (uint256 messageNonce) {
         // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
         messageNonce = nonce++;
         bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
@@ -99,19 +103,25 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
-    function setBaseFee(uint256 newBaseFee) external onlyOwner {
+    function setBaseFee(
+        uint256 newBaseFee
+    ) external onlyOwner {
         baseFee = newBaseFee;
         emit FeeConfigUpdated(newBaseFee, feePerByte);
     }
 
     /// @inheritdoc IGravityPortal
-    function setFeePerByte(uint256 newFeePerByte) external onlyOwner {
+    function setFeePerByte(
+        uint256 newFeePerByte
+    ) external onlyOwner {
         feePerByte = newFeePerByte;
         emit FeeConfigUpdated(baseFee, newFeePerByte);
     }
 
     /// @inheritdoc IGravityPortal
-    function setFeeRecipient(address newRecipient) external onlyOwner {
+    function setFeeRecipient(
+        address newRecipient
+    ) external onlyOwner {
         if (newRecipient == address(0)) revert ZeroAddress();
 
         address oldRecipient = feeRecipient;
@@ -139,7 +149,9 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
-    function calculateFee(uint256 messageLength) external view returns (uint256 requiredFee) {
+    function calculateFee(
+        uint256 messageLength
+    ) external view returns (uint256 requiredFee) {
         // Estimate encoded payload length using compact encoding:
         // sender (20 bytes) + nonce (32 bytes) + message length = 52 + messageLength
         uint256 estimatedPayloadLength = PortalMessage.MIN_PAYLOAD_LENGTH + messageLength;
@@ -153,7 +165,9 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     /// @notice Calculate fee for a given payload length
     /// @param payloadLength The length of the encoded payload in bytes
     /// @return The required fee in wei
-    function _calculateFee(uint256 payloadLength) internal view returns (uint256) {
+    function _calculateFee(
+        uint256 payloadLength
+    ) internal view returns (uint256) {
         return baseFee + (payloadLength * feePerByte);
     }
 }

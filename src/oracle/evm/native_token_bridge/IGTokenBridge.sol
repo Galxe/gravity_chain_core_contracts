@@ -16,12 +16,7 @@ interface IGTokenBridge {
     /// @param recipient The recipient address on Gravity
     /// @param amount The amount of tokens locked
     /// @param nonce The portal nonce for this bridge operation
-    event TokensLocked(
-        address indexed from,
-        address indexed recipient,
-        uint256 amount,
-        uint256 indexed nonce
-    );
+    event TokensLocked(address indexed from, address indexed recipient, uint256 amount, uint256 indexed nonce);
 
     // ========================================================================
     // ERRORS
@@ -47,7 +42,10 @@ interface IGTokenBridge {
     /// @param amount Amount of G tokens to bridge
     /// @param recipient Recipient address on Gravity chain
     /// @return messageNonce The portal nonce assigned to this bridge operation
-    function bridgeToGravity(uint256 amount, address recipient) external payable returns (uint256 messageNonce);
+    function bridgeToGravity(
+        uint256 amount,
+        address recipient
+    ) external payable returns (uint256 messageNonce);
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -66,6 +64,9 @@ interface IGTokenBridge {
     /// @param amount The amount to bridge (used to calculate message length)
     /// @param recipient The recipient address (used to calculate message length)
     /// @return requiredFee The required fee in ETH
-    function calculateBridgeFee(uint256 amount, address recipient) external view returns (uint256 requiredFee);
+    function calculateBridgeFee(
+        uint256 amount,
+        address recipient
+    ) external view returns (uint256 requiredFee);
 }
 

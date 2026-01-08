@@ -2,13 +2,19 @@
 pragma solidity ^0.8.30;
 
 import { IGTokenBridge } from "./IGTokenBridge.sol";
-import { IGravityPortal } from "./IGravityPortal.sol";
+import { IGravityPortal } from "../IGravityPortal.sol";
 
 /// @title IERC20
 /// @notice Minimal ERC20 interface for token transfers
 interface IERC20 {
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool);
+    function balanceOf(
+        address account
+    ) external view returns (uint256);
 }
 
 /// @title GTokenBridge
@@ -34,7 +40,10 @@ contract GTokenBridge is IGTokenBridge {
     /// @notice Deploy the GTokenBridge
     /// @param gToken_ The G token (ERC20) contract address
     /// @param gravityPortal_ The GravityPortal contract address
-    constructor(address gToken_, address gravityPortal_) {
+    constructor(
+        address gToken_,
+        address gravityPortal_
+    ) {
         if (gToken_ == address(0) || gravityPortal_ == address(0)) {
             revert ZeroRecipient(); // Reusing error for zero address
         }
@@ -48,7 +57,10 @@ contract GTokenBridge is IGTokenBridge {
     // ========================================================================
 
     /// @inheritdoc IGTokenBridge
-    function bridgeToGravity(uint256 amount, address recipient) external payable returns (uint256 messageNonce) {
+    function bridgeToGravity(
+        uint256 amount,
+        address recipient
+    ) external payable returns (uint256 messageNonce) {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroRecipient();
 
@@ -70,7 +82,10 @@ contract GTokenBridge is IGTokenBridge {
     // ========================================================================
 
     /// @inheritdoc IGTokenBridge
-    function calculateBridgeFee(uint256 amount, address recipient) external view returns (uint256 requiredFee) {
+    function calculateBridgeFee(
+        uint256 amount,
+        address recipient
+    ) external view returns (uint256 requiredFee) {
         // Calculate message length for fee estimation
         bytes memory message = abi.encode(amount, recipient);
         return IGravityPortal(gravityPortal).calculateFee(message.length);

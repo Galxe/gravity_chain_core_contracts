@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { GTokenBridge, IERC20 } from "../../../src/oracle/GTokenBridge.sol";
-import { IGTokenBridge } from "../../../src/oracle/IGTokenBridge.sol";
-import { GravityPortal } from "../../../src/oracle/GravityPortal.sol";
-import { IGravityPortal } from "../../../src/oracle/IGravityPortal.sol";
+import { GTokenBridge, IERC20 } from "@src/oracle/evm/native_token_bridge/GTokenBridge.sol";
+import { IGTokenBridge } from "@src/oracle/evm/native_token_bridge/IGTokenBridge.sol";
+import { GravityPortal } from "@src/oracle/evm/GravityPortal.sol";
+import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
 
 /// @title MockERC20
 /// @notice Mock ERC20 token for testing
@@ -17,24 +17,37 @@ contract MockERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         balanceOf[to] += amount;
         totalSupply += amount;
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         require(balanceOf[msg.sender] >= amount, "Insufficient balance");
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
         balanceOf[from] -= amount;
@@ -70,12 +83,7 @@ contract GTokenBridgeTest is Test {
         gToken = new MockERC20();
 
         // Deploy portal
-        portal = new GravityPortal(
-            owner,
-            INITIAL_BASE_FEE,
-            INITIAL_FEE_PER_BYTE,
-            feeRecipient
-        );
+        portal = new GravityPortal(owner, INITIAL_BASE_FEE, INITIAL_FEE_PER_BYTE, feeRecipient);
 
         // Deploy bridge
         bridge = new GTokenBridge(address(gToken), address(portal));
@@ -232,7 +240,10 @@ contract GTokenBridgeTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_BridgeToGravity(uint256 amount, address recipient) public {
+    function testFuzz_BridgeToGravity(
+        uint256 amount,
+        address recipient
+    ) public {
         amount = bound(amount, 1, INITIAL_BALANCE);
         vm.assume(recipient != address(0));
 

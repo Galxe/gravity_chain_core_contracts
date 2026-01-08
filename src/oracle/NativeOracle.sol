@@ -35,8 +35,12 @@ contract NativeOracle is INativeOracle {
     /// @dev sourceName = keccak256(abi.encode(sourceType, sourceId))
     mapping(bytes32 => SyncStatus) private _syncStatus;
 
-    /// @notice Callback handlers: sourceName => callback contract
-    /// @dev When an event is recorded, the callback is invoked (if registered)
+    /// @notice Default callback handlers: sourceType => callback contract
+    /// @dev Fallback callback for all sources of a given type
+    mapping(uint32 => address) private _defaultCallbacks;
+
+    /// @notice Specialized callback handlers: sourceName => callback contract
+    /// @dev Overrides default callback for specific (sourceType, sourceId) pairs
     mapping(bytes32 => address) private _callbacks;
 
     /// @notice Total number of records stored
@@ -207,6 +211,26 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
+    function setDefaultCallback(
+        uint32 sourceType,
+        address callback
+    ) external whenInitialized {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+
+        address oldCallback = _defaultCallbacks[sourceType];
+        _defaultCallbacks[sourceType] = callback;
+
+        emit DefaultCallbackSet(sourceType, oldCallback, callback);
+    }
+
+    /// @inheritdoc INativeOracle
+    function getDefaultCallback(
+        uint32 sourceType
+    ) external view returns (address callback) {
+        return _defaultCallbacks[sourceType];
+    }
+
+    /// @inheritdoc INativeOracle
     function setCallback(
         uint32 sourceType,
         uint256 sourceId,
@@ -227,7 +251,11 @@ contract NativeOracle is INativeOracle {
         uint256 sourceId
     ) external view returns (address callback) {
         bytes32 sourceName = _computeSourceName(sourceType, sourceId);
-        return _callbacks[sourceName];
+        address specialized = _callbacks[sourceName];
+        if (specialized != address(0)) {
+            return specialized;
+        }
+        return _defaultCallbacks[sourceType];
     }
 
     // ========================================================================
@@ -386,6 +414,22 @@ contract NativeOracle is INativeOracle {
         record.data = payload;
     }
 
+    /// @notice Resolve callback using 2-layer lookup
+    /// @dev Returns specialized callback if set, otherwise default callback
+    /// @param sourceName The computed source name for specialized lookup
+    /// @param sourceType The source type for default lookup
+    /// @return callback The resolved callback address (address(0) if none set)
+    function _resolveCallback(
+        bytes32 sourceName,
+        uint32 sourceType
+    ) internal view returns (address callback) {
+        address specialized = _callbacks[sourceName];
+        if (specialized != address(0)) {
+            return specialized;
+        }
+        return _defaultCallbacks[sourceType];
+    }
+
     /// @notice Invoke callback with limited gas
     /// @dev Failures are caught to prevent DOS attacks
     /// @param sourceName The computed source name
@@ -400,7 +444,7 @@ contract NativeOracle is INativeOracle {
         bytes32 dataHash,
         bytes calldata payload
     ) internal {
-        address callback = _callbacks[sourceName];
+        address callback = _resolveCallback(sourceName, sourceType);
         if (callback == address(0)) return;
 
         // Try to call the callback with limited gas

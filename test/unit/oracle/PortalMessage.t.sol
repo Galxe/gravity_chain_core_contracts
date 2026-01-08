@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { PortalMessage } from "../../../src/oracle/PortalMessage.sol";
+import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 
 /// @title PortalMessageTest
 /// @notice Comprehensive unit tests for PortalMessage library assembly encoding/decoding
@@ -239,23 +239,33 @@ contract PortalMessageTest is Test {
     // HELPER FUNCTIONS FOR REVERT TESTS
     // ========================================================================
 
-    function decodeHelper(bytes memory payload) external pure returns (address, uint256, bytes memory) {
+    function decodeHelper(
+        bytes memory payload
+    ) external pure returns (address, uint256, bytes memory) {
         return PortalMessage.decode(payload);
     }
 
-    function decodeSenderHelper(bytes memory payload) external pure returns (address) {
+    function decodeSenderHelper(
+        bytes memory payload
+    ) external pure returns (address) {
         return PortalMessage.decodeSender(payload);
     }
 
-    function decodeNonceHelper(bytes memory payload) external pure returns (uint256) {
+    function decodeNonceHelper(
+        bytes memory payload
+    ) external pure returns (uint256) {
         return PortalMessage.decodeNonce(payload);
     }
 
-    function decodeSenderAndNonceHelper(bytes memory payload) external pure returns (address, uint256) {
+    function decodeSenderAndNonceHelper(
+        bytes memory payload
+    ) external pure returns (address, uint256) {
         return PortalMessage.decodeSenderAndNonce(payload);
     }
 
-    function getMessageSliceHelper(bytes memory payload) external pure returns (uint256, uint256) {
+    function getMessageSliceHelper(
+        bytes memory payload
+    ) external pure returns (uint256, uint256) {
         return PortalMessage.getMessageSlice(payload);
     }
 
@@ -295,7 +305,11 @@ contract PortalMessageTest is Test {
         assertEq(keccak256(decodedMessage), keccak256(message), "Message roundtrip failed");
     }
 
-    function testFuzz_PartialDecode(address sender, uint256 messageNonce, bytes memory message) public pure {
+    function testFuzz_PartialDecode(
+        address sender,
+        uint256 messageNonce,
+        bytes memory message
+    ) public pure {
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
         // Test all partial decode functions
@@ -307,7 +321,11 @@ contract PortalMessageTest is Test {
         assertEq(n, messageNonce, "decodeSenderAndNonce nonce failed");
     }
 
-    function testFuzz_GetMessageSlice(address sender, uint256 messageNonce, bytes memory message) public pure {
+    function testFuzz_GetMessageSlice(
+        address sender,
+        uint256 messageNonce,
+        bytes memory message
+    ) public pure {
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
         (, uint256 messageLength) = PortalMessage.getMessageSlice(payload);
 
@@ -369,7 +387,7 @@ contract PortalMessageTest is Test {
             }
 
             bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
-            (, , bytes memory decodedMessage) = PortalMessage.decode(payload);
+            (,, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
             assertEq(decodedMessage.length, len, "Decoded message length mismatch");
             assertEq(keccak256(decodedMessage), keccak256(message), "Decoded message content mismatch");

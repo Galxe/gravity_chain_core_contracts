@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 import { INativeTokenMinter, INativeMintPrecompile } from "./INativeTokenMinter.sol";
-import { IMessageHandler } from "./IBlockchainEventRouter.sol";
-import { SystemAddresses } from "../foundation/SystemAddresses.sol";
-import { requireAllowed } from "../foundation/SystemAccessControl.sol";
-import { Errors } from "../foundation/Errors.sol";
+import { IMessageHandler } from "../IBlockchainEventRouter.sol";
+import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { requireAllowed } from "@src/foundation/SystemAccessControl.sol";
+import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title NativeTokenMinter
 /// @author Gravity Team
@@ -45,7 +45,9 @@ contract NativeTokenMinter is INativeTokenMinter {
 
     /// @notice Deploy the NativeTokenMinter
     /// @param trustedBridge_ The trusted GTokenBridge address on Ethereum
-    constructor(address trustedBridge_) {
+    constructor(
+        address trustedBridge_
+    ) {
         trustedBridge = trustedBridge_;
     }
 
@@ -131,7 +133,9 @@ contract NativeTokenMinter is INativeTokenMinter {
     // ========================================================================
 
     /// @inheritdoc INativeTokenMinter
-    function isProcessed(uint256 nonce) external view returns (bool) {
+    function isProcessed(
+        uint256 nonce
+    ) external view returns (bool) {
         return _processedNonces[nonce];
     }
 

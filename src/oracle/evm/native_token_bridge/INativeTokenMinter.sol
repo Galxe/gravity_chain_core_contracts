@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IMessageHandler } from "./IBlockchainEventRouter.sol";
+import { IMessageHandler } from "../IBlockchainEventRouter.sol";
 
 /// @title INativeTokenMinter
 /// @author Gravity Team
@@ -63,7 +63,9 @@ interface INativeTokenMinter is IMessageHandler {
     /// @notice Check if a nonce has been processed
     /// @param nonce The nonce to check
     /// @return True if the nonce has been processed
-    function isProcessed(uint256 nonce) external view returns (bool);
+    function isProcessed(
+        uint256 nonce
+    ) external view returns (bool);
 
     /// @notice Get the trusted bridge address on Ethereum
     /// @return The trusted GTokenBridge address
@@ -82,6 +84,9 @@ interface INativeMintPrecompile {
     /// @notice Mint native tokens to a recipient
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to mint (in wei)
-    function mint(address recipient, uint256 amount) external;
+    function mint(
+        address recipient,
+        uint256 amount
+    ) external;
 }
 

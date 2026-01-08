@@ -53,12 +53,7 @@ interface INativeOracle {
     /// @param sourceType The source type (0 = BLOCKCHAIN, 1 = JWK, etc.)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param syncId The sync ID (block height, timestamp, etc.)
-    event HashRecorded(
-        bytes32 indexed dataHash,
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        uint128 syncId
-    );
+    event HashRecorded(bytes32 indexed dataHash, uint32 indexed sourceType, uint256 indexed sourceId, uint128 syncId);
 
     /// @notice Emitted when data is recorded (data mode)
     /// @param dataHash The hash of the data
@@ -80,22 +75,22 @@ interface INativeOracle {
     /// @param previousSyncId The previous sync ID
     /// @param newSyncId The new sync ID
     event SyncStatusUpdated(
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        uint128 previousSyncId,
-        uint128 newSyncId
+        uint32 indexed sourceType, uint256 indexed sourceId, uint128 previousSyncId, uint128 newSyncId
     );
 
-    /// @notice Emitted when a callback is registered or updated
+    /// @notice Emitted when a default callback is registered or updated
+    /// @param sourceType The source type
+    /// @param oldCallback The previous callback address
+    /// @param newCallback The new callback address
+    event DefaultCallbackSet(uint32 indexed sourceType, address indexed oldCallback, address newCallback);
+
+    /// @notice Emitted when a specialized callback is registered or updated
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param oldCallback The previous callback address
     /// @param newCallback The new callback address
     event CallbackSet(
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        address indexed oldCallback,
-        address newCallback
+        uint32 indexed sourceType, uint256 indexed sourceId, address indexed oldCallback, address newCallback
     );
 
     /// @notice Emitted when a callback succeeds
@@ -103,12 +98,7 @@ interface INativeOracle {
     /// @param sourceId The source identifier
     /// @param dataHash The data hash
     /// @param callback The callback contract address
-    event CallbackSuccess(
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        bytes32 dataHash,
-        address callback
-    );
+    event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, bytes32 dataHash, address callback);
 
     /// @notice Emitted when a callback fails (tx continues, does NOT revert)
     /// @param sourceType The source type
@@ -117,11 +107,7 @@ interface INativeOracle {
     /// @param callback The callback contract address
     /// @param reason The failure reason
     event CallbackFailed(
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        bytes32 dataHash,
-        address callback,
-        bytes reason
+        uint32 indexed sourceType, uint256 indexed sourceId, bytes32 dataHash, address callback, bytes reason
     );
 
     // ========================================================================
@@ -191,9 +177,36 @@ interface INativeOracle {
     // ========================================================================
     // CALLBACK MANAGEMENT (Governance Only)
     // ========================================================================
+    //
+    // Callbacks use a 2-layer resolution system:
+    //   1. Default callback per sourceType - applies to all sources of that type
+    //   2. Specialized callback per (sourceType, sourceId) - overrides default
+    //
+    // When an oracle event is recorded, the system first checks for a specialized
+    // callback. If none is set, it falls back to the default callback for that
+    // source type.
+    // ========================================================================
 
-    /// @notice Register a callback handler for a source
-    /// @dev Only callable by GOVERNANCE
+    /// @notice Register a default callback handler for a source type
+    /// @dev Only callable by GOVERNANCE. This callback applies to all sources
+    ///      of the given type unless overridden by a specialized callback.
+    /// @param sourceType The source type
+    /// @param callback The callback contract address (address(0) to unregister)
+    function setDefaultCallback(
+        uint32 sourceType,
+        address callback
+    ) external;
+
+    /// @notice Get the default callback handler for a source type
+    /// @param sourceType The source type
+    /// @return callback The default callback address (address(0) if not set)
+    function getDefaultCallback(
+        uint32 sourceType
+    ) external view returns (address callback);
+
+    /// @notice Register a specialized callback handler for a specific source
+    /// @dev Only callable by GOVERNANCE. This callback overrides the default
+    ///      callback for the given (sourceType, sourceId) pair.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
@@ -203,10 +216,11 @@ interface INativeOracle {
         address callback
     ) external;
 
-    /// @notice Get the callback handler for a source
+    /// @notice Get the effective callback handler for a source (2-layer resolution)
+    /// @dev Returns specialized callback if set, otherwise returns default callback.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @return callback The callback contract address (address(0) if not set)
+    /// @return callback The effective callback address (address(0) if none set)
     function getCallback(
         uint32 sourceType,
         uint256 sourceId
