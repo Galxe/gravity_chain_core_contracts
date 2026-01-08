@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { NativeOracle } from "../../../src/oracle/NativeOracle.sol";
 import { INativeOracle, IOracleCallback } from "../../../src/oracle/INativeOracle.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
@@ -17,13 +17,14 @@ contract MockOracleCallback is IOracleCallback {
     uint256 public callCount;
     bool public shouldRevert;
     bool public shouldConsumeAllGas;
+    bool public returnShouldStore = true; // Default: store in NativeOracle
 
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
         bytes calldata payload
-    ) external override {
+    ) external override returns (bool shouldStore) {
         if (shouldRevert) {
             revert("MockCallback: intentional revert");
         }
@@ -37,6 +38,8 @@ contract MockOracleCallback is IOracleCallback {
         lastNonce = nonce;
         lastPayload = payload;
         callCount++;
+
+        return returnShouldStore;
     }
 
     function setRevert(
@@ -49,6 +52,12 @@ contract MockOracleCallback is IOracleCallback {
         bool _shouldConsumeAllGas
     ) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
+    }
+
+    function setShouldStore(
+        bool _shouldStore
+    ) external {
+        returnShouldStore = _shouldStore;
     }
 }
 
@@ -781,5 +790,175 @@ contract NativeOracleTest is Test {
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1);
         assertTrue(record.recordedAt > 0);
+    }
+
+    // ========================================================================
+    // SKIP-STORAGE TESTS (callback returns shouldStore=false)
+    // ========================================================================
+
+    function test_CallbackSkipStorage() public {
+        // Register callback that returns shouldStore=false
+        mockCallback.setShouldStore(false);
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, address(mockCallback));
+
+        bytes memory payload = abi.encode("jwk data");
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Callback was invoked
+        assertEq(mockCallback.callCount(), 1);
+
+        // But record was NOT stored (recordedAt == 0)
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce);
+        assertEq(record.recordedAt, 0);
+
+        // Nonce was still updated (for replay protection)
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), nonce);
+    }
+
+    function test_CallbackStoreByDefault() public {
+        // Register callback that returns shouldStore=true (default)
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
+
+        bytes memory payload = abi.encode("blockchain event");
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Callback was invoked
+        assertEq(mockCallback.callCount(), 1);
+
+        // Record WAS stored
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+        assertEq(record.data, payload);
+    }
+
+    function test_NoCallbackStoresByDefault() public {
+        // No callback registered - should always store
+        bytes memory payload = abi.encode("no callback");
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Record WAS stored
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+    }
+
+    function test_CallbackFailureStoresByDefault() public {
+        // Register callback that reverts
+        mockCallback.setRevert(true);
+        mockCallback.setShouldStore(false); // Would skip if it succeeded
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, address(mockCallback));
+
+        bytes memory payload = abi.encode("jwk data");
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Callback failed (callCount not incremented)
+        assertEq(mockCallback.callCount(), 0);
+
+        // But record WAS stored (failure defaults to store)
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+        assertEq(record.data, payload);
+    }
+
+    function test_BatchSkipStoragePerRecord() public {
+        // Create two callbacks with different behaviors
+        MockOracleCallback storeCallback = new MockOracleCallback();
+        storeCallback.setShouldStore(true);
+
+        MockOracleCallback skipCallback = new MockOracleCallback();
+        skipCallback.setShouldStore(false);
+
+        // Set default callback for JWK type that skips storage
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_JWK, address(skipCallback));
+
+        // Record batch
+        uint128[] memory nonces = new uint128[](3);
+        bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
+
+        for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 2000 + uint128(i);
+            payloads[i] = abi.encode("event", i);
+            gasLimits[i] = CALLBACK_GAS_LIMIT;
+        }
+
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonces, payloads, gasLimits);
+
+        // All callbacks were invoked
+        assertEq(skipCallback.callCount(), 3);
+
+        // No records were stored
+        for (uint256 i = 0; i < 3; i++) {
+            INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonces[i]);
+            assertEq(record.recordedAt, 0);
+        }
+
+        // But nonce was updated
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), nonces[2]);
+    }
+
+    function test_Events_StorageSkipped() public {
+        mockCallback.setShouldStore(false);
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, address(mockCallback));
+
+        bytes memory payload = abi.encode("jwk data");
+        uint128 nonce = 1000;
+
+        // Expect both CallbackSuccess and StorageSkipped events
+        vm.expectEmit(true, true, false, true);
+        emit INativeOracle.CallbackSuccess(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, address(mockCallback));
+
+        vm.expectEmit(true, true, false, true);
+        emit INativeOracle.StorageSkipped(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, address(mockCallback));
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+    }
+
+    function test_Events_NoDataRecordedWhenSkipped() public {
+        mockCallback.setShouldStore(false);
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, address(mockCallback));
+
+        bytes memory payload = abi.encode("jwk data");
+        uint128 nonce = 1000;
+
+        // Record logs to check that DataRecorded is NOT emitted
+        vm.recordLogs();
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Check logs - should have CallbackSuccess and StorageSkipped, but NOT DataRecorded
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bool foundDataRecorded = false;
+        bytes32 dataRecordedTopic = keccak256("DataRecorded(uint32,uint256,uint128,uint256)");
+
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == dataRecordedTopic) {
+                foundDataRecorded = true;
+                break;
+            }
+        }
+
+        assertFalse(foundDataRecorded, "DataRecorded should not be emitted when storage is skipped");
     }
 }

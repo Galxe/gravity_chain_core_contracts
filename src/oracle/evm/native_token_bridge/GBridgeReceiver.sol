@@ -50,6 +50,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     /// @param sender The sender address on Ethereum (must be trusted bridge)
     /// @param messageNonce The message nonce from the source chain
     /// @param message The message body: abi.encode(amount, recipient)
+    /// @return shouldStore Always true - bridge events should be stored in NativeOracle for verification
     function _handlePortalMessage(
         uint32 sourceType,
         uint256 sourceId,
@@ -57,7 +58,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         address sender,
         uint128 messageNonce,
         bytes memory message
-    ) internal override {
+    ) internal override returns (bool shouldStore) {
         // Silence unused variable warnings - these are for future extensibility
         (sourceType, sourceId, oracleNonce);
 
@@ -81,6 +82,9 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         INativeMintPrecompile(SystemAddresses.NATIVE_MINT_PRECOMPILE).mint(recipient, amount);
 
         emit NativeMinted(recipient, amount, messageNonce);
+
+        // Store bridge events in NativeOracle for verification and audit trail
+        return true;
     }
 
     // ========================================================================

@@ -418,5 +418,36 @@ library Errors {
 
     /// @notice Config bytes cannot be empty
     error EmptyConfig();
+
+    // ========================================================================
+    // JWK MANAGER ERRORS
+    // ========================================================================
+
+    /// @notice Only NativeOracle can call JWKManager callback
+    error JWKOnlyNativeOracle();
+
+    /// @notice JWK version must be strictly increasing
+    /// @param issuer The issuer URL
+    /// @param currentVersion Current version for this issuer
+    /// @param providedVersion Provided version that is not greater
+    error JWKVersionNotIncreasing(bytes issuer, uint64 currentVersion, uint64 providedVersion);
+
+    /// @notice Provider not found in JWK set
+    /// @param issuer The issuer URL that was not found
+    error JWKProviderNotFound(bytes issuer);
+
+    /// @notice JWK not found for issuer
+    /// @param issuer The issuer URL
+    /// @param kid The key ID that was not found
+    error JWKNotFound(bytes issuer, string kid);
+
+    /// @notice Invalid patch type
+    /// @param patchType The invalid patch type value
+    error JWKInvalidPatchType(uint8 patchType);
+
+    /// @notice Provider index out of bounds
+    /// @param index The requested index
+    /// @param count The total number of providers
+    error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
 }
 

@@ -30,12 +30,13 @@ abstract contract BlockchainEventHandler is IOracleCallback {
     /// @param sourceId The source identifier (chain ID)
     /// @param oracleNonce The oracle nonce for this record
     /// @param payload The event payload encoded via PortalMessage: sender (20B) + nonce (16B) + message
+    /// @return shouldStore Returns the value from _handlePortalMessage (derived contract decides)
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
         uint128 oracleNonce,
         bytes calldata payload
-    ) external override {
+    ) external override returns (bool shouldStore) {
         // Only NativeOracle can call this
         if (msg.sender != SystemAddresses.NATIVE_ORACLE) {
             revert OnlyNativeOracle();
@@ -44,8 +45,8 @@ abstract contract BlockchainEventHandler is IOracleCallback {
         // Decode portal message payload: (sender, messageNonce, message)
         (address sender, uint128 messageNonce, bytes memory message) = PortalMessage.decode(payload);
 
-        // Delegate to derived contract
-        _handlePortalMessage(sourceType, sourceId, oracleNonce, sender, messageNonce, message);
+        // Delegate to derived contract - it decides whether to store
+        return _handlePortalMessage(sourceType, sourceId, oracleNonce, sender, messageNonce, message);
     }
 
     // ========================================================================
@@ -60,6 +61,7 @@ abstract contract BlockchainEventHandler is IOracleCallback {
     /// @param sender The sender address on the source chain (from portal message)
     /// @param messageNonce The message nonce from the source chain (from portal message)
     /// @param message The message body (application-specific encoding)
+    /// @return shouldStore Whether NativeOracle should store this payload
     function _handlePortalMessage(
         uint32 sourceType,
         uint256 sourceId,
@@ -67,6 +69,6 @@ abstract contract BlockchainEventHandler is IOracleCallback {
         address sender,
         uint128 messageNonce,
         bytes memory message
-    ) internal virtual;
+    ) internal virtual returns (bool shouldStore);
 }
 

@@ -75,6 +75,13 @@ interface INativeOracle {
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
     );
 
+    /// @notice Emitted when payload storage is skipped (callback returned shouldStore=false)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce of the record
+    /// @param callback The callback contract that requested skip
+    event StorageSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
+
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================
@@ -206,14 +213,18 @@ interface INativeOracle {
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
     /// @dev Callback failures are caught - they do NOT revert the oracle recording.
+    ///      The return value controls whether NativeOracle stores the payload:
+    ///      - true: Store the payload in NativeOracle (default behavior)
+    ///      - false: Skip storage (callback handles its own storage, e.g., JWKManager)
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
+    /// @return shouldStore True if NativeOracle should store the payload, false to skip storage
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
         bytes calldata payload
-    ) external;
+    ) external returns (bool shouldStore);
 }

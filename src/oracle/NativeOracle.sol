@@ -43,17 +43,20 @@ contract NativeOracle is INativeOracle {
     ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
-        // Validate and update nonce
+        // Validate and update nonce (always done regardless of storage)
         _updateNonce(sourceType, sourceId, nonce);
 
-        // Store record
-        _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
-
-        emit DataRecorded(sourceType, sourceId, nonce, payload.length);
-
-        // Invoke callback if registered and gas limit > 0
+        // Invoke callback first to determine if we should store
+        // Default: store if no callback or callback fails
+        bool shouldStore = true;
         if (callbackGasLimit > 0) {
-            _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
+            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
+        }
+
+        // Conditionally store record based on callback result
+        if (shouldStore) {
+            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }
 
@@ -98,17 +101,20 @@ contract NativeOracle is INativeOracle {
         bytes calldata payload,
         uint256 callbackGasLimit
     ) private {
-        // Validate and update nonce
+        // Validate and update nonce (always done regardless of storage)
         _updateNonce(sourceType, sourceId, nonce);
 
-        // Store record
-        _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
-
-        emit DataRecorded(sourceType, sourceId, nonce, payload.length);
-
-        // Invoke callback if gas limit > 0
+        // Invoke callback first to determine if we should store
+        // Default: store if no callback or callback fails
+        bool shouldStore = true;
         if (callbackGasLimit > 0) {
-            _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
+            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
+        }
+
+        // Conditionally store record based on callback result
+        if (shouldStore) {
+            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }
 
@@ -234,30 +240,38 @@ contract NativeOracle is INativeOracle {
     }
 
     /// @notice Invoke callback with specified gas limit
-    /// @dev Failures are caught to prevent DOS attacks
+    /// @dev Failures are caught to prevent DOS attacks. Returns whether storage should happen.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload
     /// @param gasLimit Gas limit for callback execution
+    /// @return shouldStore True if payload should be stored, false to skip storage
     function _invokeCallback(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
         bytes calldata payload,
         uint256 gasLimit
-    ) internal {
+    ) internal returns (bool shouldStore) {
         address callback = _resolveCallback(sourceType, sourceId);
-        if (callback == address(0)) return;
+        if (callback == address(0)) return true; // No callback = store by default
 
         // Try to call the callback with specified gas limit
         // This prevents malicious callbacks from:
         // 1. Consuming excessive gas
         // 2. Blocking oracle updates by reverting
-        try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) {
+        try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) returns (
+            bool callbackShouldStore
+        ) {
             emit CallbackSuccess(sourceType, sourceId, nonce, callback);
+            if (!callbackShouldStore) {
+                emit StorageSkipped(sourceType, sourceId, nonce, callback);
+            }
+            return callbackShouldStore;
         } catch (bytes memory reason) {
             emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
+            return true; // On failure, store by default to preserve data
         }
     }
 }
