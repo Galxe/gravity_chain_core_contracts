@@ -14,10 +14,7 @@ contract MockNativeMintPrecompile is INativeMintPrecompile {
     uint256 public totalMinted;
     bool public shouldFail;
 
-    function mint(
-        address recipient,
-        uint256 amount
-    ) external override {
+    function mint(address recipient, uint256 amount) external override {
         if (shouldFail) {
             revert("MockPrecompile: mint failed");
         }
@@ -25,9 +22,7 @@ contract MockNativeMintPrecompile is INativeMintPrecompile {
         totalMinted += amount;
     }
 
-    function setFail(
-        bool _shouldFail
-    ) external {
+    function setFail(bool _shouldFail) external {
         shouldFail = _shouldFail;
     }
 }
@@ -43,6 +38,9 @@ contract NativeTokenMinterTest is Test {
     address public trustedBridge;
     address public alice;
     address public bob;
+
+    uint32 public constant SOURCE_TYPE_BLOCKCHAIN = 0;
+    uint256 public constant ETHEREUM_SOURCE_ID = 1;
 
     function setUp() public {
         genesis = SystemAddresses.GENESIS;
@@ -92,63 +90,60 @@ contract NativeTokenMinterTest is Test {
 
     function test_HandleMessage() public {
         uint256 amount = 100 ether;
-        uint256 nonce = 42;
+        uint256 eventNonce = 42;
+        uint128 oracleNonce = 1000;
         bytes memory message = abi.encode(amount, alice);
-        bytes32 dataHash = keccak256(abi.encode(trustedBridge, nonce, message));
 
         // Mock the precompile behavior by directly updating the mock's storage
         // In a real test, the precompile would be called
         vm.prank(router);
         vm.expectEmit(true, true, true, true);
-        emit INativeTokenMinter.NativeMinted(alice, amount, nonce);
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        emit INativeTokenMinter.NativeMinted(alice, amount, eventNonce);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, trustedBridge, eventNonce, message);
 
-        assertTrue(minter.isProcessed(nonce));
+        assertTrue(minter.isProcessed(eventNonce));
     }
 
     function test_HandleMessage_RevertWhenNotRouter() public {
         bytes memory message = abi.encode(uint256(100), alice);
-        bytes32 dataHash = keccak256(message);
 
         vm.prank(alice);
         vm.expectRevert(INativeTokenMinter.OnlyRouter.selector);
-        minter.handleMessage(dataHash, trustedBridge, 0, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, trustedBridge, 0, message);
     }
 
     function test_HandleMessage_RevertWhenInvalidSender() public {
         address fakeBridge = makeAddr("fakeBridge");
         bytes memory message = abi.encode(uint256(100), alice);
-        bytes32 dataHash = keccak256(message);
 
         vm.prank(router);
         vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.InvalidSender.selector, fakeBridge, trustedBridge));
-        minter.handleMessage(dataHash, fakeBridge, 0, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, fakeBridge, 0, message);
     }
 
     function test_HandleMessage_RevertWhenAlreadyProcessed() public {
         uint256 amount = 100 ether;
-        uint256 nonce = 42;
+        uint256 eventNonce = 42;
+        uint128 oracleNonce = 1000;
         bytes memory message = abi.encode(amount, alice);
-        bytes32 dataHash = keccak256(message);
 
         // First call succeeds
         vm.prank(router);
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, trustedBridge, eventNonce, message);
 
         // Second call with same nonce fails
         vm.prank(router);
-        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, nonce));
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, eventNonce));
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, trustedBridge, eventNonce, message);
     }
 
     function test_HandleMessage_RevertWhenNotInitialized() public {
         NativeTokenMinter newMinter = new NativeTokenMinter(trustedBridge);
         bytes memory message = abi.encode(uint256(100), alice);
-        bytes32 dataHash = keccak256(message);
 
         vm.prank(router);
         vm.expectRevert(INativeTokenMinter.MinterNotInitialized.selector);
-        newMinter.handleMessage(dataHash, trustedBridge, 0, message);
+        newMinter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, trustedBridge, 0, message);
     }
 
     function test_HandleMessage_DifferentNonces() public {
@@ -156,10 +151,10 @@ contract NativeTokenMinterTest is Test {
 
         for (uint256 i = 0; i < 5; i++) {
             bytes memory message = abi.encode(amount, alice);
-            bytes32 dataHash = keccak256(abi.encode(trustedBridge, i, message));
+            uint128 oracleNonce = uint128(1000 + i);
 
             vm.prank(router);
-            minter.handleMessage(dataHash, trustedBridge, i, message);
+            minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, trustedBridge, i, message);
 
             assertTrue(minter.isProcessed(i));
         }
@@ -175,10 +170,9 @@ contract NativeTokenMinterTest is Test {
 
     function test_IsProcessed_True() public {
         bytes memory message = abi.encode(uint256(100), alice);
-        bytes32 dataHash = keccak256(message);
 
         vm.prank(router);
-        minter.handleMessage(dataHash, trustedBridge, 123, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, trustedBridge, 123, message);
 
         assertTrue(minter.isProcessed(123));
     }
@@ -191,37 +185,30 @@ contract NativeTokenMinterTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_HandleMessage(
-        uint256 amount,
-        address recipient,
-        uint256 nonce
-    ) public {
+    function testFuzz_HandleMessage(uint256 amount, address recipient, uint256 eventNonce) public {
         vm.assume(recipient != address(0));
-        vm.assume(!minter.isProcessed(nonce));
+        vm.assume(!minter.isProcessed(eventNonce));
 
         bytes memory message = abi.encode(amount, recipient);
-        bytes32 dataHash = keccak256(abi.encode(trustedBridge, nonce, message));
+        uint128 oracleNonce = 1000;
 
         vm.prank(router);
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, trustedBridge, eventNonce, message);
 
-        assertTrue(minter.isProcessed(nonce));
+        assertTrue(minter.isProcessed(eventNonce));
     }
 
-    function testFuzz_ReplayProtection(
-        uint256 nonce
-    ) public {
+    function testFuzz_ReplayProtection(uint256 eventNonce) public {
         bytes memory message = abi.encode(uint256(100), alice);
-        bytes32 dataHash = keccak256(message);
+        uint128 oracleNonce = 1000;
 
         // First call succeeds
         vm.prank(router);
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, trustedBridge, eventNonce, message);
 
         // Second call fails
         vm.prank(router);
-        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, nonce));
-        minter.handleMessage(dataHash, trustedBridge, nonce, message);
+        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, eventNonce));
+        minter.handleMessage(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, trustedBridge, eventNonce, message);
     }
 }
-

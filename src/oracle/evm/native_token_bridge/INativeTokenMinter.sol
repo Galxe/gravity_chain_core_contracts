@@ -21,10 +21,9 @@ interface INativeTokenMinter is IMessageHandler {
     event NativeMinted(address indexed recipient, uint256 amount, uint256 indexed nonce);
 
     /// @notice Emitted when minting fails (logged but doesn't revert router)
-    /// @param dataHash The hash of the original payload
     /// @param nonce The bridge nonce that failed
     /// @param reason The failure reason
-    event MintFailed(bytes32 indexed dataHash, uint256 indexed nonce, bytes reason);
+    event MintFailed(uint256 indexed nonce, bytes reason);
 
     // ========================================================================
     // ERRORS

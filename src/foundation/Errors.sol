@@ -340,25 +340,13 @@ library Errors {
     // NATIVE ORACLE ERRORS
     // ========================================================================
 
-    /// @notice Sync ID must be strictly increasing for each source
-    /// @dev For the first record, latestSyncId is 0, so syncId must be >= 1
+    /// @notice Nonce must be strictly increasing for each source
+    /// @dev For the first record, latestNonce is 0, so nonce must be >= 1
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param currentSyncId The current sync ID for this source
-    /// @param providedSyncId The provided sync ID that is not greater
-    error SyncIdNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentSyncId, uint128 providedSyncId);
-
-    /// @notice Batch arrays have mismatched lengths
-    /// @param hashesLength Length of dataHashes array
-    /// @param payloadsLength Length of payloads array
-    error ArrayLengthMismatch(uint256 hashesLength, uint256 payloadsLength);
-
-    /// @notice Data record not found for the given hash
-    /// @param dataHash The hash that was not found
-    error DataRecordNotFound(bytes32 dataHash);
-
-    /// @notice Oracle contract has not been initialized
-    error OracleNotInitialized();
+    /// @param currentNonce The current nonce for this source
+    /// @param providedNonce The provided nonce that is not greater
+    error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
 
     // ========================================================================
     // VERSION CONFIG ERRORS

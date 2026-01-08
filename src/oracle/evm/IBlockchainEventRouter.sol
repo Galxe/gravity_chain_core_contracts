@@ -24,16 +24,22 @@ interface IBlockchainEventRouter is IOracleCallback {
     event HandlerUnregistered(address indexed sender);
 
     /// @notice Emitted when a message is successfully routed to a handler
-    /// @param dataHash The hash of the original payload
+    /// @param sourceType The source type from NativeOracle
+    /// @param sourceId The source identifier (chain ID)
+    /// @param nonce The oracle nonce
     /// @param sender The sender address from the payload
     /// @param handler The handler that processed the message
-    event MessageRouted(bytes32 indexed dataHash, address indexed sender, address indexed handler);
+    event MessageRouted(
+        uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address sender, address indexed handler
+    );
 
     /// @notice Emitted when routing fails (handler not found or handler reverted)
-    /// @param dataHash The hash of the original payload
+    /// @param sourceType The source type from NativeOracle
+    /// @param sourceId The source identifier (chain ID)
+    /// @param nonce The oracle nonce
     /// @param sender The sender address from the payload
     /// @param reason The failure reason
-    event RoutingFailed(bytes32 indexed dataHash, address indexed sender, bytes reason);
+    event RoutingFailed(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address sender, bytes reason);
 
     // ========================================================================
     // ERRORS
@@ -65,17 +71,12 @@ interface IBlockchainEventRouter is IOracleCallback {
     /// @dev Only callable by GOVERNANCE
     /// @param sender The sender address on the source chain (e.g., GTokenBridge on Ethereum)
     /// @param handler The handler contract address on Gravity
-    function registerHandler(
-        address sender,
-        address handler
-    ) external;
+    function registerHandler(address sender, address handler) external;
 
     /// @notice Unregister a handler for a sender address
     /// @dev Only callable by GOVERNANCE
     /// @param sender The sender address to unregister
-    function unregisterHandler(
-        address sender
-    ) external;
+    function unregisterHandler(address sender) external;
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -84,9 +85,7 @@ interface IBlockchainEventRouter is IOracleCallback {
     /// @notice Get the handler for a sender address
     /// @param sender The sender address
     /// @return handler The handler contract address (address(0) if not registered)
-    function getHandler(
-        address sender
-    ) external view returns (address handler);
+    function getHandler(address sender) external view returns (address handler);
 
     /// @notice Check if the router is initialized
     /// @return True if initialized
@@ -100,15 +99,18 @@ interface IBlockchainEventRouter is IOracleCallback {
 interface IMessageHandler {
     /// @notice Handle a routed message from BlockchainEventRouter
     /// @dev Only BlockchainEventRouter should call this
-    /// @param dataHash The hash of the original payload
+    /// @param sourceType The source type from NativeOracle
+    /// @param sourceId The source identifier (chain ID)
+    /// @param oracleNonce The oracle nonce for this record
     /// @param sender The sender address on the source chain
-    /// @param nonce The message nonce from the source chain
+    /// @param eventNonce The message nonce from the source chain
     /// @param message The message body (application-specific encoding)
     function handleMessage(
-        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 oracleNonce,
         address sender,
-        uint256 nonce,
+        uint256 eventNonce,
         bytes calldata message
     ) external;
 }
-

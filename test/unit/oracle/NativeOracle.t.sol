@@ -10,14 +10,18 @@ import { Errors } from "../../../src/foundation/Errors.sol";
 /// @title MockOracleCallback
 /// @notice Mock callback handler for testing
 contract MockOracleCallback is IOracleCallback {
-    bytes32 public lastDataHash;
+    uint32 public lastSourceType;
+    uint256 public lastSourceId;
+    uint128 public lastNonce;
     bytes public lastPayload;
     uint256 public callCount;
     bool public shouldRevert;
     bool public shouldConsumeAllGas;
 
     function onOracleEvent(
-        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
         bytes calldata payload
     ) external override {
         if (shouldRevert) {
@@ -28,20 +32,18 @@ contract MockOracleCallback is IOracleCallback {
             while (true) { }
         }
 
-        lastDataHash = dataHash;
+        lastSourceType = sourceType;
+        lastSourceId = sourceId;
+        lastNonce = nonce;
         lastPayload = payload;
         callCount++;
     }
 
-    function setRevert(
-        bool _shouldRevert
-    ) external {
+    function setRevert(bool _shouldRevert) external {
         shouldRevert = _shouldRevert;
     }
 
-    function setConsumeAllGas(
-        bool _shouldConsumeAllGas
-    ) external {
+    function setConsumeAllGas(bool _shouldConsumeAllGas) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
     }
 }
@@ -54,7 +56,6 @@ contract NativeOracleTest is Test {
 
     // Test addresses
     address public systemCaller;
-    address public genesis;
     address public governance;
     address public alice;
     address public bob;
@@ -64,11 +65,11 @@ contract NativeOracleTest is Test {
     uint32 public constant SOURCE_TYPE_JWK = 1;
     uint256 public constant ETHEREUM_SOURCE_ID = 1; // Ethereum chain ID
     uint256 public constant GOOGLE_JWK_SOURCE_ID = 1; // Google JWK provider
+    uint256 public constant CALLBACK_GAS_LIMIT = 500_000;
 
     function setUp() public {
         // Set up addresses
         systemCaller = SystemAddresses.SYSTEM_CALLER;
-        genesis = SystemAddresses.GENESIS;
         governance = SystemAddresses.GOVERNANCE;
         alice = makeAddr("alice");
         bob = makeAddr("bob");
@@ -78,240 +79,129 @@ contract NativeOracleTest is Test {
 
         // Deploy mock callback
         mockCallback = new MockOracleCallback();
-
-        // Initialize oracle
-        vm.prank(genesis);
-        oracle.initialize();
     }
 
     // ========================================================================
-    // INITIALIZATION TESTS
+    // RECORD TESTS
     // ========================================================================
 
-    function test_Initialize() public view {
-        assertTrue(oracle.isInitialized());
-        assertEq(oracle.getTotalRecords(), 0);
-    }
-
-    function test_Initialize_RevertWhenNotGenesis() public {
-        NativeOracle newOracle = new NativeOracle();
-
-        vm.expectRevert();
-        vm.prank(alice);
-        newOracle.initialize();
-    }
-
-    function test_Initialize_RevertWhenAlreadyInitialized() public {
-        vm.expectRevert(Errors.AlreadyInitialized.selector);
-        vm.prank(genesis);
-        oracle.initialize();
-    }
-
-    // ========================================================================
-    // RECORD HASH TESTS
-    // ========================================================================
-
-    function test_RecordHash() public {
+    function test_Record() public {
         bytes memory payload = abi.encode(alice, uint256(100), "deposit");
-        bytes32 dataHash = keccak256(payload);
-        uint128 syncId = 1000;
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        // Verify record exists (syncId > 0 means exists)
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
-        assertEq(record.syncId, syncId);
-        assertEq(record.data.length, 0); // Hash mode doesn't store data
+        // Verify record exists (recordedAt > 0 means exists)
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+        assertEq(record.data, payload);
 
-        // Verify sync status
-        INativeOracle.SyncStatus memory status = oracle.getSyncStatus(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
-        assertTrue(status.initialized);
-        assertEq(status.latestSyncId, syncId);
-
-        // Verify total records
-        assertEq(oracle.getTotalRecords(), 1);
+        // Verify latest nonce
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), nonce);
     }
 
-    function test_RecordHash_RevertWhenNotSystemCaller() public {
+    function test_Record_RevertWhenNotSystemCaller() public {
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
 
         vm.expectRevert();
         vm.prank(alice);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
     }
 
-    function test_RecordHash_RevertWhenNotInitialized() public {
-        NativeOracle newOracle = new NativeOracle();
-        bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
-
-        vm.expectRevert(Errors.OracleNotInitialized.selector);
-        vm.prank(systemCaller);
-        newOracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
-    }
-
-    function test_RecordHash_RevertWhenSyncIdIsZero() public {
+    function test_Record_RevertWhenNonceIsZero() public {
         bytes memory payload = abi.encode("first");
-        bytes32 dataHash = keccak256(payload);
 
-        // Try to record with syncId = 0 (latestSyncId starts at 0, so syncId must be > 0)
+        // Try to record with nonce = 0 (latestNonce starts at 0, so nonce must be > 0)
         vm.expectRevert(
-            abi.encodeWithSelector(
-                Errors.SyncIdNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, 0
-            )
+            abi.encodeWithSelector(Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, 0)
         );
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
-    function test_RecordHash_RevertWhenSyncIdNotIncreasing() public {
+    function test_Record_RevertWhenNonceNotIncreasing() public {
         bytes memory payload1 = abi.encode("first");
-        bytes32 dataHash1 = keccak256(payload1);
 
-        // Record first hash
+        // Record first
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash1, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1, CALLBACK_GAS_LIMIT);
 
-        // Try to record with same syncId
+        // Try to record with same nonce
         bytes memory payload2 = abi.encode("second");
-        bytes32 dataHash2 = keccak256(payload2);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                Errors.SyncIdNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 1000
+                Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 1000
             )
         );
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash2, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload2);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload2, CALLBACK_GAS_LIMIT);
 
-        // Try to record with lower syncId
+        // Try to record with lower nonce
         vm.expectRevert(
             abi.encodeWithSelector(
-                Errors.SyncIdNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 500
+                Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 500
             )
         );
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash2, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500, payload2);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500, payload2, CALLBACK_GAS_LIMIT);
     }
 
-    function test_RecordHash_MultipleSourcesIndependent() public {
+    function test_Record_MultipleSourcesIndependent() public {
         bytes memory payload1 = abi.encode("ethereum event");
-        bytes32 dataHash1 = keccak256(payload1);
-
         bytes memory payload2 = abi.encode("google jwk");
-        bytes32 dataHash2 = keccak256(payload2);
 
         // Record to ethereum source
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash1, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1, CALLBACK_GAS_LIMIT);
 
-        // Record to google source with lower syncId (allowed because different source)
+        // Record to google source with lower nonce (allowed because different source)
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash2, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 500, payload2);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 500, payload2, CALLBACK_GAS_LIMIT);
 
         // Verify both sources
-        INativeOracle.SyncStatus memory ethStatus = oracle.getSyncStatus(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
-        INativeOracle.SyncStatus memory googleStatus = oracle.getSyncStatus(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID);
-
-        assertEq(ethStatus.latestSyncId, 1000);
-        assertEq(googleStatus.latestSyncId, 500);
-    }
-
-    // ========================================================================
-    // RECORD DATA TESTS
-    // ========================================================================
-
-    function test_RecordData() public {
-        bytes memory payload = abi.encode("kid123", "RS256", "n_value", "e_value");
-        bytes32 dataHash = keccak256(payload);
-        uint128 syncId = 1704067200; // timestamp
-
-        vm.prank(systemCaller);
-        oracle.recordData(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, syncId, payload);
-
-        // Verify record exists with data (syncId > 0 means exists)
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
-        assertEq(record.syncId, syncId);
-        assertEq(record.data, payload); // Data mode stores full payload
-
-        // Verify getData
-        bytes memory storedData = oracle.getData(dataHash);
-        assertEq(storedData, payload);
-    }
-
-    function test_RecordData_RevertWhenNotSystemCaller() public {
-        bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
-
-        vm.expectRevert();
-        vm.prank(alice);
-        oracle.recordData(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 1000, payload);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1000);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), 500);
     }
 
     // ========================================================================
     // BATCH RECORDING TESTS
     // ========================================================================
 
-    function test_RecordHashBatch() public {
-        bytes32[] memory hashes = new bytes32[](3);
+    function test_RecordBatch() public {
         bytes[] memory payloads = new bytes[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             payloads[i] = abi.encode("event", i);
-            hashes[i] = keccak256(payloads[i]);
         }
 
-        uint128 syncId = 2000;
+        uint128 nonce = 2000;
 
         vm.prank(systemCaller);
-        oracle.recordHashBatch(hashes, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payloads);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payloads, CALLBACK_GAS_LIMIT);
 
-        // Verify all records (syncId > 0 means exists)
+        // Verify all records exist (recordedAt > 0 means exists)
         for (uint256 i = 0; i < 3; i++) {
-            INativeOracle.DataRecord memory record = oracle.verifyHash(hashes[i]);
-            assertTrue(record.syncId > 0);
+            uint128 currentNonce = nonce + uint128(i);
+            INativeOracle.DataRecord memory record =
+                oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, currentNonce);
+            assertTrue(record.recordedAt > 0);
+            assertEq(record.data, payloads[i]);
         }
 
-        // Verify total records
-        assertEq(oracle.getTotalRecords(), 3);
-
-        // Verify sync status updated only once
-        INativeOracle.SyncStatus memory status = oracle.getSyncStatus(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
-        assertEq(status.latestSyncId, syncId);
+        // Verify latest nonce is the final nonce
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), nonce + 2);
     }
 
-    function test_RecordHashBatch_RevertWhenArrayLengthMismatch() public {
-        bytes32[] memory hashes = new bytes32[](3);
-        bytes[] memory payloads = new bytes[](2); // Different length
-
-        vm.expectRevert(abi.encodeWithSelector(Errors.ArrayLengthMismatch.selector, 3, 2));
-        vm.prank(systemCaller);
-        oracle.recordHashBatch(hashes, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payloads);
-    }
-
-    function test_RecordDataBatch() public {
-        bytes32[] memory hashes = new bytes32[](2);
-        bytes[] memory payloads = new bytes[](2);
-
-        payloads[0] = abi.encode("jwk1", "data1");
-        hashes[0] = keccak256(payloads[0]);
-        payloads[1] = abi.encode("jwk2", "data2");
-        hashes[1] = keccak256(payloads[1]);
-
-        uint128 syncId = 3000;
+    function test_RecordBatch_EmptyPayloads() public {
+        bytes[] memory payloads = new bytes[](0);
 
         vm.prank(systemCaller);
-        oracle.recordDataBatch(hashes, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, syncId, payloads);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payloads, CALLBACK_GAS_LIMIT);
 
-        // Verify data stored correctly
-        assertEq(oracle.getData(hashes[0]), payloads[0]);
-        assertEq(oracle.getData(hashes[1]), payloads[1]);
-
-        assertEq(oracle.getTotalRecords(), 2);
+        // Nothing should be recorded
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
     }
 
     // ========================================================================
@@ -401,17 +291,35 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
-        // Record hash
+        // Record
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
         // Verify callback was invoked
         assertEq(mockCallback.callCount(), 1);
-        assertEq(mockCallback.lastDataHash(), dataHash);
+        assertEq(mockCallback.lastSourceType(), SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(mockCallback.lastSourceId(), ETHEREUM_SOURCE_ID);
+        assertEq(mockCallback.lastNonce(), nonce);
         assertEq(mockCallback.lastPayload(), payload);
+    }
+
+    function test_CallbackNotInvokedWhenGasLimitZero() public {
+        // Register callback
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
+
+        // Record with zero gas limit
+        bytes memory payload = abi.encode(alice, uint256(100));
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, 0);
+
+        // Verify callback was NOT invoked
+        assertEq(mockCallback.callCount(), 0);
     }
 
     function test_DefaultCallbackInvoked() public {
@@ -419,16 +327,18 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
 
-        // Record hash (no specialized callback set)
+        // Record (no specialized callback set)
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
         // Verify default callback was invoked
         assertEq(mockCallback.callCount(), 1);
-        assertEq(mockCallback.lastDataHash(), dataHash);
+        assertEq(mockCallback.lastSourceType(), SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(mockCallback.lastSourceId(), ETHEREUM_SOURCE_ID);
+        assertEq(mockCallback.lastNonce(), nonce);
         assertEq(mockCallback.lastPayload(), payload);
     }
 
@@ -444,12 +354,11 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(specializedCallback));
 
-        // Record hash
+        // Record
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
 
         // Specialized callback should be invoked, not default
         assertEq(specializedCallback.callCount(), 1);
@@ -469,24 +378,22 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(specializedCallback));
 
-        // Record hash for Arbitrum (should use default)
+        // Record for Arbitrum (should use default)
         bytes memory payload1 = abi.encode("arbitrum event");
-        bytes32 dataHash1 = keccak256(payload1);
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash1, SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId, 1000, payload1);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId, 1000, payload1, CALLBACK_GAS_LIMIT);
 
-        // Record hash for Ethereum (should use specialized)
+        // Record for Ethereum (should use specialized)
         bytes memory payload2 = abi.encode("ethereum event");
-        bytes32 dataHash2 = keccak256(payload2);
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash2, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payload2);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payload2, CALLBACK_GAS_LIMIT);
 
         // Verify correct callbacks were invoked
         assertEq(defaultCallback.callCount(), 1);
-        assertEq(defaultCallback.lastDataHash(), dataHash1);
+        assertEq(defaultCallback.lastSourceId(), arbitrumSourceId);
 
         assertEq(specializedCallback.callCount(), 1);
-        assertEq(specializedCallback.lastDataHash(), dataHash2);
+        assertEq(specializedCallback.lastSourceId(), ETHEREUM_SOURCE_ID);
     }
 
     function test_CallbackFailureDoesNotRevert() public {
@@ -495,16 +402,16 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
-        // Record hash - should NOT revert even though callback fails
+        // Record - should NOT revert even though callback fails
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        // Record should still exist (syncId > 0 means exists)
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
+        // Record should still exist (recordedAt > 0 means exists)
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
 
         // Callback was not successfully called
         assertEq(mockCallback.callCount(), 0);
@@ -516,16 +423,16 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
-        // Record hash - should NOT revert even though callback runs out of gas
+        // Record - should NOT revert even though callback runs out of gas
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        // Record should still exist (syncId > 0 means exists)
-        INativeOracle.DataRecord memory record2 = oracle.verifyHash(dataHash);
-        assertTrue(record2.syncId > 0);
+        // Record should still exist (recordedAt > 0 means exists)
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
     }
 
     function test_CallbackInvokedForBatch() public {
@@ -534,55 +441,69 @@ contract NativeOracleTest is Test {
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
         // Record batch
-        bytes32[] memory hashes = new bytes32[](3);
         bytes[] memory payloads = new bytes[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             payloads[i] = abi.encode("event", i);
-            hashes[i] = keccak256(payloads[i]);
         }
 
         vm.prank(systemCaller);
-        oracle.recordHashBatch(hashes, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payloads);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payloads, CALLBACK_GAS_LIMIT);
 
         // Callback should be invoked 3 times
         assertEq(mockCallback.callCount(), 3);
     }
 
-    // ========================================================================
-    // VERIFICATION TESTS
-    // ========================================================================
+    function test_CallbackNotInvokedForBatchWhenGasLimitZero() public {
+        // Register callback
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
-    function test_VerifyPreImage() public {
-        bytes memory payload = abi.encode(alice, uint256(100), "deposit");
-        bytes32 dataHash = keccak256(payload);
+        // Record batch with zero gas limit
+        bytes[] memory payloads = new bytes[](3);
+
+        for (uint256 i = 0; i < 3; i++) {
+            payloads[i] = abi.encode("event", i);
+        }
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payloads, 0);
 
-        // Verify using pre-image (syncId > 0 means exists)
-        INativeOracle.DataRecord memory record = oracle.verifyPreImage(payload);
-        assertTrue(record.syncId > 0);
-        assertEq(record.syncId, 1000);
+        // Callback should NOT be invoked
+        assertEq(mockCallback.callCount(), 0);
     }
 
-    function test_VerifyPreImage_NotFound() public {
-        bytes memory payload = abi.encode("unrecorded");
+    // ========================================================================
+    // QUERY TESTS
+    // ========================================================================
 
-        INativeOracle.DataRecord memory record = oracle.verifyPreImage(payload);
-        assertEq(record.syncId, 0); // Not found
+    function test_GetRecord() public {
+        bytes memory payload = abi.encode(alice, uint256(100), "deposit");
+        uint128 nonce = 1000;
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+
+        // Get record
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+        assertEq(record.data, payload);
+    }
+
+    function test_GetRecord_NotFound() public view {
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 999);
+        assertEq(record.recordedAt, 0); // Not found
     }
 
     function test_IsSyncedPast() public {
         bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
 
         // Before recording, not synced
         assertFalse(oracle.isSyncedPast(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500));
 
-        // Record at syncId 1000
+        // Record at nonce 1000
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
 
         // Now synced past 500 and 1000
         assertTrue(oracle.isSyncedPast(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500));
@@ -592,174 +513,67 @@ contract NativeOracleTest is Test {
         assertFalse(oracle.isSyncedPast(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1001));
     }
 
-    function test_GetData_EmptyForHashMode() public {
-        bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
-
-        vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
-
-        // getData returns empty for hash-only mode
-        bytes memory data = oracle.getData(dataHash);
-        assertEq(data.length, 0);
-    }
-
-    function test_GetData_NotFound() public {
-        bytes memory data = oracle.getData(keccak256("nonexistent"));
-        assertEq(data.length, 0);
-    }
-
-    // ========================================================================
-    // HELPER FUNCTION TESTS
-    // ========================================================================
-
-    function test_ComputeSourceName() public view {
-        bytes32 sourceName = oracle.computeSourceName(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
-        bytes32 expected = keccak256(abi.encode(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID));
-        assertEq(sourceName, expected);
-    }
-
-    function test_ComputeSourceName_DifferentTypesProduceDifferentNames() public view {
-        bytes32 blockchainSource = oracle.computeSourceName(SOURCE_TYPE_BLOCKCHAIN, 1);
-        bytes32 jwkSource = oracle.computeSourceName(SOURCE_TYPE_JWK, 1);
-
-        assertTrue(blockchainSource != jwkSource);
-    }
-
     // ========================================================================
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_RecordHash(
-        bytes memory payload,
-        uint128 syncId
-    ) public {
-        vm.assume(syncId > 0);
-        bytes32 dataHash = keccak256(payload);
+    function testFuzz_Record(bytes memory payload, uint128 nonce) public {
+        vm.assume(nonce > 0);
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
-        assertEq(record.syncId, syncId);
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
+        assertEq(record.data, payload);
     }
 
-    function testFuzz_RecordData(
-        bytes memory payload,
-        uint128 syncId
-    ) public {
-        vm.assume(syncId > 0);
-        vm.assume(payload.length <= 10000); // Reasonable size limit
-        bytes32 dataHash = keccak256(payload);
-
-        vm.prank(systemCaller);
-        oracle.recordData(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, syncId, payload);
-
-        bytes memory storedData = oracle.getData(dataHash);
-        assertEq(storedData, payload);
-    }
-
-    function testFuzz_SyncIdMustIncrease(
-        uint128 syncId1,
-        uint128 syncId2
-    ) public {
-        vm.assume(syncId1 > 0);
-        vm.assume(syncId2 <= syncId1);
+    function testFuzz_NonceMustIncrease(uint128 nonce1, uint128 nonce2) public {
+        vm.assume(nonce1 > 0);
+        vm.assume(nonce2 <= nonce1);
 
         bytes memory payload1 = abi.encode("first");
-        bytes32 dataHash1 = keccak256(payload1);
 
         // First record succeeds
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash1, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId1, payload1);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce1, payload1, CALLBACK_GAS_LIMIT);
 
-        // Second record with non-increasing syncId fails
+        // Second record with non-increasing nonce fails
         bytes memory payload2 = abi.encode("second");
-        bytes32 dataHash2 = keccak256(payload2);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                Errors.SyncIdNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId1, syncId2
+                Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce1, nonce2
             )
         );
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash2, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId2, payload2);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce2, payload2, CALLBACK_GAS_LIMIT);
     }
 
-    function testFuzz_MultipleRecordsCount(
-        uint8 count
-    ) public {
-        vm.assume(count > 0 && count <= 50);
-
-        for (uint256 i = 0; i < count; i++) {
-            bytes memory payload = abi.encode("record", i);
-            bytes32 dataHash = keccak256(payload);
-            uint128 syncId = uint128(1000 + i);
-
-            vm.prank(systemCaller);
-            oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
-        }
-
-        assertEq(oracle.getTotalRecords(), count);
-    }
-
-    function testFuzz_SourceTypeAndId(
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 syncId
-    ) public {
-        vm.assume(syncId > 0);
+    function testFuzz_SourceTypeAndId(uint32 sourceType, uint256 sourceId, uint128 nonce) public {
+        vm.assume(nonce > 0);
 
         bytes memory payload = abi.encode("test", sourceType, sourceId);
-        bytes32 dataHash = keccak256(payload);
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, sourceType, sourceId, syncId, payload);
+        oracle.record(sourceType, sourceId, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        INativeOracle.SyncStatus memory status = oracle.getSyncStatus(sourceType, sourceId);
-        assertTrue(status.initialized);
-        assertEq(status.latestSyncId, syncId);
+        assertEq(oracle.getLatestNonce(sourceType, sourceId), nonce);
     }
 
     // ========================================================================
     // EVENT TESTS
     // ========================================================================
 
-    function test_Events_HashRecorded() public {
-        bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
-        uint128 syncId = 1000;
-
-        vm.expectEmit(true, true, true, true);
-        emit INativeOracle.HashRecorded(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId);
-
-        vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
-    }
-
     function test_Events_DataRecorded() public {
-        bytes memory payload = abi.encode("jwk_data");
-        bytes32 dataHash = keccak256(payload);
-        uint128 syncId = 2000;
+        bytes memory payload = abi.encode(alice, uint256(100));
+        uint128 nonce = 1000;
 
         vm.expectEmit(true, true, true, true);
-        emit INativeOracle.DataRecorded(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, syncId, payload.length);
+        emit INativeOracle.DataRecorded(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload.length);
 
         vm.prank(systemCaller);
-        oracle.recordData(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, syncId, payload);
-    }
-
-    function test_Events_SyncStatusUpdated() public {
-        bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
-        uint128 syncId = 1000;
-
-        vm.expectEmit(true, true, false, true);
-        emit INativeOracle.SyncStatusUpdated(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, syncId);
-
-        vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, syncId, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_DefaultCallbackSet() public {
@@ -783,13 +597,13 @@ contract NativeOracleTest is Test {
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.expectEmit(true, true, false, true);
-        emit INativeOracle.CallbackSuccess(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, dataHash, address(mockCallback));
+        emit INativeOracle.CallbackSuccess(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, address(mockCallback));
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_CallbackFailed() public {
@@ -798,11 +612,11 @@ contract NativeOracleTest is Test {
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
         bytes memory payload = abi.encode(alice, uint256(100));
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         // CallbackFailed event should be emitted
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
         // Can't easily test the exact event due to dynamic reason bytes,
         // but we verified the record exists and callback count is 0 in earlier test
     }
@@ -811,37 +625,15 @@ contract NativeOracleTest is Test {
     // EDGE CASE TESTS
     // ========================================================================
 
-    function test_RecordSameHashTwice() public {
-        bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
-
-        // Record once
-        vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
-        assertEq(oracle.getTotalRecords(), 1);
-
-        // Record same hash again with higher syncId
-        vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payload);
-
-        // Total records should still be 1 (update, not new record)
-        assertEq(oracle.getTotalRecords(), 1);
-
-        // SyncId should be updated
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
-        assertEq(record.syncId, 2000);
-    }
-
     function test_EmptyPayload() public {
         bytes memory payload = "";
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertTrue(record.syncId > 0);
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
+        assertTrue(record.recordedAt > 0);
     }
 
     function test_LargePayload() public {
@@ -850,24 +642,23 @@ contract NativeOracleTest is Test {
         for (uint256 i = 0; i < 1024; i++) {
             payload[i] = bytes1(uint8(i % 256));
         }
-        bytes32 dataHash = keccak256(payload);
+        uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.recordData(dataHash, SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 1000, payload);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
 
-        bytes memory storedData = oracle.getData(dataHash);
-        assertEq(storedData, payload);
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce);
+        assertEq(record.data, payload);
     }
 
-    function test_SyncIdMustStartFromOne() public {
+    function test_NonceMustStartFromOne() public {
         bytes memory payload = abi.encode("test");
-        bytes32 dataHash = keccak256(payload);
 
-        // SyncId = 1 should work
+        // Nonce = 1 should work
         vm.prank(systemCaller);
-        oracle.recordHash(dataHash, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, payload);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, payload, CALLBACK_GAS_LIMIT);
 
-        INativeOracle.DataRecord memory record = oracle.verifyHash(dataHash);
-        assertEq(record.syncId, 1);
+        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1);
+        assertTrue(record.recordedAt > 0);
     }
 }

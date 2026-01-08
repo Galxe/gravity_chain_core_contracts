@@ -10,18 +10,22 @@ import { Errors } from "@src/foundation/Errors.sol";
 /// @title MockMessageHandler
 /// @notice Mock handler for testing
 contract MockMessageHandler is IMessageHandler {
-    bytes32 public lastDataHash;
+    uint32 public lastSourceType;
+    uint256 public lastSourceId;
+    uint128 public lastOracleNonce;
     address public lastSender;
-    uint256 public lastNonce;
+    uint256 public lastEventNonce;
     bytes public lastMessage;
     uint256 public callCount;
     bool public shouldRevert;
     bool public shouldConsumeAllGas;
 
     function handleMessage(
-        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 oracleNonce,
         address sender,
-        uint256 nonce,
+        uint256 eventNonce,
         bytes calldata message
     ) external override {
         if (shouldRevert) {
@@ -31,22 +35,20 @@ contract MockMessageHandler is IMessageHandler {
             while (true) { }
         }
 
-        lastDataHash = dataHash;
+        lastSourceType = sourceType;
+        lastSourceId = sourceId;
+        lastOracleNonce = oracleNonce;
         lastSender = sender;
-        lastNonce = nonce;
+        lastEventNonce = eventNonce;
         lastMessage = message;
         callCount++;
     }
 
-    function setRevert(
-        bool _shouldRevert
-    ) external {
+    function setRevert(bool _shouldRevert) external {
         shouldRevert = _shouldRevert;
     }
 
-    function setConsumeAllGas(
-        bool _shouldConsumeAllGas
-    ) external {
+    function setConsumeAllGas(bool _shouldConsumeAllGas) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
     }
 }
@@ -62,6 +64,9 @@ contract BlockchainEventRouterTest is Test {
     address public nativeOracle;
     address public gTokenBridge;
     address public alice;
+
+    uint32 public constant SOURCE_TYPE_BLOCKCHAIN = 0;
+    uint256 public constant ETHEREUM_SOURCE_ID = 1;
 
     function setUp() public {
         genesis = SystemAddresses.GENESIS;
@@ -159,39 +164,45 @@ contract BlockchainEventRouterTest is Test {
         vm.prank(governance);
         router.registerHandler(gTokenBridge, address(mockHandler));
 
-        // Create payload: (sender, nonce, message)
+        // Create payload: (sender, eventNonce, message)
         bytes memory message = abi.encode(uint256(100), alice);
         bytes memory payload = abi.encode(gTokenBridge, uint256(42), message);
-        bytes32 dataHash = keccak256(payload);
+        uint128 oracleNonce = 1000;
 
         // Call from NativeOracle
         vm.prank(nativeOracle);
         vm.expectEmit(true, true, true, true);
-        emit IBlockchainEventRouter.MessageRouted(dataHash, gTokenBridge, address(mockHandler));
-        router.onOracleEvent(dataHash, payload);
+        emit IBlockchainEventRouter.MessageRouted(
+            SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, gTokenBridge, address(mockHandler)
+        );
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
         // Verify handler received the message
-        assertEq(mockHandler.lastDataHash(), dataHash);
+        assertEq(mockHandler.lastSourceType(), SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(mockHandler.lastSourceId(), ETHEREUM_SOURCE_ID);
+        assertEq(mockHandler.lastOracleNonce(), oracleNonce);
         assertEq(mockHandler.lastSender(), gTokenBridge);
-        assertEq(mockHandler.lastNonce(), 42);
+        assertEq(mockHandler.lastEventNonce(), 42);
         assertEq(mockHandler.callCount(), 1);
     }
 
     function test_OnOracleEvent_RevertWhenNotOracle() public {
         vm.prank(alice);
         vm.expectRevert(IBlockchainEventRouter.OnlyNativeOracle.selector);
-        router.onOracleEvent(bytes32(0), hex"");
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, hex"");
     }
 
     function test_OnOracleEvent_NoHandlerRegistered() public {
         // Don't register any handler
         bytes memory payload = abi.encode(gTokenBridge, uint256(42), hex"1234");
-        bytes32 dataHash = keccak256(payload);
+        uint128 oracleNonce = 1000;
 
         vm.prank(nativeOracle);
         vm.expectEmit(true, true, true, false);
-        emit IBlockchainEventRouter.RoutingFailed(dataHash, gTokenBridge, abi.encodePacked("No handler registered"));
-        router.onOracleEvent(dataHash, payload);
+        emit IBlockchainEventRouter.RoutingFailed(
+            SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, gTokenBridge, abi.encodePacked("No handler registered")
+        );
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
     }
 
     function test_OnOracleEvent_HandlerReverts() public {
@@ -201,13 +212,13 @@ contract BlockchainEventRouterTest is Test {
         mockHandler.setRevert(true);
 
         bytes memory payload = abi.encode(gTokenBridge, uint256(42), hex"1234");
-        bytes32 dataHash = keccak256(payload);
+        uint128 oracleNonce = 1000;
 
         // Should emit RoutingFailed but not revert
         vm.prank(nativeOracle);
-        vm.expectEmit(true, true, false, false);
-        emit IBlockchainEventRouter.RoutingFailed(dataHash, gTokenBridge, hex"");
-        router.onOracleEvent(dataHash, payload);
+        vm.expectEmit(true, true, true, false);
+        emit IBlockchainEventRouter.RoutingFailed(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, gTokenBridge, hex"");
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
         // Handler was not successfully called
         assertEq(mockHandler.callCount(), 0);
@@ -220,13 +231,13 @@ contract BlockchainEventRouterTest is Test {
         mockHandler.setConsumeAllGas(true);
 
         bytes memory payload = abi.encode(gTokenBridge, uint256(42), hex"1234");
-        bytes32 dataHash = keccak256(payload);
+        uint128 oracleNonce = 1000;
 
         // Should emit RoutingFailed but not revert
         vm.prank(nativeOracle);
-        vm.expectEmit(true, true, false, false);
-        emit IBlockchainEventRouter.RoutingFailed(dataHash, gTokenBridge, hex"");
-        router.onOracleEvent(dataHash, payload);
+        vm.expectEmit(true, true, true, false);
+        emit IBlockchainEventRouter.RoutingFailed(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, gTokenBridge, hex"");
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
     }
 
     function test_OnOracleEvent_RevertWhenNotInitialized() public {
@@ -234,17 +245,14 @@ contract BlockchainEventRouterTest is Test {
 
         vm.prank(nativeOracle);
         vm.expectRevert(IBlockchainEventRouter.RouterNotInitialized.selector);
-        newRouter.onOracleEvent(bytes32(0), hex"");
+        newRouter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, hex"");
     }
 
     // ========================================================================
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_RegisterMultipleHandlers(
-        address[5] calldata senders,
-        address[5] calldata handlers
-    ) public {
+    function testFuzz_RegisterMultipleHandlers(address[5] calldata senders, address[5] calldata handlers) public {
         for (uint256 i = 0; i < 5; i++) {
             if (handlers[i] != address(0)) {
                 vm.prank(governance);
@@ -254,24 +262,19 @@ contract BlockchainEventRouterTest is Test {
         }
     }
 
-    function testFuzz_OnOracleEvent(
-        address sender,
-        uint256 nonce,
-        bytes calldata message
-    ) public {
+    function testFuzz_OnOracleEvent(address sender, uint256 eventNonce, bytes calldata message) public {
         // Register handler
         vm.prank(governance);
         router.registerHandler(sender, address(mockHandler));
 
-        bytes memory payload = abi.encode(sender, nonce, message);
-        bytes32 dataHash = keccak256(payload);
+        bytes memory payload = abi.encode(sender, eventNonce, message);
+        uint128 oracleNonce = 1000;
 
         vm.prank(nativeOracle);
-        router.onOracleEvent(dataHash, payload);
+        router.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
         assertEq(mockHandler.lastSender(), sender);
-        assertEq(mockHandler.lastNonce(), nonce);
+        assertEq(mockHandler.lastEventNonce(), eventNonce);
         assertEq(mockHandler.callCount(), 1);
     }
 }
-

@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import { INativeTokenMinter, INativeMintPrecompile } from "./INativeTokenMinter.sol";
-import { IMessageHandler } from "../IBlockchainEventRouter.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
 import { requireAllowed } from "@src/foundation/SystemAccessControl.sol";
 import { Errors } from "@src/foundation/Errors.sol";
@@ -45,9 +44,7 @@ contract NativeTokenMinter is INativeTokenMinter {
 
     /// @notice Deploy the NativeTokenMinter
     /// @param trustedBridge_ The trusted GTokenBridge address on Ethereum
-    constructor(
-        address trustedBridge_
-    ) {
+    constructor(address trustedBridge_) {
         trustedBridge = trustedBridge_;
     }
 
@@ -84,16 +81,23 @@ contract NativeTokenMinter is INativeTokenMinter {
 
     /// @notice Handle a routed message from BlockchainEventRouter
     /// @dev Only callable by BlockchainEventRouter
-    /// @param dataHash The hash of the original payload
+    /// @param sourceType The source type from NativeOracle
+    /// @param sourceId The source identifier (chain ID)
+    /// @param oracleNonce The oracle nonce for this record
     /// @param sender The sender address on Ethereum (must be trusted bridge)
-    /// @param nonce The message nonce
+    /// @param eventNonce The message nonce from the source chain
     /// @param message The message body: abi.encode(amount, recipient)
     function handleMessage(
-        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 oracleNonce,
         address sender,
-        uint256 nonce,
+        uint256 eventNonce,
         bytes calldata message
     ) external whenInitialized {
+        // Silence unused variable warnings - these are for future extensibility
+        (sourceType, sourceId, oracleNonce);
+
         // Only BlockchainEventRouter can call this
         if (msg.sender != SystemAddresses.BLOCKCHAIN_EVENT_ROUTER) {
             revert OnlyRouter();
@@ -101,29 +105,29 @@ contract NativeTokenMinter is INativeTokenMinter {
 
         // Verify sender is the trusted bridge (defense in depth)
         if (sender != trustedBridge) {
-            emit MintFailed(dataHash, nonce, abi.encodePacked("Invalid sender"));
+            emit MintFailed(eventNonce, abi.encodePacked("Invalid sender"));
             revert InvalidSender(sender, trustedBridge);
         }
 
         // Check for replay
-        if (_processedNonces[nonce]) {
-            emit MintFailed(dataHash, nonce, abi.encodePacked("Already processed"));
-            revert AlreadyProcessed(nonce);
+        if (_processedNonces[eventNonce]) {
+            emit MintFailed(eventNonce, abi.encodePacked("Already processed"));
+            revert AlreadyProcessed(eventNonce);
         }
 
         // Decode message: (amount, recipient)
         (uint256 amount, address recipient) = abi.decode(message, (uint256, address));
 
         // Mark nonce as processed BEFORE minting (CEI pattern)
-        _processedNonces[nonce] = true;
+        _processedNonces[eventNonce] = true;
 
         // Mint native tokens via precompile
         try INativeMintPrecompile(NATIVE_MINT_PRECOMPILE).mint(recipient, amount) {
-            emit NativeMinted(recipient, amount, nonce);
+            emit NativeMinted(recipient, amount, eventNonce);
         } catch (bytes memory reason) {
             // Revert the nonce marking if mint failed
-            _processedNonces[nonce] = false;
-            emit MintFailed(dataHash, nonce, reason);
+            _processedNonces[eventNonce] = false;
+            emit MintFailed(eventNonce, reason);
             revert MintPrecompileFailed();
         }
     }
@@ -133,9 +137,7 @@ contract NativeTokenMinter is INativeTokenMinter {
     // ========================================================================
 
     /// @inheritdoc INativeTokenMinter
-    function isProcessed(
-        uint256 nonce
-    ) external view returns (bool) {
+    function isProcessed(uint256 nonce) external view returns (bool) {
         return _processedNonces[nonce];
     }
 
@@ -144,4 +146,3 @@ contract NativeTokenMinter is INativeTokenMinter {
         return _initialized;
     }
 }
-

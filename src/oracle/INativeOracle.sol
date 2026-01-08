@@ -6,31 +6,19 @@ pragma solidity ^0.8.30;
 /// @notice Interface for the Native Oracle contract
 /// @dev Stores verified data from external sources (blockchains, JWK providers, DNS records).
 ///      Data is recorded by the consensus engine via SYSTEM_CALLER after validators reach consensus.
-///      Supports two storage modes:
-///      - Hash mode: Store only keccak256(payload), users provide pre-image as calldata for verification
-///      - Data mode: Store full payload for contracts to read directly
+///      Records are keyed by (sourceType, sourceId, nonce) tuple.
 interface INativeOracle {
     // ========================================================================
     // DATA STRUCTURES
     // ========================================================================
 
     /// @notice Record stored in the oracle
-    /// @dev For hash-only mode, data is empty. For data mode, data contains the full payload.
-    ///      Record existence is determined by syncId > 0.
+    /// @dev Record existence is determined by recordedAt > 0.
     struct DataRecord {
-        /// @notice Sync ID when this was recorded (0 = not exists)
-        uint128 syncId;
-        /// @notice Stored data (empty for hash-only mode, populated for data mode)
+        /// @notice Timestamp when this was recorded (0 = not exists)
+        uint64 recordedAt;
+        /// @notice Stored payload data
         bytes data;
-    }
-
-    /// @notice Sync status for a source
-    /// @dev The syncId must be strictly increasing for each source (starting from 1)
-    struct SyncStatus {
-        /// @notice Whether this source has been initialized
-        bool initialized;
-        /// @notice Latest sync ID (block height, timestamp, sequence number, etc.)
-        uint128 latestSyncId;
     }
 
     // ========================================================================
@@ -48,35 +36,12 @@ interface INativeOracle {
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when a hash is recorded (hash-only mode)
-    /// @param dataHash The hash of the data
+    /// @notice Emitted when data is recorded
     /// @param sourceType The source type (0 = BLOCKCHAIN, 1 = JWK, etc.)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
-    /// @param syncId The sync ID (block height, timestamp, etc.)
-    event HashRecorded(bytes32 indexed dataHash, uint32 indexed sourceType, uint256 indexed sourceId, uint128 syncId);
-
-    /// @notice Emitted when data is recorded (data mode)
-    /// @param dataHash The hash of the data
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param syncId The sync ID
+    /// @param nonce The nonce (block height, timestamp, etc.)
     /// @param dataLength Length of the stored data
-    event DataRecorded(
-        bytes32 indexed dataHash,
-        uint32 indexed sourceType,
-        uint256 indexed sourceId,
-        uint128 syncId,
-        uint256 dataLength
-    );
-
-    /// @notice Emitted when sync status is updated for a source
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param previousSyncId The previous sync ID
-    /// @param newSyncId The new sync ID
-    event SyncStatusUpdated(
-        uint32 indexed sourceType, uint256 indexed sourceId, uint128 previousSyncId, uint128 newSyncId
-    );
+    event DataRecorded(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint256 dataLength);
 
     /// @notice Emitted when a default callback is registered or updated
     /// @param sourceType The source type
@@ -96,82 +61,53 @@ interface INativeOracle {
     /// @notice Emitted when a callback succeeds
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param dataHash The data hash
+    /// @param nonce The nonce of the record
     /// @param callback The callback contract address
-    event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, bytes32 dataHash, address callback);
+    event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
     /// @notice Emitted when a callback fails (tx continues, does NOT revert)
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param dataHash The data hash
+    /// @param nonce The nonce of the record
     /// @param callback The callback contract address
     /// @param reason The failure reason
     event CallbackFailed(
-        uint32 indexed sourceType, uint256 indexed sourceId, bytes32 dataHash, address callback, bytes reason
+        uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
     );
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================
 
-    /// @notice Record a hash (hash-only mode, storage-efficient)
+    /// @notice Record a single data entry
     /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
-    /// @param dataHash The hash of the data being recorded
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
-    /// @param syncId The sync ID - must start from 1 and strictly increase
-    /// @param payload The event payload (for callback, not stored in hash mode)
-    function recordHash(
-        bytes32 dataHash,
+    /// @param nonce The nonce - must start from 1 and strictly increase
+    /// @param payload The data payload to store
+    /// @param callbackGasLimit Gas limit for callback execution (0 = no callback)
+    function record(
         uint32 sourceType,
         uint256 sourceId,
-        uint128 syncId,
-        bytes calldata payload
-    ) external;
-
-    /// @notice Record data (data mode, direct access)
-    /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
-    /// @param dataHash The hash of the data (for indexing and verification)
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param syncId The sync ID - must start from 1 and strictly increase
-    /// @param payload The event payload (stored on-chain)
-    function recordData(
-        bytes32 dataHash,
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 syncId,
-        bytes calldata payload
-    ) external;
-
-    /// @notice Batch record multiple hashes from the same source
-    /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
-    /// @param dataHashes Array of hashes to record
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param syncId The sync ID for all records
-    /// @param payloads Array of payloads (for callbacks)
-    function recordHashBatch(
-        bytes32[] calldata dataHashes,
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 syncId,
-        bytes[] calldata payloads
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
     ) external;
 
     /// @notice Batch record multiple data entries from the same source
     /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
-    /// @param dataHashes Array of hashes
+    ///      Each payload is recorded at sequential nonces starting from the provided nonce.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param syncId The sync ID for all records
+    /// @param nonce The starting nonce for the batch
     /// @param payloads Array of payloads to store
-    function recordDataBatch(
-        bytes32[] calldata dataHashes,
+    /// @param callbackGasLimit Gas limit for callback execution per record (0 = no callback)
+    function recordBatch(
         uint32 sourceType,
         uint256 sourceId,
-        uint128 syncId,
-        bytes[] calldata payloads
+        uint128 nonce,
+        bytes[] calldata payloads,
+        uint256 callbackGasLimit
     ) external;
 
     // ========================================================================
@@ -192,17 +128,12 @@ interface INativeOracle {
     ///      of the given type unless overridden by a specialized callback.
     /// @param sourceType The source type
     /// @param callback The callback contract address (address(0) to unregister)
-    function setDefaultCallback(
-        uint32 sourceType,
-        address callback
-    ) external;
+    function setDefaultCallback(uint32 sourceType, address callback) external;
 
     /// @notice Get the default callback handler for a source type
     /// @param sourceType The source type
     /// @return callback The default callback address (address(0) if not set)
-    function getDefaultCallback(
-        uint32 sourceType
-    ) external view returns (address callback);
+    function getDefaultCallback(uint32 sourceType) external view returns (address callback);
 
     /// @notice Register a specialized callback handler for a specific source
     /// @dev Only callable by GOVERNANCE. This callback overrides the default
@@ -210,108 +141,54 @@ interface INativeOracle {
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
-    function setCallback(
-        uint32 sourceType,
-        uint256 sourceId,
-        address callback
-    ) external;
+    function setCallback(uint32 sourceType, uint256 sourceId, address callback) external;
 
     /// @notice Get the effective callback handler for a source (2-layer resolution)
     /// @dev Returns specialized callback if set, otherwise returns default callback.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @return callback The effective callback address (address(0) if none set)
-    function getCallback(
-        uint32 sourceType,
-        uint256 sourceId
-    ) external view returns (address callback);
+    function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address callback);
 
     // ========================================================================
-    // VERIFICATION FUNCTIONS
+    // QUERY FUNCTIONS
     // ========================================================================
 
-    /// @notice Verify a hash exists and get its record
-    /// @dev Record exists if record.syncId > 0
-    /// @param dataHash The hash to verify
-    /// @return record The data record (syncId = 0 if not found, data field empty if hash-only mode)
-    function verifyHash(
-        bytes32 dataHash
-    ) external view returns (DataRecord memory record);
-
-    /// @notice Verify pre-image matches a recorded hash
-    /// @dev Useful for hash-only mode where users provide original data as calldata.
-    ///      Record exists if record.syncId > 0.
-    /// @param preImage The original data (provided as calldata)
-    /// @return record The data record (syncId = 0 if not found)
-    function verifyPreImage(
-        bytes calldata preImage
-    ) external view returns (DataRecord memory record);
-
-    /// @notice Get stored data directly (for data mode records)
-    /// @param dataHash The hash key
-    /// @return data The stored data (empty if hash-only or not found)
-    function getData(
-        bytes32 dataHash
-    ) external view returns (bytes memory data);
-
-    // ========================================================================
-    // SYNC STATUS
-    // ========================================================================
-
-    /// @notice Get sync status for a source
+    /// @notice Get a record by its key tuple
+    /// @dev Record exists if record.recordedAt > 0
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @return status The current sync status
-    function getSyncStatus(
-        uint32 sourceType,
-        uint256 sourceId
-    ) external view returns (SyncStatus memory status);
+    /// @param nonce The nonce
+    /// @return record The data record (recordedAt = 0 if not found)
+    function getRecord(uint32 sourceType, uint256 sourceId, uint128 nonce)
+        external
+        view
+        returns (DataRecord memory record);
+
+    /// @notice Get the latest nonce for a source
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @return nonce The latest nonce (0 if no records)
+    function getLatestNonce(uint32 sourceType, uint256 sourceId) external view returns (uint128 nonce);
 
     /// @notice Check if a source has synced past a certain point
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param syncId The sync ID to check
-    /// @return True if latestSyncId >= syncId
-    function isSyncedPast(
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 syncId
-    ) external view returns (bool);
-
-    // ========================================================================
-    // STATISTICS
-    // ========================================================================
-
-    /// @notice Get total number of records stored
-    /// @return Total record count
-    function getTotalRecords() external view returns (uint256);
-
-    // ========================================================================
-    // HELPERS
-    // ========================================================================
-
-    /// @notice Compute the internal sourceName from source type and source ID
-    /// @dev sourceName = keccak256(abi.encode(sourceType, sourceId))
-    /// @param sourceType The source type (uint32)
-    /// @param sourceId The source identifier (uint256)
-    /// @return sourceName The computed source name (used internally for storage)
-    function computeSourceName(
-        uint32 sourceType,
-        uint256 sourceId
-    ) external pure returns (bytes32 sourceName);
+    /// @param nonce The nonce to check
+    /// @return True if latestNonce >= nonce
+    function isSyncedPast(uint32 sourceType, uint256 sourceId, uint128 nonce) external view returns (bool);
 }
 
 /// @title IOracleCallback
+/// @author Gravity Team
 /// @notice Interface for oracle callback handlers
-/// @dev Implement this to receive oracle events. Callbacks are invoked with limited gas.
+/// @dev Implement this to receive oracle events. Callbacks are invoked with caller-specified gas limit.
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
     /// @dev Callback failures are caught - they do NOT revert the oracle recording.
-    ///      Callbacks are invoked with limited gas (CALLBACK_GAS_LIMIT).
-    /// @param dataHash The hash of the recorded data
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
-    function onOracleEvent(
-        bytes32 dataHash,
-        bytes calldata payload
-    ) external;
+    function onOracleEvent(uint32 sourceType, uint256 sourceId, uint128 nonce, bytes calldata payload) external;
 }

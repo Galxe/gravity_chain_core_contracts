@@ -63,10 +63,7 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     // ========================================================================
 
     /// @inheritdoc IBlockchainEventRouter
-    function registerHandler(
-        address sender,
-        address handler
-    ) external whenInitialized {
+    function registerHandler(address sender, address handler) external whenInitialized {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         _handlers[sender] = handler;
@@ -75,9 +72,7 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     }
 
     /// @inheritdoc IBlockchainEventRouter
-    function unregisterHandler(
-        address sender
-    ) external whenInitialized {
+    function unregisterHandler(address sender) external whenInitialized {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         delete _handlers[sender];
@@ -91,10 +86,14 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
 
     /// @notice Called by NativeOracle when a blockchain event is recorded
     /// @dev Decodes payload and routes to appropriate handler
-    /// @param dataHash The hash of the recorded data
-    /// @param payload The event payload: abi.encode(sender, nonce, message)
+    /// @param sourceType The source type from NativeOracle
+    /// @param sourceId The source identifier (chain ID)
+    /// @param nonce The oracle nonce for this record
+    /// @param payload The event payload: abi.encode(sender, eventNonce, message)
     function onOracleEvent(
-        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
         bytes calldata payload
     ) external whenInitialized {
         // Only NativeOracle can call this
@@ -102,22 +101,24 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
             revert OnlyNativeOracle();
         }
 
-        // Decode blockchain event payload: (sender, nonce, message)
+        // Decode blockchain event payload: (sender, eventNonce, message)
         (address sender, uint256 eventNonce, bytes memory message) = abi.decode(payload, (address, uint256, bytes));
 
         // Look up handler for this sender
         address handler = _handlers[sender];
         if (handler == address(0)) {
             // No handler registered - emit failure event but don't revert
-            emit RoutingFailed(dataHash, sender, abi.encodePacked("No handler registered"));
+            emit RoutingFailed(sourceType, sourceId, nonce, sender, abi.encodePacked("No handler registered"));
             return;
         }
 
         // Route to handler with limited gas
-        try IMessageHandler(handler).handleMessage{ gas: HANDLER_GAS_LIMIT }(dataHash, sender, eventNonce, message) {
-            emit MessageRouted(dataHash, sender, handler);
+        try IMessageHandler(handler).handleMessage{ gas: HANDLER_GAS_LIMIT }(
+            sourceType, sourceId, nonce, sender, eventNonce, message
+        ) {
+            emit MessageRouted(sourceType, sourceId, nonce, sender, handler);
         } catch (bytes memory reason) {
-            emit RoutingFailed(dataHash, sender, reason);
+            emit RoutingFailed(sourceType, sourceId, nonce, sender, reason);
         }
     }
 
@@ -126,9 +127,7 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
     // ========================================================================
 
     /// @inheritdoc IBlockchainEventRouter
-    function getHandler(
-        address sender
-    ) external view returns (address handler) {
+    function getHandler(address sender) external view returns (address handler) {
         return _handlers[sender];
     }
 
@@ -137,4 +136,3 @@ contract BlockchainEventRouter is IBlockchainEventRouter {
         return _initialized;
     }
 }
-
