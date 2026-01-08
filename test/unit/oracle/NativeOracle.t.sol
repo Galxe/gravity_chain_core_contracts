@@ -174,38 +174,110 @@ contract NativeOracleTest is Test {
     // ========================================================================
 
     function test_RecordBatch() public {
+        uint128[] memory nonces = new uint128[](3);
         bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 2000 + uint128(i);
             payloads[i] = abi.encode("event", i);
+            gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
 
-        uint128 nonce = 2000;
-
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payloads, CALLBACK_GAS_LIMIT);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
 
         // Verify all records exist (recordedAt > 0 means exists)
         for (uint256 i = 0; i < 3; i++) {
-            uint128 currentNonce = nonce + uint128(i);
             INativeOracle.DataRecord memory record =
-                oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, currentNonce);
+                oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces[i]);
             assertTrue(record.recordedAt > 0);
             assertEq(record.data, payloads[i]);
         }
 
         // Verify latest nonce is the final nonce
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), nonce + 2);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), nonces[2]);
     }
 
-    function test_RecordBatch_EmptyPayloads() public {
+    function test_RecordBatch_EmptyArrays() public {
+        uint128[] memory nonces = new uint128[](0);
         bytes[] memory payloads = new bytes[](0);
+        uint256[] memory gasLimits = new uint256[](0);
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payloads, CALLBACK_GAS_LIMIT);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
 
         // Nothing should be recorded
         assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
+    }
+
+    function test_RecordBatch_RevertWhenArrayLengthMismatch() public {
+        uint128[] memory nonces = new uint128[](3);
+        bytes[] memory payloads = new bytes[](2); // Mismatched length
+        uint256[] memory gasLimits = new uint256[](3);
+
+        for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 1000 + uint128(i);
+            gasLimits[i] = CALLBACK_GAS_LIMIT;
+        }
+        payloads[0] = abi.encode("event0");
+        payloads[1] = abi.encode("event1");
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 2, 3));
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+    }
+
+    function test_RecordBatch_RevertWhenNonceNotIncreasing() public {
+        // First, record at nonce 1000
+        bytes memory payload = abi.encode("first");
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
+
+        // Now try batch starting at nonce 1000 (should fail - not increasing)
+        uint128[] memory nonces = new uint128[](2);
+        bytes[] memory payloads = new bytes[](2);
+        uint256[] memory gasLimits = new uint256[](2);
+
+        nonces[0] = 1000; // Invalid: same as existing
+        nonces[1] = 1001;
+        payloads[0] = abi.encode("batch0");
+        payloads[1] = abi.encode("batch1");
+        gasLimits[0] = CALLBACK_GAS_LIMIT;
+        gasLimits[1] = CALLBACK_GAS_LIMIT;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 1000
+            )
+        );
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+    }
+
+    function test_RecordBatch_RevertWhenBatchNoncesNotIncreasing() public {
+        // Try batch with non-increasing nonces within the batch
+        uint128[] memory nonces = new uint128[](3);
+        bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
+
+        nonces[0] = 1000;
+        nonces[1] = 1001;
+        nonces[2] = 1001; // Invalid: not increasing from previous
+        payloads[0] = abi.encode("batch0");
+        payloads[1] = abi.encode("batch1");
+        payloads[2] = abi.encode("batch2");
+        gasLimits[0] = CALLBACK_GAS_LIMIT;
+        gasLimits[1] = CALLBACK_GAS_LIMIT;
+        gasLimits[2] = CALLBACK_GAS_LIMIT;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1001, 1001
+            )
+        );
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
     }
 
     // ========================================================================
@@ -445,14 +517,18 @@ contract NativeOracleTest is Test {
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
         // Record batch
+        uint128[] memory nonces = new uint128[](3);
         bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 2000 + uint128(i);
             payloads[i] = abi.encode("event", i);
+            gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payloads, CALLBACK_GAS_LIMIT);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
 
         // Callback should be invoked 3 times
         assertEq(mockCallback.callCount(), 3);
@@ -463,18 +539,49 @@ contract NativeOracleTest is Test {
         vm.prank(governance);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
 
-        // Record batch with zero gas limit
+        // Record batch with zero gas limits
+        uint128[] memory nonces = new uint128[](3);
         bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 2000 + uint128(i);
             payloads[i] = abi.encode("event", i);
+            gasLimits[i] = 0; // Zero gas limit
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payloads, 0);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
 
         // Callback should NOT be invoked
         assertEq(mockCallback.callCount(), 0);
+    }
+
+    function test_CallbackPartiallyInvokedForBatch() public {
+        // Register callback
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
+
+        // Record batch with mixed gas limits (some zero, some non-zero)
+        uint128[] memory nonces = new uint128[](3);
+        bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
+
+        nonces[0] = 2000;
+        nonces[1] = 2001;
+        nonces[2] = 2002;
+        payloads[0] = abi.encode("event0");
+        payloads[1] = abi.encode("event1");
+        payloads[2] = abi.encode("event2");
+        gasLimits[0] = CALLBACK_GAS_LIMIT; // Will invoke callback
+        gasLimits[1] = 0; // Will NOT invoke callback
+        gasLimits[2] = CALLBACK_GAS_LIMIT; // Will invoke callback
+
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+
+        // Callback should be invoked only 2 times
+        assertEq(mockCallback.callCount(), 2);
     }
 
     // ========================================================================

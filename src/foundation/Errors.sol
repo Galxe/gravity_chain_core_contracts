@@ -348,6 +348,12 @@ library Errors {
     /// @param providedNonce The provided nonce that is not greater
     error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
 
+    /// @notice Batch arrays have mismatched lengths
+    /// @param noncesLength Length of nonces array
+    /// @param payloadsLength Length of payloads array
+    /// @param gasLimitsLength Length of callbackGasLimits array
+    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+
     // ========================================================================
     // VERSION CONFIG ERRORS
     // ========================================================================

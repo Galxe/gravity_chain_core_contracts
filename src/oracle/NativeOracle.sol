@@ -61,37 +61,54 @@ contract NativeOracle is INativeOracle {
     function recordBatch(
         uint32 sourceType,
         uint256 sourceId,
-        uint128 nonce,
+        uint128[] calldata nonces,
         bytes[] calldata payloads,
-        uint256 callbackGasLimit
+        uint256[] calldata callbackGasLimits
     ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
-        uint256 length = payloads.length;
+        uint256 length = nonces.length;
         if (length == 0) return;
 
-        // Validate and update nonce to the final nonce
-        uint128 finalNonce = nonce + uint128(length) - 1;
-        _updateNonce(sourceType, sourceId, finalNonce);
+        // Validate array lengths match
+        if (length != payloads.length || length != callbackGasLimits.length) {
+            revert Errors.OracleBatchArrayLengthMismatch(length, payloads.length, callbackGasLimits.length);
+        }
 
-        // Record all data entries
+        // Record all data entries with individual nonce validation
         for (uint256 i; i < length;) {
-            uint128 currentNonce = nonce + uint128(i);
-            bytes calldata payload = payloads[i];
-
-            _records[sourceType][sourceId][currentNonce] =
-                DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
-
-            emit DataRecorded(sourceType, sourceId, currentNonce, payload.length);
-
-            // Invoke callback if gas limit > 0
-            if (callbackGasLimit > 0) {
-                _invokeCallback(sourceType, sourceId, currentNonce, payload, callbackGasLimit);
-            }
+            _recordSingle(sourceType, sourceId, nonces[i], payloads[i], callbackGasLimits[i]);
 
             unchecked {
                 ++i;
             }
+        }
+    }
+
+    /// @notice Internal helper to record a single entry (reduces stack depth)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce
+    /// @param payload The payload data
+    /// @param callbackGasLimit Gas limit for callback (0 = no callback)
+    function _recordSingle(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
+    ) private {
+        // Validate and update nonce
+        _updateNonce(sourceType, sourceId, nonce);
+
+        // Store record
+        _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+
+        emit DataRecorded(sourceType, sourceId, nonce, payload.length);
+
+        // Invoke callback if gas limit > 0
+        if (callbackGasLimit > 0) {
+            _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
         }
     }
 

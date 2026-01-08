@@ -96,18 +96,18 @@ interface INativeOracle {
 
     /// @notice Batch record multiple data entries from the same source
     /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
-    ///      Each payload is recorded at sequential nonces starting from the provided nonce.
+    ///      Each nonce is validated individually to prevent overwriting existing records.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param nonce The starting nonce for the batch
-    /// @param payloads Array of payloads to store
-    /// @param callbackGasLimit Gas limit for callback execution per record (0 = no callback)
+    /// @param nonces Array of nonces (must be strictly increasing, each > previous latestNonce)
+    /// @param payloads Array of payloads to store (must match nonces length)
+    /// @param callbackGasLimits Array of gas limits for callback execution per record (0 = no callback)
     function recordBatch(
         uint32 sourceType,
         uint256 sourceId,
-        uint128 nonce,
+        uint128[] calldata nonces,
         bytes[] calldata payloads,
-        uint256 callbackGasLimit
+        uint256[] calldata callbackGasLimits
     ) external;
 
     // ========================================================================
