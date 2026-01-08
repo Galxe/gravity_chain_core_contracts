@@ -311,14 +311,7 @@ contract GBridgeSenderTest is Test {
 
         // Create permit signature
         bytes32 structHash = keccak256(
-            abi.encode(
-                gToken.PERMIT_TYPEHASH(),
-                alice,
-                address(bridge),
-                amount,
-                gToken.nonces(alice),
-                deadline
-            )
+            abi.encode(gToken.PERMIT_TYPEHASH(), alice, address(bridge), amount, gToken.nonces(alice), deadline)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", gToken.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
@@ -340,14 +333,7 @@ contract GBridgeSenderTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
 
         bytes32 structHash = keccak256(
-            abi.encode(
-                gToken.PERMIT_TYPEHASH(),
-                alice,
-                address(bridge),
-                amount,
-                gToken.nonces(alice),
-                deadline
-            )
+            abi.encode(gToken.PERMIT_TYPEHASH(), alice, address(bridge), amount, gToken.nonces(alice), deadline)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", gToken.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
@@ -366,14 +352,7 @@ contract GBridgeSenderTest is Test {
         uint256 deadline = block.timestamp - 1; // Expired
 
         bytes32 structHash = keccak256(
-            abi.encode(
-                gToken.PERMIT_TYPEHASH(),
-                alice,
-                address(bridge),
-                amount,
-                gToken.nonces(alice),
-                deadline
-            )
+            abi.encode(gToken.PERMIT_TYPEHASH(), alice, address(bridge), amount, gToken.nonces(alice), deadline)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", gToken.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
