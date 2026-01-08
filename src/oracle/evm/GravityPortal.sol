@@ -11,7 +11,7 @@ import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 /// @dev Deployed on Ethereum (or other EVM chains). NOT deployed on Gravity.
 ///      Charges fees in native token (ETH) for message bridging.
 ///      Consensus engine monitors MessageSent events and bridges to Gravity.
-///      Uses compact encoding via PortalMessage library: sender (20B) + nonce (32B) + message.
+///      Uses compact encoding via PortalMessage library: sender (20B) + nonce (16B) + message.
 contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
     // STATE
@@ -27,7 +27,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     address public feeRecipient;
 
     /// @notice Monotonically increasing nonce for message ordering
-    uint256 public nonce;
+    uint128 public nonce;
 
     // ========================================================================
     // CONSTRUCTOR
@@ -57,45 +57,24 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
-    function sendMessage(
+    function send(
         bytes calldata message
-    ) external payable returns (uint256 messageNonce) {
-        // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
+    ) external payable returns (uint128 messageNonce) {
+        // Assign nonce and increment
         messageNonce = nonce++;
+
+        // Encode payload: sender (20B) || nonce (16B) || message
         bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
 
-        // Calculate and validate fee
+        // Calculate and validate fee based on payload length
         uint256 requiredFee = _calculateFee(payload.length);
         if (msg.value < requiredFee) {
             revert InsufficientFee(requiredFee, msg.value);
         }
 
-        // Compute payload hash
-        bytes32 payloadHash = keccak256(payload);
-
-        // Emit event for consensus engine to monitor (hash-only mode)
-        emit MessageSent(payloadHash, msg.sender, messageNonce, payload);
-    }
-
-    /// @inheritdoc IGravityPortal
-    function sendMessageWithData(
-        bytes calldata message
-    ) external payable returns (uint256 messageNonce) {
-        // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
-        messageNonce = nonce++;
-        bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
-
-        // Calculate and validate fee
-        uint256 requiredFee = _calculateFee(payload.length);
-        if (msg.value < requiredFee) {
-            revert InsufficientFee(requiredFee, msg.value);
-        }
-
-        // Compute payload hash
-        bytes32 payloadHash = keccak256(payload);
-
-        // Emit event for consensus engine to monitor (data mode - full storage on Gravity)
-        emit MessageSentWithData(payloadHash, msg.sender, messageNonce, payload);
+        // Emit event for consensus engine to monitor
+        // Nonce is extracted as indexed param for efficient consensus filtering
+        emit MessageSent(messageNonce, payload);
     }
 
     // ========================================================================
@@ -153,7 +132,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
         uint256 messageLength
     ) external view returns (uint256 requiredFee) {
         // Estimate encoded payload length using compact encoding:
-        // sender (20 bytes) + nonce (32 bytes) + message length = 52 + messageLength
+        // sender (20 bytes) + nonce (16 bytes) + message length = 36 + messageLength
         uint256 estimatedPayloadLength = PortalMessage.MIN_PAYLOAD_LENGTH + messageLength;
         return _calculateFee(estimatedPayloadLength);
     }

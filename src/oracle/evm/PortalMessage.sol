@@ -4,8 +4,8 @@ pragma solidity ^0.8.30;
 /// @title PortalMessage Library
 /// @author Gravity Team
 /// @notice A library for compact encoding and decoding of portal messages using assembly
-/// @dev Uses packed encoding: sender (20 bytes) + nonce (32 bytes) + message (variable)
-///      Total overhead: 52 bytes (vs 128+ bytes with abi.encode)
+/// @dev Uses packed encoding: sender (20 bytes) + nonce (16 bytes) + message (variable)
+///      Total overhead: 36 bytes (vs 128+ bytes with abi.encode)
 library PortalMessage {
     // ========================================================================
     // ERRORS
@@ -20,31 +20,31 @@ library PortalMessage {
     // CONSTANTS
     // ========================================================================
 
-    /// @notice Minimum payload length: 20 (sender) + 32 (nonce) = 52 bytes
-    uint256 internal constant MIN_PAYLOAD_LENGTH = 52;
+    /// @notice Minimum payload length: 20 (sender) + 16 (nonce) = 36 bytes
+    uint256 internal constant MIN_PAYLOAD_LENGTH = 36;
 
     /// @notice Offset for sender address (starts at position 0, 20 bytes)
     uint256 internal constant SENDER_OFFSET = 20;
 
-    /// @notice Offset for nonce (starts at position 20, 32 bytes)
-    uint256 internal constant NONCE_OFFSET = 52;
+    /// @notice Offset for nonce end (starts at position 20, 16 bytes, ends at 36)
+    uint256 internal constant NONCE_OFFSET = 36;
 
     // ========================================================================
     // ENCODING
     // ========================================================================
 
     /// @notice Encodes sender, nonce, and message into a compact byte array
-    /// @dev Layout: sender (20 bytes) || nonce (32 bytes) || message (variable)
+    /// @dev Layout: sender (20 bytes) || nonce (16 bytes) || message (variable)
     /// @param sender The sender address
-    /// @param messageNonce The message nonce
+    /// @param messageNonce The message nonce (uint128)
     /// @param message The message data
     /// @return payload The encoded payload
     function encode(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes memory message
     ) internal pure returns (bytes memory payload) {
-        // Calculate total length: 20 + 32 + message.length
+        // Calculate total length: 20 + 16 + message.length
         uint256 totalLength = MIN_PAYLOAD_LENGTH + message.length;
 
         // Allocate memory for the payload
@@ -60,14 +60,15 @@ library PortalMessage {
             // Then store it at payloadData, which will write 32 bytes but we only use 20
             mstore(payloadData, shl(96, sender))
 
-            // Store nonce (32 bytes) at offset 20
-            mstore(add(payloadData, 20), messageNonce)
+            // Store nonce (16 bytes) at offset 20
+            // Shift left by 128 bits (16 bytes) to left-align the uint128
+            mstore(add(payloadData, 20), shl(128, messageNonce))
 
-            // Copy message data starting at offset 52
+            // Copy message data starting at offset 36
             // message points to length slot, data starts at message + 32
             let messageData := add(message, 32)
             let messageLen := mload(message)
-            let destPtr := add(payloadData, 52)
+            let destPtr := add(payloadData, 36)
 
             // Copy message in 32-byte chunks
             for { let i := 0 } lt(i, messageLen) { i := add(i, 32) } {
@@ -79,15 +80,15 @@ library PortalMessage {
     /// @notice Encodes sender, nonce, and calldata message into a compact byte array
     /// @dev More gas-efficient version for calldata input
     /// @param sender The sender address
-    /// @param messageNonce The message nonce
+    /// @param messageNonce The message nonce (uint128)
     /// @param message The message data (calldata)
     /// @return payload The encoded payload
     function encodeCalldata(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes calldata message
     ) internal pure returns (bytes memory payload) {
-        // Calculate total length: 20 + 32 + message.length
+        // Calculate total length: 20 + 16 + message.length
         uint256 totalLength = MIN_PAYLOAD_LENGTH + message.length;
 
         // Allocate memory for the payload
@@ -101,11 +102,11 @@ library PortalMessage {
             // Store sender (20 bytes) at the beginning
             mstore(payloadData, shl(96, sender))
 
-            // Store nonce (32 bytes) at offset 20
-            mstore(add(payloadData, 20), messageNonce)
+            // Store nonce (16 bytes) at offset 20
+            mstore(add(payloadData, 20), shl(128, messageNonce))
 
-            // Copy message calldata starting at offset 52
-            calldatacopy(add(payloadData, 52), message.offset, message.length)
+            // Copy message calldata starting at offset 36
+            calldatacopy(add(payloadData, 36), message.offset, message.length)
         }
     }
 
@@ -114,14 +115,14 @@ library PortalMessage {
     // ========================================================================
 
     /// @notice Decodes a payload into sender, nonce, and message
-    /// @dev Expects layout: sender (20 bytes) || nonce (32 bytes) || message (variable)
+    /// @dev Expects layout: sender (20 bytes) || nonce (16 bytes) || message (variable)
     /// @param payload The encoded payload
     /// @return sender The extracted sender address
     /// @return messageNonce The extracted nonce
     /// @return message The remaining message data
     function decode(
         bytes memory payload
-    ) internal pure returns (address sender, uint256 messageNonce, bytes memory message) {
+    ) internal pure returns (address sender, uint128 messageNonce, bytes memory message) {
         if (payload.length < MIN_PAYLOAD_LENGTH) {
             revert InsufficientDataLength(payload.length, MIN_PAYLOAD_LENGTH);
         }
@@ -137,8 +138,9 @@ library PortalMessage {
             // mload loads 32 bytes, we need to shift right by 96 bits (12 bytes) to get the address
             sender := shr(96, mload(payloadData))
 
-            // Load nonce (32 bytes) from offset 20
-            messageNonce := mload(add(payloadData, 20))
+            // Load nonce (16 bytes) from offset 20
+            // mload loads 32 bytes, shift right by 128 bits to get the uint128
+            messageNonce := shr(128, mload(add(payloadData, 20)))
 
             // Allocate memory for message
             // Get free memory pointer
@@ -151,7 +153,7 @@ library PortalMessage {
             mstore(0x40, add(add(message, 32), and(add(messageLength, 31), not(31))))
 
             // Copy message data
-            let srcPtr := add(payloadData, 52)
+            let srcPtr := add(payloadData, 36)
             let destPtr := add(message, 32)
 
             for { let i := 0 } lt(i, messageLength) { i := add(i, 32) } {
@@ -181,14 +183,14 @@ library PortalMessage {
     /// @return messageNonce The extracted nonce
     function decodeNonce(
         bytes memory payload
-    ) internal pure returns (uint256 messageNonce) {
+    ) internal pure returns (uint128 messageNonce) {
         if (payload.length < NONCE_OFFSET) {
             revert InsufficientDataLength(payload.length, NONCE_OFFSET);
         }
 
         // solhint-disable-next-line no-inline-assembly
         assembly {
-            messageNonce := mload(add(add(payload, 32), 20))
+            messageNonce := shr(128, mload(add(add(payload, 32), 20)))
         }
     }
 
@@ -198,7 +200,7 @@ library PortalMessage {
     /// @return messageNonce The extracted nonce
     function decodeSenderAndNonce(
         bytes memory payload
-    ) internal pure returns (address sender, uint256 messageNonce) {
+    ) internal pure returns (address sender, uint128 messageNonce) {
         if (payload.length < NONCE_OFFSET) {
             revert InsufficientDataLength(payload.length, NONCE_OFFSET);
         }
@@ -207,7 +209,7 @@ library PortalMessage {
         assembly {
             let payloadData := add(payload, 32)
             sender := shr(96, mload(payloadData))
-            messageNonce := mload(add(payloadData, 20))
+            messageNonce := shr(128, mload(add(payloadData, 20)))
         }
     }
 
@@ -225,10 +227,9 @@ library PortalMessage {
 
         // solhint-disable-next-line no-inline-assembly
         assembly {
-            // Message starts at payload data + 52
-            messageStart := add(add(payload, 32), 52)
-            messageLength := sub(mload(payload), 52)
+            // Message starts at payload data + 36
+            messageStart := add(add(payload, 32), 36)
+            messageLength := sub(mload(payload), 36)
         }
     }
 }
-

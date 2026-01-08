@@ -13,16 +13,16 @@ contract PortalMessageTest is Test {
 
     function test_Encode_BasicMessage() public pure {
         address sender = address(0x1234567890AbcdEF1234567890aBcdef12345678);
-        uint256 messageNonce = 42;
+        uint128 messageNonce = 42;
         bytes memory message = hex"deadbeef";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
-        // Expected length: 20 (sender) + 32 (nonce) + 4 (message) = 56
-        assertEq(payload.length, 56, "Payload length mismatch");
+        // Expected length: 20 (sender) + 16 (nonce) + 4 (message) = 40
+        assertEq(payload.length, 40, "Payload length mismatch");
 
         // Verify by decoding
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
         assertEq(decodedMessage, message, "Message mismatch");
@@ -30,16 +30,16 @@ contract PortalMessageTest is Test {
 
     function test_Encode_EmptyMessage() public pure {
         address sender = address(0xDEAD);
-        uint256 messageNonce = 0;
+        uint128 messageNonce = 0;
         bytes memory message = "";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
-        // Expected length: 20 + 32 + 0 = 52 (MIN_PAYLOAD_LENGTH)
-        assertEq(payload.length, 52, "Payload length mismatch");
+        // Expected length: 20 + 16 + 0 = 36 (MIN_PAYLOAD_LENGTH)
+        assertEq(payload.length, 36, "Payload length mismatch");
 
         // Verify by decoding
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
         assertEq(decodedMessage.length, 0, "Message should be empty");
@@ -47,12 +47,12 @@ contract PortalMessageTest is Test {
 
     function test_Encode_MaxNonce() public pure {
         address sender = address(0xBEEF);
-        uint256 messageNonce = type(uint256).max;
+        uint128 messageNonce = type(uint128).max;
         bytes memory message = hex"01";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
         assertEq(decodedMessage, message, "Message mismatch");
@@ -60,7 +60,7 @@ contract PortalMessageTest is Test {
 
     function test_Encode_LargeMessage() public pure {
         address sender = address(0x1);
-        uint256 messageNonce = 123456789;
+        uint128 messageNonce = 123456789;
         bytes memory message = new bytes(1000);
         for (uint256 i = 0; i < 1000; i++) {
             message[i] = bytes1(uint8(i % 256));
@@ -68,10 +68,10 @@ contract PortalMessageTest is Test {
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
-        // Expected length: 20 + 32 + 1000 = 1052
-        assertEq(payload.length, 1052, "Payload length mismatch");
+        // Expected length: 20 + 16 + 1000 = 1036
+        assertEq(payload.length, 1036, "Payload length mismatch");
 
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
         assertEq(keccak256(decodedMessage), keccak256(message), "Message content mismatch");
@@ -83,15 +83,15 @@ contract PortalMessageTest is Test {
 
     function test_EncodeCalldata_BasicMessage() public view {
         address sender = address(0xCAFE);
-        uint256 messageNonce = 100;
+        uint128 messageNonce = 100;
         bytes memory message = hex"aabbccdd";
 
         // Use this.encodeCalldataHelper to test calldata version
         bytes memory payload = this.encodeCalldataHelper(sender, messageNonce, message);
 
-        assertEq(payload.length, 56, "Payload length mismatch");
+        assertEq(payload.length, 40, "Payload length mismatch");
 
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
         assertEq(decodedMessage, message, "Message mismatch");
@@ -99,7 +99,7 @@ contract PortalMessageTest is Test {
 
     function encodeCalldataHelper(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes calldata message
     ) external pure returns (bytes memory) {
         return PortalMessage.encodeCalldata(sender, messageNonce, message);
@@ -110,21 +110,21 @@ contract PortalMessageTest is Test {
     // ========================================================================
 
     function test_Decode_RevertWhenInsufficientLength() public {
-        bytes memory shortPayload = new bytes(51); // Less than MIN_PAYLOAD_LENGTH
+        bytes memory shortPayload = new bytes(35); // Less than MIN_PAYLOAD_LENGTH
 
-        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 51, 52));
+        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 35, 36));
         this.decodeHelper(shortPayload);
     }
 
     function test_Decode_MinimumValidPayload() public pure {
-        // Create minimum valid payload: 20 bytes sender + 32 bytes nonce = 52 bytes
+        // Create minimum valid payload: 20 bytes sender + 16 bytes nonce = 36 bytes
         address expectedSender = address(0x1234567890AbcdEF1234567890aBcdef12345678);
-        uint256 expectedNonce = 999;
+        uint128 expectedNonce = 999;
         bytes memory message = "";
 
         bytes memory payload = PortalMessage.encode(expectedSender, expectedNonce, message);
 
-        (address sender, uint256 messageNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address sender, uint128 messageNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(sender, expectedSender, "Sender mismatch");
         assertEq(messageNonce, expectedNonce, "Nonce mismatch");
@@ -137,7 +137,7 @@ contract PortalMessageTest is Test {
 
     function test_DecodeSender() public pure {
         address expectedSender = address(0xabCDEF1234567890ABcDEF1234567890aBCDeF12);
-        uint256 messageNonce = 42;
+        uint128 messageNonce = 42;
         bytes memory message = hex"0102030405";
 
         bytes memory payload = PortalMessage.encode(expectedSender, messageNonce, message);
@@ -155,38 +155,38 @@ contract PortalMessageTest is Test {
 
     function test_DecodeNonce() public pure {
         address sender = address(0x1);
-        uint256 expectedNonce = 12345678901234567890;
+        uint128 expectedNonce = 12345678901234567890;
         bytes memory message = hex"ff";
 
         bytes memory payload = PortalMessage.encode(sender, expectedNonce, message);
-        uint256 decodedNonce = PortalMessage.decodeNonce(payload);
+        uint128 decodedNonce = PortalMessage.decodeNonce(payload);
 
         assertEq(decodedNonce, expectedNonce, "Nonce mismatch");
     }
 
     function test_DecodeNonce_RevertWhenTooShort() public {
-        bytes memory shortPayload = new bytes(51); // Less than 52 bytes
+        bytes memory shortPayload = new bytes(35); // Less than 36 bytes
 
-        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 51, 52));
+        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 35, 36));
         this.decodeNonceHelper(shortPayload);
     }
 
     function test_DecodeSenderAndNonce() public pure {
         address expectedSender = address(0xfEDCBA0987654321FeDcbA0987654321fedCBA09);
-        uint256 expectedNonce = type(uint128).max;
+        uint128 expectedNonce = type(uint128).max;
         bytes memory message = hex"68656c6c6f"; // "hello"
 
         bytes memory payload = PortalMessage.encode(expectedSender, expectedNonce, message);
-        (address sender, uint256 messageNonce) = PortalMessage.decodeSenderAndNonce(payload);
+        (address sender, uint128 messageNonce) = PortalMessage.decodeSenderAndNonce(payload);
 
         assertEq(sender, expectedSender, "Sender mismatch");
         assertEq(messageNonce, expectedNonce, "Nonce mismatch");
     }
 
     function test_DecodeSenderAndNonce_RevertWhenTooShort() public {
-        bytes memory shortPayload = new bytes(51);
+        bytes memory shortPayload = new bytes(35);
 
-        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 51, 52));
+        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 35, 36));
         this.decodeSenderAndNonceHelper(shortPayload);
     }
 
@@ -196,7 +196,7 @@ contract PortalMessageTest is Test {
 
     function test_GetMessageSlice() public pure {
         address sender = address(0x1);
-        uint256 messageNonce = 1;
+        uint128 messageNonce = 1;
         bytes memory message = hex"0102030405060708";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
@@ -218,7 +218,7 @@ contract PortalMessageTest is Test {
 
     function test_GetMessageSlice_EmptyMessage() public pure {
         address sender = address(0x1);
-        uint256 messageNonce = 1;
+        uint128 messageNonce = 1;
         bytes memory message = "";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
@@ -229,9 +229,9 @@ contract PortalMessageTest is Test {
     }
 
     function test_GetMessageSlice_RevertWhenTooShort() public {
-        bytes memory shortPayload = new bytes(51);
+        bytes memory shortPayload = new bytes(35);
 
-        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 51, 52));
+        vm.expectRevert(abi.encodeWithSelector(PortalMessage.InsufficientDataLength.selector, 35, 36));
         this.getMessageSliceHelper(shortPayload);
     }
 
@@ -241,7 +241,7 @@ contract PortalMessageTest is Test {
 
     function decodeHelper(
         bytes memory payload
-    ) external pure returns (address, uint256, bytes memory) {
+    ) external pure returns (address, uint128, bytes memory) {
         return PortalMessage.decode(payload);
     }
 
@@ -253,13 +253,13 @@ contract PortalMessageTest is Test {
 
     function decodeNonceHelper(
         bytes memory payload
-    ) external pure returns (uint256) {
+    ) external pure returns (uint128) {
         return PortalMessage.decodeNonce(payload);
     }
 
     function decodeSenderAndNonceHelper(
         bytes memory payload
-    ) external pure returns (address, uint256) {
+    ) external pure returns (address, uint128) {
         return PortalMessage.decodeSenderAndNonce(payload);
     }
 
@@ -275,16 +275,16 @@ contract PortalMessageTest is Test {
 
     function testFuzz_EncodeDecodeRoundtrip(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes memory message
     ) public pure {
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
 
         // Verify length
-        assertEq(payload.length, 52 + message.length, "Payload length mismatch");
+        assertEq(payload.length, 36 + message.length, "Payload length mismatch");
 
         // Decode and verify
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(decodedSender, sender, "Sender roundtrip failed");
         assertEq(decodedNonce, messageNonce, "Nonce roundtrip failed");
@@ -293,12 +293,12 @@ contract PortalMessageTest is Test {
 
     function testFuzz_EncodeCalldataRoundtrip(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes calldata message
     ) external view {
         bytes memory payload = this.encodeCalldataHelper(sender, messageNonce, message);
 
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(decodedSender, sender, "Sender roundtrip failed");
         assertEq(decodedNonce, messageNonce, "Nonce roundtrip failed");
@@ -307,7 +307,7 @@ contract PortalMessageTest is Test {
 
     function testFuzz_PartialDecode(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes memory message
     ) public pure {
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
@@ -316,14 +316,14 @@ contract PortalMessageTest is Test {
         assertEq(PortalMessage.decodeSender(payload), sender, "decodeSender failed");
         assertEq(PortalMessage.decodeNonce(payload), messageNonce, "decodeNonce failed");
 
-        (address s, uint256 n) = PortalMessage.decodeSenderAndNonce(payload);
+        (address s, uint128 n) = PortalMessage.decodeSenderAndNonce(payload);
         assertEq(s, sender, "decodeSenderAndNonce sender failed");
         assertEq(n, messageNonce, "decodeSenderAndNonce nonce failed");
     }
 
     function testFuzz_GetMessageSlice(
         address sender,
-        uint256 messageNonce,
+        uint128 messageNonce,
         bytes memory message
     ) public pure {
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
@@ -338,11 +338,11 @@ contract PortalMessageTest is Test {
 
     function test_ZeroAddressSender() public pure {
         address sender = address(0);
-        uint256 messageNonce = 1;
+        uint128 messageNonce = 1;
         bytes memory message = hex"74657374"; // "test"
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(decodedSender, address(0), "Zero address should roundtrip");
         assertEq(decodedNonce, messageNonce, "Nonce mismatch");
@@ -351,11 +351,11 @@ contract PortalMessageTest is Test {
 
     function test_ZeroNonce() public pure {
         address sender = address(0x1);
-        uint256 messageNonce = 0;
+        uint128 messageNonce = 0;
         bytes memory message = hex"74657374"; // "test"
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(decodedSender, sender, "Sender mismatch");
         assertEq(decodedNonce, 0, "Zero nonce should roundtrip");
@@ -364,11 +364,11 @@ contract PortalMessageTest is Test {
 
     function test_MaxValues() public pure {
         address sender = address(type(uint160).max);
-        uint256 messageNonce = type(uint256).max;
+        uint128 messageNonce = type(uint128).max;
         bytes memory message = hex"ffffffffffffffffffffffffffffffff";
 
         bytes memory payload = PortalMessage.encode(sender, messageNonce, message);
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
 
         assertEq(decodedSender, sender, "Max sender mismatch");
         assertEq(decodedNonce, messageNonce, "Max nonce mismatch");
@@ -377,7 +377,7 @@ contract PortalMessageTest is Test {
 
     function test_NonAlignedMessageLength() public pure {
         address sender = address(0x1);
-        uint256 messageNonce = 1;
+        uint128 messageNonce = 1;
 
         // Test various non-32-aligned message lengths
         for (uint256 len = 1; len <= 65; len++) {
@@ -400,7 +400,7 @@ contract PortalMessageTest is Test {
 
     function test_GasComparison_Encode() public pure {
         address sender = address(0x1234567890AbcdEF1234567890aBcdef12345678);
-        uint256 messageNonce = 42;
+        uint128 messageNonce = 42;
         bytes memory message = hex"deadbeefcafebabe0102030405060708";
 
         // Compact encoding
@@ -412,7 +412,7 @@ contract PortalMessageTest is Test {
         // Compact should be significantly smaller
         assertLt(compactPayload.length, abiPayload.length, "Compact should be smaller than ABI encoding");
 
-        // Verify compact payload is exactly 52 + message.length
-        assertEq(compactPayload.length, 52 + message.length, "Compact length should be 52 + message.length");
+        // Verify compact payload is exactly 36 + message.length
+        assertEq(compactPayload.length, 36 + message.length, "Compact length should be 36 + message.length");
     }
 }

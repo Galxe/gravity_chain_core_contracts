@@ -60,129 +60,50 @@ contract GravityPortalTest is Test {
     // SEND MESSAGE TESTS
     // ========================================================================
 
-    function test_SendMessage() public {
+    function test_Send() public {
         bytes memory message = abi.encode(uint256(100), bob);
         uint256 fee = portal.calculateFee(message.length);
 
         vm.prank(alice);
-        uint256 nonce = portal.sendMessage{ value: fee }(message);
+        uint128 nonce = portal.send{ value: fee }(message);
 
         assertEq(nonce, 0);
         assertEq(portal.nonce(), 1);
     }
 
-    function test_SendMessage_EmitsEventWithCompactEncoding() public {
+    function test_Send_EmitsEvent() public {
         bytes memory message = abi.encode(uint256(100), bob);
         uint256 fee = portal.calculateFee(message.length);
 
-        // Build expected payload using compact encoding
-        bytes memory expectedPayload = PortalMessage.encode(alice, uint256(0), message);
-        bytes32 expectedHash = keccak256(expectedPayload);
+        // Build expected encoded payload
+        bytes memory expectedPayload = PortalMessage.encode(alice, 0, message);
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IGravityPortal.MessageSent(expectedHash, alice, 0, expectedPayload);
-        portal.sendMessage{ value: fee }(message);
+        emit IGravityPortal.MessageSent(0, expectedPayload);
+        portal.send{ value: fee }(message);
     }
 
-    function test_SendMessage_IncrementingNonce() public {
+    function test_Send_IncrementingNonce() public {
         bytes memory message = hex"1234";
         uint256 fee = portal.calculateFee(message.length);
 
         vm.startPrank(alice);
-        assertEq(portal.sendMessage{ value: fee }(message), 0);
-        assertEq(portal.sendMessage{ value: fee }(message), 1);
-        assertEq(portal.sendMessage{ value: fee }(message), 2);
+        assertEq(portal.send{ value: fee }(message), 0);
+        assertEq(portal.send{ value: fee }(message), 1);
+        assertEq(portal.send{ value: fee }(message), 2);
         vm.stopPrank();
 
         assertEq(portal.nonce(), 3);
     }
 
-    function test_SendMessage_RevertWhenInsufficientFee() public {
+    function test_Send_RevertWhenInsufficientFee() public {
         bytes memory message = abi.encode(uint256(100), bob);
 
-        // The actual payload is compact encoded so sending 0 wei should fail
+        // Sending 0 wei should fail
         vm.prank(alice);
         vm.expectRevert(); // Will revert with InsufficientFee
-        portal.sendMessage{ value: 0 }(message);
-    }
-
-    function test_SendMessageWithData() public {
-        bytes memory message = abi.encode(uint256(100), bob);
-        uint256 fee = portal.calculateFee(message.length);
-
-        vm.prank(alice);
-        uint256 nonce = portal.sendMessageWithData{ value: fee }(message);
-
-        assertEq(nonce, 0);
-        assertEq(portal.nonce(), 1);
-    }
-
-    function test_SendMessageWithData_EmitsEventWithCompactEncoding() public {
-        bytes memory message = abi.encode(uint256(100), bob);
-        uint256 fee = portal.calculateFee(message.length);
-
-        bytes memory expectedPayload = PortalMessage.encode(alice, uint256(0), message);
-        bytes32 expectedHash = keccak256(expectedPayload);
-
-        vm.prank(alice);
-        vm.expectEmit(true, true, true, true);
-        emit IGravityPortal.MessageSentWithData(expectedHash, alice, 0, expectedPayload);
-        portal.sendMessageWithData{ value: fee }(message);
-    }
-
-    // ========================================================================
-    // COMPACT ENCODING VERIFICATION TESTS
-    // ========================================================================
-
-    function test_CompactEncodingFormat() public {
-        bytes memory message = hex"deadbeef";
-        uint256 fee = portal.calculateFee(message.length);
-
-        vm.prank(alice);
-
-        // Capture the event
-        vm.recordLogs();
-        portal.sendMessage{ value: fee }(message);
-
-        // Get the emitted event
-        Vm.Log[] memory entries = vm.getRecordedLogs();
-        assertEq(entries.length, 1, "Should emit one event");
-
-        // Decode the payload from the event
-        bytes memory payload = abi.decode(entries[0].data, (bytes));
-
-        // Verify compact encoding: 20 (sender) + 32 (nonce) + message.length = 56 bytes
-        assertEq(payload.length, 52 + message.length, "Compact payload length");
-
-        // Decode and verify
-        (address sender, uint256 nonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
-        assertEq(sender, alice, "Decoded sender");
-        assertEq(nonce, 0, "Decoded nonce");
-        assertEq(decodedMessage, message, "Decoded message");
-    }
-
-    function test_CompactEncodingSmallerThanAbi() public {
-        bytes memory message = hex"0102030405060708";
-        uint256 fee = portal.calculateFee(message.length);
-
-        vm.prank(alice);
-
-        vm.recordLogs();
-        portal.sendMessage{ value: fee }(message);
-
-        Vm.Log[] memory entries = vm.getRecordedLogs();
-        bytes memory compactPayload = abi.decode(entries[0].data, (bytes));
-
-        // Compare with ABI encoding
-        bytes memory abiPayload = abi.encode(alice, uint256(0), message);
-
-        // Compact should be significantly smaller
-        assertLt(compactPayload.length, abiPayload.length, "Compact should be smaller");
-
-        // Compact: 52 + 8 = 60 bytes
-        // ABI: ~160+ bytes (with dynamic bytes overhead)
-        assertEq(compactPayload.length, 60, "Compact should be exactly 60 bytes");
+        portal.send{ value: 0 }(message);
     }
 
     // ========================================================================
@@ -190,14 +111,14 @@ contract GravityPortalTest is Test {
     // ========================================================================
 
     function test_CalculateFee() public view {
-        // Test with 0 bytes: 52 (header) * feePerByte + baseFee
-        assertEq(portal.calculateFee(0), INITIAL_BASE_FEE + 52 * INITIAL_FEE_PER_BYTE);
+        // Test with 0 bytes: 36 (header) * feePerByte + baseFee
+        assertEq(portal.calculateFee(0), INITIAL_BASE_FEE + 36 * INITIAL_FEE_PER_BYTE);
 
-        // Test with 32 bytes: 84 bytes total
-        assertEq(portal.calculateFee(32), INITIAL_BASE_FEE + 84 * INITIAL_FEE_PER_BYTE);
+        // Test with 32 bytes: 68 bytes total
+        assertEq(portal.calculateFee(32), INITIAL_BASE_FEE + 68 * INITIAL_FEE_PER_BYTE);
 
-        // Test with 100 bytes: 152 bytes total
-        assertEq(portal.calculateFee(100), INITIAL_BASE_FEE + 152 * INITIAL_FEE_PER_BYTE);
+        // Test with 100 bytes: 136 bytes total
+        assertEq(portal.calculateFee(100), INITIAL_BASE_FEE + 136 * INITIAL_FEE_PER_BYTE);
     }
 
     function testFuzz_CalculateFee(
@@ -206,8 +127,8 @@ contract GravityPortalTest is Test {
         messageLength = bound(messageLength, 0, 10000);
 
         uint256 fee = portal.calculateFee(messageLength);
-        // Compact encoding: 52 bytes overhead + message length
-        uint256 expectedPayloadLength = 52 + messageLength;
+        // Compact encoding: 36 bytes overhead + message length
+        uint256 expectedPayloadLength = 36 + messageLength;
         uint256 expectedFee = INITIAL_BASE_FEE + (expectedPayloadLength * INITIAL_FEE_PER_BYTE);
 
         assertEq(fee, expectedFee);
@@ -284,7 +205,7 @@ contract GravityPortalTest is Test {
         uint256 fee = portal.calculateFee(message.length);
 
         vm.prank(alice);
-        portal.sendMessage{ value: fee }(message);
+        portal.send{ value: fee }(message);
 
         uint256 portalBalance = address(portal).balance;
         uint256 recipientBalanceBefore = feeRecipient.balance;
@@ -307,7 +228,7 @@ contract GravityPortalTest is Test {
         bytes memory message = hex"1234";
         uint256 fee = portal.calculateFee(message.length);
         vm.prank(alice);
-        portal.sendMessage{ value: fee }(message);
+        portal.send{ value: fee }(message);
 
         // Anyone can call withdrawFees (but funds go to feeRecipient)
         vm.prank(bob);
@@ -434,7 +355,7 @@ contract GravityPortalTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_SendMessage(
+    function testFuzz_Send(
         bytes calldata message,
         uint256 extraFee
     ) public {
@@ -442,7 +363,7 @@ contract GravityPortalTest is Test {
         uint256 requiredFee = portal.calculateFee(message.length);
 
         vm.prank(alice);
-        uint256 nonce = portal.sendMessage{ value: requiredFee + extraFee }(message);
+        uint128 nonce = portal.send{ value: requiredFee + extraFee }(message);
 
         assertEq(nonce, 0);
         assertGe(address(portal).balance, requiredFee);
@@ -464,24 +385,31 @@ contract GravityPortalTest is Test {
         assertEq(portal.feePerByte(), feePerByte);
     }
 
-    function testFuzz_PayloadEncodingConsistency(
+    function testFuzz_SendEmitsCorrectEvent(
         address sender,
         bytes memory message
     ) public {
-        // Verify that the portal's encoding matches the library's encoding
         uint256 fee = portal.calculateFee(message.length);
 
         vm.deal(sender, fee);
         vm.prank(sender);
 
         vm.recordLogs();
-        portal.sendMessage{ value: fee }(message);
+        portal.send{ value: fee }(message);
 
         Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 1, "Should emit one event");
+
+        // Verify event topics
+        // topic[0] is the event signature
+        // topic[1] is indexed nonce
+        assertEq(entries[0].topics[1], bytes32(uint256(0)), "First message nonce should be 0");
+
+        // Verify event data (encoded payload)
         bytes memory emittedPayload = abi.decode(entries[0].data, (bytes));
 
-        // Decode using library
-        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) =
+        // Decode the payload and verify contents
+        (address decodedSender, uint128 decodedNonce, bytes memory decodedMessage) =
             PortalMessage.decode(emittedPayload);
 
         assertEq(decodedSender, sender, "Sender should match");

@@ -128,12 +128,17 @@ interface INativeOracle {
     ///      of the given type unless overridden by a specialized callback.
     /// @param sourceType The source type
     /// @param callback The callback contract address (address(0) to unregister)
-    function setDefaultCallback(uint32 sourceType, address callback) external;
+    function setDefaultCallback(
+        uint32 sourceType,
+        address callback
+    ) external;
 
     /// @notice Get the default callback handler for a source type
     /// @param sourceType The source type
     /// @return callback The default callback address (address(0) if not set)
-    function getDefaultCallback(uint32 sourceType) external view returns (address callback);
+    function getDefaultCallback(
+        uint32 sourceType
+    ) external view returns (address callback);
 
     /// @notice Register a specialized callback handler for a specific source
     /// @dev Only callable by GOVERNANCE. This callback overrides the default
@@ -141,14 +146,21 @@ interface INativeOracle {
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
-    function setCallback(uint32 sourceType, uint256 sourceId, address callback) external;
+    function setCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        address callback
+    ) external;
 
     /// @notice Get the effective callback handler for a source (2-layer resolution)
     /// @dev Returns specialized callback if set, otherwise returns default callback.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @return callback The effective callback address (address(0) if none set)
-    function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address callback);
+    function getCallback(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (address callback);
 
     // ========================================================================
     // QUERY FUNCTIONS
@@ -160,23 +172,31 @@ interface INativeOracle {
     /// @param sourceId The source identifier
     /// @param nonce The nonce
     /// @return record The data record (recordedAt = 0 if not found)
-    function getRecord(uint32 sourceType, uint256 sourceId, uint128 nonce)
-        external
-        view
-        returns (DataRecord memory record);
+    function getRecord(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (DataRecord memory record);
 
     /// @notice Get the latest nonce for a source
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @return nonce The latest nonce (0 if no records)
-    function getLatestNonce(uint32 sourceType, uint256 sourceId) external view returns (uint128 nonce);
+    function getLatestNonce(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (uint128 nonce);
 
     /// @notice Check if a source has synced past a certain point
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce to check
     /// @return True if latestNonce >= nonce
-    function isSyncedPast(uint32 sourceType, uint256 sourceId, uint128 nonce) external view returns (bool);
+    function isSyncedPast(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (bool);
 }
 
 /// @title IOracleCallback
@@ -190,5 +210,10 @@ interface IOracleCallback {
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
-    function onOracleEvent(uint32 sourceType, uint256 sourceId, uint128 nonce, bytes calldata payload) external;
+    function onOracleEvent(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload
+    ) external;
 }

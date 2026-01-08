@@ -60,7 +60,7 @@ contract GTokenBridge is IGTokenBridge {
     function bridgeToGravity(
         uint256 amount,
         address recipient
-    ) external payable returns (uint256 messageNonce) {
+    ) external payable returns (uint128 messageNonce) {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroRecipient();
 
@@ -72,7 +72,7 @@ contract GTokenBridge is IGTokenBridge {
         bytes memory message = abi.encode(amount, recipient);
 
         // Send message through GravityPortal (forwards ETH for fee)
-        messageNonce = IGravityPortal(gravityPortal).sendMessage{ value: msg.value }(message);
+        messageNonce = IGravityPortal(gravityPortal).send{ value: msg.value }(message);
 
         emit TokensLocked(msg.sender, recipient, amount, messageNonce);
     }

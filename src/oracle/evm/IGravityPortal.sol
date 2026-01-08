@@ -6,28 +6,16 @@ pragma solidity ^0.8.30;
 /// @notice Interface for the GravityPortal contract deployed on Ethereum
 /// @dev Entry point for sending messages from Ethereum to Gravity chain.
 ///      Messages are fee-based with configurable baseFee and feePerByte.
-///      Supports two modes: hash-only (sendMessage) and full data (sendMessageWithData).
-///      Uses compact encoding: sender (20 bytes) + nonce (32 bytes) + message (variable).
+///      Uses compact encoding: sender (20 bytes) + nonce (16 bytes) + message (variable).
 interface IGravityPortal {
     // ========================================================================
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when a message is sent (hash-only mode)
-    /// @param payloadHash The keccak256 hash of the full payload
-    /// @param sender The address that called sendMessage (msg.sender)
-    /// @param nonce The unique nonce for this message
-    /// @param payload The full payload: sender (20B) || nonce (32B) || message
-    event MessageSent(bytes32 indexed payloadHash, address indexed sender, uint256 indexed nonce, bytes payload);
-
-    /// @notice Emitted when a message is sent (data mode, stored on Gravity)
-    /// @param payloadHash The keccak256 hash of the full payload
-    /// @param sender The address that called sendMessageWithData
-    /// @param nonce The unique nonce for this message
-    /// @param payload The full payload: sender (20B) || nonce (32B) || message
-    event MessageSentWithData(
-        bytes32 indexed payloadHash, address indexed sender, uint256 indexed nonce, bytes payload
-    );
+    /// @notice Emitted when a message is sent to Gravity
+    /// @param nonce The unique nonce for this message (extracted for consensus engine)
+    /// @param payload The encoded payload: sender (20B) || nonce (16B) || message
+    event MessageSent(uint128 indexed nonce, bytes payload);
 
     /// @notice Emitted when fee configuration is updated
     /// @param baseFee The new base fee
@@ -63,23 +51,13 @@ interface IGravityPortal {
     // MESSAGE BRIDGING
     // ========================================================================
 
-    /// @notice Send a message to Gravity (hash-only mode, storage-efficient)
-    /// @dev The full payload uses compact encoding: sender (20B) || nonce (32B) || message
-    ///      Only the hash is stored on Gravity; users must provide pre-image for verification.
+    /// @notice Send a message to Gravity
+    /// @dev The payload uses compact encoding: sender (20B) || nonce (16B) || message
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
-    function sendMessage(
+    function send(
         bytes calldata message
-    ) external payable returns (uint256 messageNonce);
-
-    /// @notice Send a message to Gravity (data mode, stored on-chain)
-    /// @dev The full payload uses compact encoding: sender (20B) || nonce (32B) || message
-    ///      The full payload is stored on Gravity for direct access.
-    /// @param message The message body to send
-    /// @return messageNonce The nonce assigned to this message
-    function sendMessageWithData(
-        bytes calldata message
-    ) external payable returns (uint256 messageNonce);
+    ) external payable returns (uint128 messageNonce);
 
     // ========================================================================
     // FEE MANAGEMENT (Owner Only)
@@ -124,11 +102,11 @@ interface IGravityPortal {
 
     /// @notice Get the current nonce (next message will use this nonce)
     /// @return The current nonce
-    function nonce() external view returns (uint256);
+    function nonce() external view returns (uint128);
 
     /// @notice Calculate the required fee for a message of given length
     /// @dev Fee = baseFee + (encodedPayloadLength * feePerByte)
-    ///      Encoded payload = 52 bytes (sender + nonce) + message length
+    ///      Encoded payload = 36 bytes (sender + nonce) + message length
     /// @param messageLength Length of the message in bytes
     /// @return requiredFee The required fee in wei
     function calculateFee(

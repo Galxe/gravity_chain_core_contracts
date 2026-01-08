@@ -100,7 +100,10 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function setDefaultCallback(uint32 sourceType, address callback) external {
+    function setDefaultCallback(
+        uint32 sourceType,
+        address callback
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         address oldCallback = _defaultCallbacks[sourceType];
@@ -110,12 +113,18 @@ contract NativeOracle is INativeOracle {
     }
 
     /// @inheritdoc INativeOracle
-    function getDefaultCallback(uint32 sourceType) external view returns (address callback) {
+    function getDefaultCallback(
+        uint32 sourceType
+    ) external view returns (address callback) {
         return _defaultCallbacks[sourceType];
     }
 
     /// @inheritdoc INativeOracle
-    function setCallback(uint32 sourceType, uint256 sourceId, address callback) external {
+    function setCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        address callback
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
         address oldCallback = _callbacks[sourceType][sourceId];
@@ -125,7 +134,10 @@ contract NativeOracle is INativeOracle {
     }
 
     /// @inheritdoc INativeOracle
-    function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address callback) {
+    function getCallback(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (address callback) {
         address specialized = _callbacks[sourceType][sourceId];
         if (specialized != address(0)) {
             return specialized;
@@ -138,21 +150,28 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function getRecord(uint32 sourceType, uint256 sourceId, uint128 nonce)
-        external
-        view
-        returns (DataRecord memory)
-    {
+    function getRecord(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (DataRecord memory) {
         return _records[sourceType][sourceId][nonce];
     }
 
     /// @inheritdoc INativeOracle
-    function getLatestNonce(uint32 sourceType, uint256 sourceId) external view returns (uint128 nonce) {
+    function getLatestNonce(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (uint128 nonce) {
         return _nonces[sourceType][sourceId];
     }
 
     /// @inheritdoc INativeOracle
-    function isSyncedPast(uint32 sourceType, uint256 sourceId, uint128 nonce) external view returns (bool) {
+    function isSyncedPast(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (bool) {
         uint128 latestNonce = _nonces[sourceType][sourceId];
         return latestNonce > 0 && latestNonce >= nonce;
     }
@@ -166,7 +185,11 @@ contract NativeOracle is INativeOracle {
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The new nonce (must be > current nonce)
-    function _updateNonce(uint32 sourceType, uint256 sourceId, uint128 nonce) internal {
+    function _updateNonce(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) internal {
         uint128 currentNonce = _nonces[sourceType][sourceId];
 
         // Nonce must be strictly increasing (currentNonce defaults to 0, so first nonce must be >= 1)
@@ -182,7 +205,10 @@ contract NativeOracle is INativeOracle {
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @return callback The resolved callback address (address(0) if none set)
-    function _resolveCallback(uint32 sourceType, uint256 sourceId) internal view returns (address callback) {
+    function _resolveCallback(
+        uint32 sourceType,
+        uint256 sourceId
+    ) internal view returns (address callback) {
         address specialized = _callbacks[sourceType][sourceId];
         if (specialized != address(0)) {
             return specialized;

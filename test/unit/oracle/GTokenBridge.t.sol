@@ -127,7 +127,7 @@ contract GTokenBridgeTest is Test {
         gToken.approve(address(bridge), amount);
 
         // Bridge
-        uint256 nonce = bridge.bridgeToGravity{ value: fee }(amount, bob);
+        uint128 nonce = bridge.bridgeToGravity{ value: fee }(amount, bob);
         vm.stopPrank();
 
         // Verify
@@ -251,7 +251,7 @@ contract GTokenBridgeTest is Test {
 
         vm.startPrank(alice);
         gToken.approve(address(bridge), amount);
-        uint256 nonce = bridge.bridgeToGravity{ value: fee }(amount, recipient);
+        uint128 nonce = bridge.bridgeToGravity{ value: fee }(amount, recipient);
         vm.stopPrank();
 
         assertEq(nonce, 0);

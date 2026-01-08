@@ -16,7 +16,7 @@ interface IGTokenBridge {
     /// @param recipient The recipient address on Gravity
     /// @param amount The amount of tokens locked
     /// @param nonce The portal nonce for this bridge operation
-    event TokensLocked(address indexed from, address indexed recipient, uint256 amount, uint256 indexed nonce);
+    event TokensLocked(address indexed from, address indexed recipient, uint256 amount, uint128 indexed nonce);
 
     // ========================================================================
     // ERRORS
@@ -45,7 +45,7 @@ interface IGTokenBridge {
     function bridgeToGravity(
         uint256 amount,
         address recipient
-    ) external payable returns (uint256 messageNonce);
+    ) external payable returns (uint128 messageNonce);
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -69,4 +69,3 @@ interface IGTokenBridge {
         address recipient
     ) external view returns (uint256 requiredFee);
 }
-

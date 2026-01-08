@@ -39,11 +39,15 @@ contract MockOracleCallback is IOracleCallback {
         callCount++;
     }
 
-    function setRevert(bool _shouldRevert) external {
+    function setRevert(
+        bool _shouldRevert
+    ) external {
         shouldRevert = _shouldRevert;
     }
 
-    function setConsumeAllGas(bool _shouldConsumeAllGas) external {
+    function setConsumeAllGas(
+        bool _shouldConsumeAllGas
+    ) external {
         shouldConsumeAllGas = _shouldConsumeAllGas;
     }
 }
@@ -517,7 +521,10 @@ contract NativeOracleTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_Record(bytes memory payload, uint128 nonce) public {
+    function testFuzz_Record(
+        bytes memory payload,
+        uint128 nonce
+    ) public {
         vm.assume(nonce > 0);
 
         vm.prank(systemCaller);
@@ -528,7 +535,10 @@ contract NativeOracleTest is Test {
         assertEq(record.data, payload);
     }
 
-    function testFuzz_NonceMustIncrease(uint128 nonce1, uint128 nonce2) public {
+    function testFuzz_NonceMustIncrease(
+        uint128 nonce1,
+        uint128 nonce2
+    ) public {
         vm.assume(nonce1 > 0);
         vm.assume(nonce2 <= nonce1);
 
@@ -550,7 +560,11 @@ contract NativeOracleTest is Test {
         oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce2, payload2, CALLBACK_GAS_LIMIT);
     }
 
-    function testFuzz_SourceTypeAndId(uint32 sourceType, uint256 sourceId, uint128 nonce) public {
+    function testFuzz_SourceTypeAndId(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) public {
         vm.assume(nonce > 0);
 
         bytes memory payload = abi.encode("test", sourceType, sourceId);

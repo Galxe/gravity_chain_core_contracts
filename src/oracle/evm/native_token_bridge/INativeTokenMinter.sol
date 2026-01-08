@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IMessageHandler } from "../IBlockchainEventRouter.sol";
-
 /// @title INativeTokenMinter
 /// @author Gravity Team
 /// @notice Interface for the NativeTokenMinter contract on Gravity
 /// @dev Mints native G tokens when bridge messages are received from GTokenBridge.
-///      Implements IMessageHandler to receive routed messages from BlockchainEventRouter.
+///      Inherits from BlockchainEventHandler to receive routed messages from NativeOracle.
 ///      Uses a system precompile to mint native tokens.
-interface INativeTokenMinter is IMessageHandler {
+interface INativeTokenMinter {
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -18,19 +16,16 @@ interface INativeTokenMinter is IMessageHandler {
     /// @param recipient The address receiving the minted tokens
     /// @param amount The amount of tokens minted
     /// @param nonce The bridge nonce (for tracking)
-    event NativeMinted(address indexed recipient, uint256 amount, uint256 indexed nonce);
+    event NativeMinted(address indexed recipient, uint256 amount, uint128 indexed nonce);
 
     /// @notice Emitted when minting fails (logged but doesn't revert router)
     /// @param nonce The bridge nonce that failed
     /// @param reason The failure reason
-    event MintFailed(uint256 indexed nonce, bytes reason);
+    event MintFailed(uint128 indexed nonce, bytes reason);
 
     // ========================================================================
     // ERRORS
     // ========================================================================
-
-    /// @notice Only BlockchainEventRouter can call handleMessage
-    error OnlyRouter();
 
     /// @notice Message sender is not the trusted bridge
     /// @param sender The actual sender
@@ -39,7 +34,7 @@ interface INativeTokenMinter is IMessageHandler {
 
     /// @notice Nonce has already been processed (replay protection)
     /// @param nonce The duplicate nonce
-    error AlreadyProcessed(uint256 nonce);
+    error AlreadyProcessed(uint128 nonce);
 
     /// @notice Minter has not been initialized
     error MinterNotInitialized();
@@ -63,7 +58,7 @@ interface INativeTokenMinter is IMessageHandler {
     /// @param nonce The nonce to check
     /// @return True if the nonce has been processed
     function isProcessed(
-        uint256 nonce
+        uint128 nonce
     ) external view returns (bool);
 
     /// @notice Get the trusted bridge address on Ethereum
@@ -88,4 +83,3 @@ interface INativeMintPrecompile {
         uint256 amount
     ) external;
 }
-
