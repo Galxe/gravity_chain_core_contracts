@@ -89,5 +89,17 @@ library SystemAddresses {
     /// @notice Native mint precompile
     /// @dev Callable by authorized system contracts to mint native G tokens
     address internal constant NATIVE_MINT_PRECOMPILE = address(0x0000000000000000000000000001625F2100);
+
+    /// @notice Oracle task configuration contract
+    /// @dev Stores configuration for continuous oracle tasks that validators monitor
+    address internal constant ORACLE_TASK_CONFIG = address(0x0000000000000000000000000001625F2030);
+
+    /// @notice On-demand oracle task configuration contract
+    /// @dev Defines which on-demand request types the consensus engine supports
+    address internal constant ON_DEMAND_ORACLE_TASK_CONFIG = address(0x0000000000000000000000000001625F2031);
+
+    /// @notice Oracle request queue contract
+    /// @dev Accepts user-initiated on-demand oracle requests with fee payment
+    address internal constant ORACLE_REQUEST_QUEUE = address(0x0000000000000000000000000001625F2032);
 }
 
