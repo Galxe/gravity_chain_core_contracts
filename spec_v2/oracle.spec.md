@@ -8,83 +8,114 @@ layer: oracle
 
 ## Overview
 
-The Native Oracle module stores and verifies data from external sources, enabling Gravity smart contracts to access
-validated information from other blockchains and real-world systems. The oracle is powered by the Gravity validator
-consensus—information is only accepted after validators reach consensus on its validity.
+The Native Oracle module enables Gravity to receive and store **verified external data** from any source. It consists of multiple contracts deployed across chains, providing:
 
-**Supported data sources include:**
+1. **Message bridging** from external blockchains via fee-based portals
+2. **Consensus-validated data recording** on Gravity
+3. **Flexible callback routing** based on event type and sender
+4. **Native token bridging** (G token: ERC20 on Ethereum ↔ native on Gravity)
+
+**Supported data sources include (extensible via governance):**
 
 - **Blockchains**: Ethereum, other EVM chains (events, state roots, etc.)
-- **Real-world state**: JWK keys (Google, Apple, etc.), DNS records, and other verifiable data
-
-## Design Goals
-
-1. **Consensus-Gated**: Only SYSTEM_CALLER (consensus engine) can record data after validators agree
-2. **Storage Flexibility**: Hash-only mode (storage-efficient) or data mode (direct access)
-3. **Callback Support**: Optional callbacks for event-driven processing
-4. **Governance Control**: Callback registration requires governance approval (GOVERNANCE)
-5. **Failure Tolerance**: Callback failures do NOT revert oracle recording
-6. **Source Isolation**: Independent sync tracking per source
+- **JWK Keys**: OAuth providers (Google, Apple, etc.) for signature verification
+- **DNS Records**: TXT records, DKIM keys for zkEmail
+- **Price Feeds**: Stock prices, crypto prices, forex rates
+- **Any custom source**: Extensible via governance
 
 ---
 
 ## Architecture
 
 ```
-src/oracle/
-├── INativeOracle.sol  # Interface with events, errors, and data structures
-└── NativeOracle.sol   # Core implementation
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              ETHEREUM                                       │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                        GravityPortal                                 │  │
+│   │                                                                      │  │
+│   │  • Fee-based message bridge (baseFee + feePerByte)                  │  │
+│   │  • Two modes: sendMessage (hash) / sendMessageWithData (full)       │  │
+│   │  • Encodes: abi.encode(msg.sender, nonce, message)                  │  │
+│   │  • Emits MessageSent / MessageSentWithData events                   │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                     ▲                                       │
+│                                     │ Calls sendMessage()                  │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                          GTokenBridge                                │  │
+│   │                                                                      │  │
+│   │  • Locks G tokens (ERC20) in escrow                                 │  │
+│   │  • Calls GravityPortal with bridge message                          │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     │ Consensus engine monitors events
+                                     │ Validators reach consensus
+                                     ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              GRAVITY CHAIN                                  │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                    SYSTEM_CALLER (Consensus)                         │  │
+│   │                    Calls recordHash / recordData                     │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                                    ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                         NativeOracle                                 │  │
+│   │                                                                      │  │
+│   │  • Stores verified hashes and data                                  │  │
+│   │  • Tracks sync status per source (sourceType + sourceId)            │  │
+│   │  • Invokes callbacks with LIMITED GAS (500,000)                     │  │
+│   │  • Callback failures do NOT revert recording                        │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                         │                                                   │
+│                         │ Callback: onOracleEvent()                        │
+│                         ▼                                                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                   BlockchainEventRouter                              │  │
+│   │                   (Callback for BLOCKCHAIN events)                   │  │
+│   │                                                                      │  │
+│   │  • Decodes sender from payload                                      │  │
+│   │  • Routes to handlers based on sender address                       │  │
+│   │  • Handler registration controlled by GOVERNANCE                    │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                         │                                                   │
+│                         │ handleMessage() by sender                        │
+│                         ▼                                                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                      NativeTokenMinter                               │  │
+│   │                      (Handler for GTokenBridge)                      │  │
+│   │                                                                      │  │
+│   │  • Verifies sender is trusted GTokenBridge                          │  │
+│   │  • Mints native G tokens via system precompile                      │  │
+│   │  • Tracks processed nonces for replay protection                    │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### System Address
+### Contract Deployment
 
-| Constant | Address | Description |
-|----------|---------|-------------|
-| `NATIVE_ORACLE` | `0x0000000000000000000000000001625F2023` | Native Oracle contract |
-
-### Dependency Graph
-
-```mermaid
-flowchart TD
-    subgraph ExternalChains[External Chains]
-        GP[GravityPortal on Ethereum]
-    end
-    
-    subgraph GravityChain[Gravity Chain]
-        CE[Consensus Engine]
-        SC[SYSTEM_CALLER]
-        NO[NativeOracle]
-        CB[Callback Handler]
-    end
-    
-    GP -->|Events monitored by| CE
-    CE -->|Reaches consensus| SC
-    SC -->|recordHash/recordData| NO
-    NO -->|onOracleEvent| CB
-    
-    GOV[Governance] -->|setCallback| NO
-
-    subgraph Foundation[Foundation Layer]
-        SA[SystemAddresses]
-        SAC[SystemAccessControl]
-        E[Errors]
-    end
-    
-    NO --> SA
-    NO --> SAC
-    NO --> E
-```
+| Chain    | Contract              | System Address                           |
+| -------- | --------------------- | ---------------------------------------- |
+| Ethereum | GravityPortal         | Regular deployment                       |
+| Ethereum | GTokenBridge          | Regular deployment                       |
+| Gravity  | NativeOracle          | `0x0000000000000000000000000001625F2023` |
+| Gravity  | BlockchainEventRouter | `0x0000000000000000000000000001625F202B` |
+| Gravity  | NativeTokenMinter     | `0x0000000000000000000000000001625F202C` |
 
 ---
 
 ## Storage Modes
 
-The Native Oracle supports two storage modes to balance efficiency and accessibility:
+The oracle supports two storage modes to balance efficiency and accessibility:
 
 ### 1. Hash Storage Mode (Storage-Efficient)
 
-Stores only the hash of verified data. When verifying, users provide the original data (pre-image) as transaction
-calldata (much cheaper than storage), and the contract hashes it to recover and verify against the stored hash.
+Stores only the hash of verified data. Users provide the original data (pre-image) as transaction calldata for
+verification.
 
 **Use cases:**
 
@@ -99,29 +130,128 @@ User transaction calldata: original_data
 Contract execution: keccak256(original_data) == stored_hash
 ```
 
+**Verification helper functions:**
+
+The oracle provides helper functions for verifying data:
+
+- `verifyHash(bytes32 dataHash)` - Check if a hash exists and get its record
+- `verifyPreImage(bytes calldata preImage)` - Verify original data matches a stored hash
+- `getData(bytes32 dataHash)` - Get stored data directly (for data mode records)
+
 ### 2. Data Storage Mode (Direct Access)
 
-Stores the full data on-chain, allowing smart contracts to access it directly without user input.
+Stores the full data on-chain for direct contract access.
 
 **Use cases:**
 
 - JWK keys (for signature verification)
-- DNS records (for use cases like zkEmail that rely on reading DNS records on-chain)
-- Any data that contracts need to read directly without user providing pre-image
+- DNS records (for zkEmail and similar use cases)
+- Any data contracts need to read directly on-chain
 
 ---
 
 ## Data Structures
 
+### Source Type
+
+Source types are represented as `uint32` values for extensibility. New source types can be added by governance without requiring contract upgrades.
+
+```solidity
+/// @notice Source type identifier (uint32)
+/// @dev Well-known types by convention:
+///      0 = BLOCKCHAIN (cross-chain events from EVM chains)
+///      1 = JWK (JSON Web Keys from OAuth providers)
+///      2 = DNS (DNS records for zkEmail, etc.)
+///      3 = PRICE_FEED (price data from oracles)
+///      New types can be added without contract upgrades
+uint32 sourceType;
+```
+
+| Value | Name       | Description                           |
+| ----- | ---------- | ------------------------------------- |
+| 0     | BLOCKCHAIN | Cross-chain events (Ethereum, BSC)    |
+| 1     | JWK        | JSON Web Keys (Google, Apple OAuth)   |
+| 2     | DNS        | DNS records (TXT, DKIM keys)          |
+| 3     | PRICE_FEED | Price data (stocks, crypto, forex)    |
+| 4+    | (Reserved) | New types added via governance        |
+
+### Source ID
+
+The `sourceId` is a flexible `uint256` that uniquely identifies a specific source within a source type. Its interpretation depends on the source type:
+
+```solidity
+/// @notice Source identifier (uint256)
+/// @dev Interpretation depends on sourceType:
+///      - BLOCKCHAIN: Chain ID (1 = Ethereum, 56 = BSC, etc.)
+///      - JWK: Provider ID (1 = Google, 2 = Apple, etc.)
+///      - DNS: Record type ID
+///      - PRICE_FEED: Asset pair ID
+uint256 sourceId;
+```
+
+| Source Type | Source ID | Example                        |
+| ----------- | --------- | ------------------------------ |
+| BLOCKCHAIN  | `1`       | Ethereum mainnet (chain ID)    |
+| BLOCKCHAIN  | `56`      | BNB Smart Chain (chain ID)     |
+| BLOCKCHAIN  | `42161`   | Arbitrum One (chain ID)        |
+| JWK         | `1`       | Google OAuth                   |
+| JWK         | `2`       | Apple Sign-In                  |
+| DNS         | `1`       | TXT records                    |
+| PRICE_FEED  | `1`       | ETH/USD                        |
+| PRICE_FEED  | `2`       | BTC/USD                        |
+
+### Source Name (Internal)
+
+Internally, the oracle computes a `sourceName` from source type and source ID for efficient storage:
+
+```solidity
+/// @notice Compute internal source name from source type and source ID
+/// @param sourceType The source type (uint32)
+/// @param sourceId The source identifier (uint256)
+/// @return sourceName = keccak256(abi.encode(sourceType, sourceId))
+function computeSourceName(uint32 sourceType, uint256 sourceId) pure returns (bytes32);
+```
+
+### Sync ID
+
+The `syncId` is a `uint128` value that tracks the sync status for each (sourceType, sourceId) pair.
+
+**Requirements:**
+- **Must start from 1**: The first syncId for any source must be >= 1 (cannot be 0)
+- **Strictly increasing**: Each subsequent syncId must be greater than the previous
+
+```solidity
+/// @notice Sync ID (uint128)
+/// @dev Must start from 1 and strictly increase for each source
+///      Interpretation depends on source type:
+///      - BLOCKCHAIN: Block number
+///      - JWK: Unix timestamp
+///      - DNS: Unix timestamp
+///      - PRICE_FEED: Sequence number or timestamp
+uint128 syncId;
+```
+
+| Source Type | syncId Meaning  | Example                     |
+| ----------- | --------------- | --------------------------- |
+| Blockchain  | Block number    | `19000000` (Ethereum block) |
+| JWK         | Unix timestamp  | `1704067200`                |
+| DNS         | Unix timestamp  | `1704067200`                |
+| Custom      | Sequence number | `1`, `2`, `3`, ...          |
+
+**Invariants:**
+- `syncId >= 1` for the first record
+- `syncId` must be strictly increasing for each (sourceType, sourceId) pair
+
 ### DataRecord
 
 ```solidity
 struct DataRecord {
-    bool exists;       // Whether this record exists
-    uint128 syncId;    // Sync ID when this was recorded (for ordering)
-    bytes data;        // Empty for hash-only mode, populated for data mode
+    uint128 syncId;    // Sync ID when recorded (0 = not exists)
+    bytes data;        // Empty for hash-only, populated for data mode
 }
 ```
+
+Record existence is determined by `syncId > 0`.
 
 ### SyncStatus
 
@@ -132,26 +262,142 @@ struct SyncStatus {
 }
 ```
 
-### EventType
+---
+
+## Contract: GravityPortal (Ethereum)
+
+Entry point on Ethereum for sending messages to Gravity. Charges fees in ETH.
+
+### Constants
 
 ```solidity
-enum EventType {
-    BLOCKCHAIN,  // Cross-chain events (Ethereum, BSC, etc.)
-    JWK,         // JWK key providers (Google, Apple, etc.)
-    DNS,         // DNS records
-    CUSTOM       // Custom/extensible sources
+/// @notice Minimum base fee (can be set to 0)
+uint256 public constant MIN_BASE_FEE = 0;
+```
+
+### State Variables
+
+```solidity
+/// @notice Base fee for any bridge operation (in wei)
+uint256 public baseFee;
+
+/// @notice Fee per byte of payload (in wei)
+uint256 public feePerByte;
+
+/// @notice Address receiving collected fees
+address public feeRecipient;
+
+/// @notice Monotonically increasing nonce
+uint256 public nonce;
+
+/// @notice Contract owner (can update fees)
+address public owner;
+```
+
+### Interface
+
+```solidity
+interface IGravityPortal {
+    // ========== Message Bridging ==========
+
+    /// @notice Send message to Gravity (hash-only mode)
+    /// @param message The message body
+    /// @return messageNonce The nonce assigned to this message
+    /// @dev Payload = abi.encode(msg.sender, nonce, message)
+    function sendMessage(bytes calldata message) external payable returns (uint256 messageNonce);
+
+    /// @notice Send message to Gravity (data mode, stored on-chain)
+    /// @param message The message body
+    /// @return messageNonce The nonce assigned to this message
+    function sendMessageWithData(bytes calldata message) external payable returns (uint256 messageNonce);
+
+    // ========== Fee Management (Owner Only) ==========
+
+    /// @notice Set base fee
+    function setBaseFee(uint256 newBaseFee) external;
+
+    /// @notice Set fee per byte
+    function setFeePerByte(uint256 newFeePerByte) external;
+
+    /// @notice Set fee recipient
+    function setFeeRecipient(address newRecipient) external;
+
+    /// @notice Withdraw collected fees to fee recipient
+    function withdrawFees() external;
+
+    // ========== View Functions ==========
+
+    /// @notice Calculate required fee for a message
+    /// @param messageLength Length of the message in bytes
+    /// @return requiredFee The fee in wei
+    function calculateFee(uint256 messageLength) external view returns (uint256 requiredFee);
 }
+```
+
+### Fee Calculation
+
+```solidity
+fee = baseFee + (encodedPayload.length * feePerByte)
+
+// Where encodedPayload = abi.encode(msg.sender, nonce, message)
+// Approximate: 32 (sender) + 32 (nonce) + message.length + ABI overhead
+```
+
+### Events
+
+```solidity
+/// @notice Emitted when a message is sent (hash-only mode)
+event MessageSent(
+    bytes32 indexed payloadHash,
+    address indexed sender,
+    uint256 indexed nonce,
+    bytes payload
+);
+
+/// @notice Emitted when a message is sent (data mode)
+event MessageSentWithData(
+    bytes32 indexed payloadHash,
+    address indexed sender,
+    uint256 indexed nonce,
+    bytes payload
+);
+
+/// @notice Emitted when fee configuration is updated
+event FeeConfigUpdated(uint256 baseFee, uint256 feePerByte);
+
+/// @notice Emitted when fee recipient is updated
+event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+
+/// @notice Emitted when fees are withdrawn
+event FeesWithdrawn(address indexed recipient, uint256 amount);
+```
+
+### Errors
+
+```solidity
+/// @notice Insufficient fee provided
+error InsufficientFee(uint256 required, uint256 provided);
+
+/// @notice Zero address not allowed
+error ZeroAddress();
+
+/// @notice No fees to withdraw
+error NoFeesToWithdraw();
+
+/// @notice Only owner can call
+error OnlyOwner();
 ```
 
 ---
 
-## Contract: `NativeOracle.sol`
+## Contract: NativeOracle (Gravity)
+
+Stores verified data from external sources. Only writable by SYSTEM_CALLER via consensus.
 
 ### Constants
 
 ```solidity
 /// @notice Gas limit for callback execution
-/// @dev Prevents malicious callbacks from consuming excessive gas
 uint256 public constant CALLBACK_GAS_LIMIT = 500_000;
 ```
 
@@ -162,6 +408,7 @@ uint256 public constant CALLBACK_GAS_LIMIT = 500_000;
 mapping(bytes32 => DataRecord) private _dataRecords;
 
 /// @notice Sync status per source: sourceName => SyncStatus
+/// @dev sourceName = keccak256(abi.encode(sourceType, sourceId))
 mapping(bytes32 => SyncStatus) private _syncStatus;
 
 /// @notice Callback handlers: sourceName => callback contract
@@ -178,395 +425,599 @@ bool private _initialized;
 
 ```solidity
 interface INativeOracle {
-    // ========== Initialization ==========
-    function initialize() external;
+    // ========== Recording (SYSTEM_CALLER Only) ==========
 
-    // ========== Recording (Consensus Only) ==========
-    function recordHash(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
-    function recordData(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
-    function recordHashBatch(bytes32[] calldata dataHashes, bytes32 sourceName, uint128 syncId, bytes[] calldata payloads) external;
-    function recordDataBatch(bytes32[] calldata dataHashes, bytes32 sourceName, uint128 syncId, bytes[] calldata payloads) external;
+    /// @notice Record a hash (hash-only mode)
+    /// @param dataHash The hash of the data being recorded
+    /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
+    /// @param sourceId The source identifier (e.g., chain ID for blockchains)
+    /// @param syncId The sync ID - must start from 1 and strictly increase
+    /// @param payload The event payload (for callback, not stored in hash mode)
+    function recordHash(
+        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 syncId,
+        bytes calldata payload
+    ) external;
 
-    // ========== Callback Management (Governance Only) ==========
-    function setCallback(bytes32 sourceName, address callback) external;
-    function getCallback(bytes32 sourceName) external view returns (address);
+    /// @notice Record data (data mode)
+    /// @param dataHash The hash of the data (for indexing and verification)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param syncId The sync ID - must start from 1 and strictly increase
+    /// @param payload The event payload (stored on-chain)
+    function recordData(
+        bytes32 dataHash,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 syncId,
+        bytes calldata payload
+    ) external;
+
+    /// @notice Batch record hashes
+    function recordHashBatch(
+        bytes32[] calldata dataHashes,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 syncId,
+        bytes[] calldata payloads
+    ) external;
+
+    /// @notice Batch record data
+    function recordDataBatch(
+        bytes32[] calldata dataHashes,
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 syncId,
+        bytes[] calldata payloads
+    ) external;
+
+    // ========== Callback Management (GOVERNANCE Only) ==========
+
+    /// @notice Register callback for a source
+    function setCallback(uint32 sourceType, uint256 sourceId, address callback) external;
+
+    /// @notice Get callback for a source
+    function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address);
 
     // ========== Verification ==========
-    function verifyHash(bytes32 dataHash) external view returns (bool exists, DataRecord memory record);
-    function verifyPreImage(bytes calldata preImage) external view returns (bool exists, DataRecord memory record);
-    function getData(bytes32 dataHash) external view returns (bytes memory data);
+
+    /// @notice Verify hash exists (existence determined by record.syncId > 0)
+    function verifyHash(bytes32 dataHash) external view returns (DataRecord memory record);
+
+    /// @notice Verify pre-image (existence determined by record.syncId > 0)
+    function verifyPreImage(bytes calldata preImage) external view returns (DataRecord memory record);
+
+    /// @notice Get stored data
+    function getData(bytes32 dataHash) external view returns (bytes memory);
 
     // ========== Sync Status ==========
-    function getSyncStatus(bytes32 sourceName) external view returns (SyncStatus memory);
-    function isSyncedPast(bytes32 sourceName, uint128 syncId) external view returns (bool);
 
-    // ========== Statistics ==========
-    function getTotalRecords() external view returns (uint256);
-    function isInitialized() external view returns (bool);
+    /// @notice Get sync status for a source
+    function getSyncStatus(uint32 sourceType, uint256 sourceId) external view returns (SyncStatus memory);
+
+    /// @notice Check if synced past a point
+    function isSyncedPast(uint32 sourceType, uint256 sourceId, uint128 syncId) external view returns (bool);
 
     // ========== Helpers ==========
-    function computeSourceName(EventType eventType, bytes32 sourceId) external pure returns (bytes32);
+
+    /// @notice Compute internal sourceName from sourceType and sourceId
+    function computeSourceName(uint32 sourceType, uint256 sourceId) external pure returns (bytes32);
+
+    /// @notice Get total records
+    function getTotalRecords() external view returns (uint256);
 }
 ```
 
----
-
-## Function Specifications
-
-### `initialize()`
-
-Initialize the oracle contract at genesis.
-
-**Access Control**: GENESIS only
-
-**Behavior**:
-1. Set `_initialized = true`
-
-**Reverts**:
-- `AlreadyInitialized` - Contract already initialized
-
----
-
-### `recordHash(dataHash, sourceName, syncId, payload)`
-
-Record a hash (hash-only mode, storage-efficient).
-
-**Access Control**: SYSTEM_CALLER only
-
-**Parameters**:
-- `dataHash` - The hash of the data being recorded
-- `sourceName` - The source identifier (hash of eventType + sourceId)
-- `syncId` - The sync ID (block height, timestamp, etc.) - must be > current
-- `payload` - The event payload (for callback, not stored)
-
-**Behavior**:
-1. Validate syncId is strictly increasing for this source
-2. Store record with `exists = true`, `syncId`, empty data
-3. Increment total records (if new hash)
-4. Emit `HashRecorded` event
-5. Invoke callback (if registered) with gas limit
-
-**Reverts**:
-- `OracleNotInitialized` - Contract not initialized
-- `SyncIdNotIncreasing` - syncId <= current syncId for source
-
----
-
-### `recordData(dataHash, sourceName, syncId, payload)`
-
-Record data (data mode, direct access).
-
-**Access Control**: SYSTEM_CALLER only
-
-**Parameters**: Same as `recordHash`
-
-**Behavior**:
-1. Validate syncId is strictly increasing for this source
-2. Store record with `exists = true`, `syncId`, `data = payload`
-3. Increment total records (if new hash)
-4. Emit `DataRecorded` event
-5. Invoke callback (if registered) with gas limit
-
----
-
-### `recordHashBatch(dataHashes, sourceName, syncId, payloads)`
-
-Batch record multiple hashes from the same source.
-
-**Access Control**: SYSTEM_CALLER only
-
-**Behavior**:
-1. Validate array lengths match
-2. Update sync status once for entire batch
-3. Record each hash and invoke callback
-
-**Reverts**:
-- `ArrayLengthMismatch` - Array lengths don't match
-
----
-
-### `setCallback(sourceName, callback)`
-
-Register a callback handler for a source.
-
-**Access Control**: GOVERNANCE only
-
-**Parameters**:
-- `sourceName` - The source identifier
-- `callback` - The callback contract address (address(0) to unregister)
-
-**Behavior**:
-1. Update callback mapping
-2. Emit `CallbackSet` event
-
----
-
-### `verifyHash(dataHash)`
-
-Verify a hash exists and get its record.
-
-**Access Control**: Anyone
-
-**Returns**:
-- `exists` - True if the hash is recorded
-- `record` - The data record (data field empty if hash-only mode)
-
----
-
-### `verifyPreImage(preImage)`
-
-Verify pre-image matches a recorded hash.
-
-**Access Control**: Anyone
-
-**Behavior**:
-1. Compute `keccak256(preImage)`
-2. Look up record
-
-**Returns**:
-- `exists` - True if hash(preImage) is recorded
-- `record` - The data record
-
----
-
-## Callback Interface
+### Callback Interface
 
 ```solidity
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failures are caught - they do NOT revert the oracle recording.
-    ///      Callbacks are invoked with limited gas (CALLBACK_GAS_LIMIT = 500,000).
+    /// @dev Callback failures are caught - do NOT revert oracle recording
+    /// @param dataHash The hash of the recorded data
+    /// @param payload The event payload
     function onOracleEvent(bytes32 dataHash, bytes calldata payload) external;
 }
 ```
 
-### Callback Execution (Failure-Tolerant)
+### Callback Execution
 
 ```solidity
-function _invokeCallback(bytes32 sourceName, bytes32 dataHash, bytes calldata payload) internal {
+function _invokeCallback(
+    bytes32 sourceName,
+    uint32 sourceType,
+    uint256 sourceId,
+    bytes32 dataHash,
+    bytes calldata payload
+) internal {
     address callback = _callbacks[sourceName];
     if (callback == address(0)) return;
 
-    // Try to call the callback with limited gas
-    // This prevents malicious callbacks from:
-    // 1. Consuming excessive gas
-    // 2. Blocking oracle updates by reverting
     try IOracleCallback(callback).onOracleEvent{gas: CALLBACK_GAS_LIMIT}(dataHash, payload) {
-        emit CallbackSuccess(sourceName, dataHash, callback);
+        emit CallbackSuccess(sourceType, sourceId, dataHash, callback);
     } catch (bytes memory reason) {
-        emit CallbackFailed(sourceName, dataHash, callback, reason);
+        emit CallbackFailed(sourceType, sourceId, dataHash, callback, reason);
     }
 }
 ```
 
----
-
-## Source Name Convention
-
-Sources are identified by a `bytes32` hash computed from event type and source ID:
+### Events
 
 ```solidity
-sourceName = keccak256(abi.encode(eventType, sourceId))
+event HashRecorded(
+    bytes32 indexed dataHash,
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 syncId
+);
+
+event DataRecorded(
+    bytes32 indexed dataHash,
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 syncId,
+    uint256 dataLength
+);
+
+event SyncStatusUpdated(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 previousSyncId,
+    uint128 newSyncId
+);
+
+event CallbackSet(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    address indexed oldCallback,
+    address newCallback
+);
+
+event CallbackSuccess(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    bytes32 dataHash,
+    address callback
+);
+
+event CallbackFailed(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    bytes32 dataHash,
+    address callback,
+    bytes reason
+);
 ```
 
-| Event Type | Source ID | Example sourceName |
-|------------|-----------|-------------------|
-| BLOCKCHAIN | `keccak256("ethereum")` | `keccak256(abi.encode(EventType.BLOCKCHAIN, keccak256("ethereum")))` |
-| BLOCKCHAIN | `keccak256("bsc")` | `keccak256(abi.encode(EventType.BLOCKCHAIN, keccak256("bsc")))` |
-| JWK | `keccak256("google")` | `keccak256(abi.encode(EventType.JWK, keccak256("google")))` |
-| DNS | `keccak256("txt")` | `keccak256(abi.encode(EventType.DNS, keccak256("txt")))` |
-
-### Sync ID Semantics
-
-The `syncId` (uint128) meaning depends on source type:
-
-| Source Type | syncId Meaning | Example |
-|-------------|---------------|---------|
-| Blockchain | Block number | `19000000` (Ethereum block) |
-| JWK | Unix timestamp | `1704067200` (2024-01-01 00:00:00) |
-| DNS | Unix timestamp | `1704067200` |
-| Custom | Sequence number | `1`, `2`, `3`, ... |
-
-**Invariant**: `syncId` must be strictly increasing for each source.
-
----
-
-## Events
+### Errors
 
 ```solidity
-/// @notice Emitted when a hash is recorded (hash-only mode)
-event HashRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId);
-
-/// @notice Emitted when data is recorded (data mode)
-event DataRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId, uint256 dataLength);
-
-/// @notice Emitted when sync status is updated
-event SyncStatusUpdated(bytes32 indexed sourceName, uint128 previousSyncId, uint128 newSyncId);
-
-/// @notice Emitted when a callback is registered or updated
-event CallbackSet(bytes32 indexed sourceName, address indexed oldCallback, address indexed newCallback);
-
-/// @notice Emitted when a callback succeeds
-event CallbackSuccess(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback);
-
-/// @notice Emitted when a callback fails (tx continues)
-event CallbackFailed(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback, bytes reason);
-```
-
----
-
-## Errors
-
-```solidity
-/// @notice Sync ID must be strictly increasing for each source
-error SyncIdNotIncreasing(bytes32 sourceName, uint128 currentSyncId, uint128 providedSyncId);
-
-/// @notice Batch arrays have mismatched lengths
+/// @dev For first record, latestSyncId is 0, so syncId must be >= 1
+error SyncIdNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentSyncId, uint128 providedSyncId);
 error ArrayLengthMismatch(uint256 hashesLength, uint256 payloadsLength);
-
-/// @notice Data record not found for the given hash
-error DataRecordNotFound(bytes32 dataHash);
-
-/// @notice Oracle contract has not been initialized
 error OracleNotInitialized();
+```
+
+---
+
+## Contract: BlockchainEventRouter (Gravity)
+
+Routes blockchain events to handlers based on sender address. Registered as callback for BLOCKCHAIN source type (sourceType = 0).
+
+### Constants
+
+```solidity
+/// @notice Gas limit for handler execution
+uint256 public constant HANDLER_GAS_LIMIT = 400_000;
+```
+
+### State Variables
+
+```solidity
+/// @notice Registered handlers: sender address => handler contract
+mapping(address => address) private _handlers;
+
+/// @notice Whether initialized
+bool private _initialized;
+```
+
+### Interface
+
+```solidity
+interface IBlockchainEventRouter {
+    // ========== Handler Registration (GOVERNANCE Only) ==========
+
+    /// @notice Register handler for a sender
+    function registerHandler(address sender, address handler) external;
+
+    /// @notice Unregister handler
+    function unregisterHandler(address sender) external;
+
+    /// @notice Get handler for a sender
+    function getHandler(address sender) external view returns (address);
+
+    // ========== IOracleCallback Implementation ==========
+
+    /// @notice Called by NativeOracle when blockchain event is recorded
+    function onOracleEvent(bytes32 dataHash, bytes calldata payload) external;
+}
+
+interface IMessageHandler {
+    /// @notice Handle a routed message
+    /// @param dataHash The original payload hash
+    /// @param sender The sender address on the source chain
+    /// @param nonce The message nonce
+    /// @param message The message body
+    function handleMessage(
+        bytes32 dataHash,
+        address sender,
+        uint256 nonce,
+        bytes calldata message
+    ) external;
+}
+```
+
+### Payload Decoding
+
+```solidity
+// Blockchain event payloads are encoded as:
+// abi.encode(sender, nonce, message)
+(address sender, uint256 eventNonce, bytes memory message) = abi.decode(
+    payload,
+    (address, uint256, bytes)
+);
+```
+
+### Events
+
+```solidity
+event HandlerRegistered(address indexed sender, address indexed handler);
+event HandlerUnregistered(address indexed sender);
+event MessageRouted(bytes32 indexed dataHash, address indexed sender, address indexed handler);
+event RoutingFailed(bytes32 indexed dataHash, address indexed sender, bytes reason);
+```
+
+### Errors
+
+```solidity
+error OnlyNativeOracle();
+error HandlerNotRegistered(address sender);
+error RouterNotInitialized();
+```
+
+---
+
+## Contract: GTokenBridge (Ethereum)
+
+Locks G tokens on Ethereum and calls GravityPortal to bridge to Gravity.
+
+### State Variables
+
+```solidity
+/// @notice The G token contract (ERC20)
+IERC20 public immutable G_TOKEN;
+
+/// @notice The GravityPortal contract
+IGravityPortal public immutable GRAVITY_PORTAL;
+```
+
+### Interface
+
+```solidity
+interface IGTokenBridge {
+    /// @notice Lock G tokens and bridge to Gravity
+    /// @param amount Amount of G tokens to bridge
+    /// @param recipient Recipient address on Gravity
+    /// @return messageNonce The portal nonce
+    function bridgeToGravity(uint256 amount, address recipient) external payable returns (uint256 messageNonce);
+
+    /// @notice Get the G token address
+    function gToken() external view returns (address);
+
+    /// @notice Get the portal address
+    function gravityPortal() external view returns (address);
+}
+```
+
+### Message Format
+
+```solidity
+// Message sent to GravityPortal:
+bytes memory message = abi.encode(amount, recipient);
+
+// Full payload created by GravityPortal:
+bytes memory payload = abi.encode(
+    address(this),  // GTokenBridge address (sender)
+    nonce,          // Portal nonce
+    message         // abi.encode(amount, recipient)
+);
+```
+
+### Events
+
+```solidity
+event TokensLocked(address indexed from, address indexed recipient, uint256 amount, uint256 nonce);
+```
+
+### Errors
+
+```solidity
+error ZeroAmount();
+error ZeroRecipient();
+error TransferFailed();
+```
+
+---
+
+## Contract: NativeTokenMinter (Gravity)
+
+Mints native G tokens when bridge messages are received from GTokenBridge.
+
+### Constants
+
+```solidity
+/// @notice Address of the native mint precompile
+address public constant NATIVE_MINT_PRECOMPILE = address(0x...); // TBD
+```
+
+### State Variables
+
+```solidity
+/// @notice Trusted GTokenBridge address on Ethereum
+address public immutable TRUSTED_ETH_BRIDGE;
+
+/// @notice Processed nonces for replay protection
+mapping(uint256 => bool) private _processedNonces;
+
+/// @notice Whether initialized
+bool private _initialized;
+```
+
+### Interface
+
+```solidity
+interface INativeTokenMinter {
+    // ========== IMessageHandler Implementation ==========
+
+    /// @notice Handle bridge message from BlockchainEventRouter
+    function handleMessage(
+        bytes32 dataHash,
+        address sender,
+        uint256 nonce,
+        bytes calldata message
+    ) external;
+
+    // ========== View Functions ==========
+
+    /// @notice Check if a nonce has been processed
+    function isProcessed(uint256 nonce) external view returns (bool);
+
+    /// @notice Get trusted bridge address
+    function trustedBridge() external view returns (address);
+}
+```
+
+### Native Mint Precompile Interface
+
+```solidity
+/// @notice System precompile for minting native tokens
+interface INativeMintPrecompile {
+    /// @notice Mint native tokens to recipient
+    /// @param recipient Address to receive tokens
+    /// @param amount Amount to mint (in wei)
+    function mint(address recipient, uint256 amount) external;
+}
+```
+
+### Message Decoding
+
+```solidity
+// Message from GTokenBridge:
+(uint256 amount, address recipient) = abi.decode(message, (uint256, address));
+```
+
+### Events
+
+```solidity
+event NativeMinted(address indexed recipient, uint256 amount, uint256 indexed nonce);
+event MintFailed(bytes32 indexed dataHash, uint256 indexed nonce, bytes reason);
+```
+
+### Errors
+
+```solidity
+error OnlyRouter();
+error InvalidSender(address sender, address expected);
+error AlreadyProcessed(uint256 nonce);
+error MinterNotInitialized();
+```
+
+---
+
+## Message Flow: G Token Bridge
+
+```
+1. User on Ethereum:
+   └─> Approves GTokenBridge for amount
+   └─> Calls gTokenBridge.bridgeToGravity(amount, recipient) + ETH fee
+       └─> G tokens transferred to GTokenBridge (locked)
+       └─> Calls gravityPortal.sendMessage(abi.encode(amount, recipient))
+           └─> Fee validated (baseFee + bytes * feePerByte)
+           └─> Payload = abi.encode(GTokenBridge, nonce, abi.encode(amount, recipient))
+           └─> Emit MessageSent(payloadHash, GTokenBridge, nonce, payload)
+
+2. Gravity Validators:
+   └─> Monitor MessageSent events on Ethereum
+   └─> Reach consensus on event validity
+   └─> SYSTEM_CALLER calls nativeOracle.recordHash(
+           payloadHash,
+           sourceType=0,     // BLOCKCHAIN
+           sourceId=1,       // Ethereum chain ID
+           syncId=blockNumber,
+           payload
+       )
+
+3. NativeOracle on Gravity:
+   └─> Validates syncId >= 1 and increasing
+   └─> Stores record
+   └─> Looks up callback for (sourceType=0, sourceId=1) → BlockchainEventRouter
+   └─> Calls router.onOracleEvent{gas: 500,000}(payloadHash, payload)
+
+4. BlockchainEventRouter:
+   └─> Verifies caller is NativeOracle
+   └─> Decodes payload: (sender=GTokenBridge, nonce, message)
+   └─> Looks up handler for sender → NativeTokenMinter
+   └─> Calls minter.handleMessage{gas: 400,000}(payloadHash, sender, nonce, message)
+
+5. NativeTokenMinter:
+   └─> Verifies caller is BlockchainEventRouter
+   └─> Verifies sender == TRUSTED_ETH_BRIDGE (defense in depth)
+   └─> Verifies nonce not already processed
+   └─> Decodes message: (amount, recipient)
+   └─> Marks nonce as processed
+   └─> Calls NATIVE_MINT_PRECOMPILE.mint(recipient, amount)
+   └─> Emit NativeMinted(recipient, amount, nonce)
 ```
 
 ---
 
 ## Access Control Matrix
 
-| Function | Allowed Callers |
-|----------|-----------------|
-| `initialize()` | GENESIS only |
-| `recordHash()` | SYSTEM_CALLER only |
-| `recordData()` | SYSTEM_CALLER only |
-| `recordHashBatch()` | SYSTEM_CALLER only |
-| `recordDataBatch()` | SYSTEM_CALLER only |
-| `setCallback()` | GOVERNANCE only |
-| All view/pure functions | Anyone |
+| Contract                  | Function              | Allowed Callers             |
+| ------------------------- | --------------------- | --------------------------- |
+| **GravityPortal**         |                       |                             |
+|                           | sendMessage()         | Anyone (with fee)           |
+|                           | sendMessageWithData() | Anyone (with fee)           |
+|                           | setBaseFee()          | Owner                       |
+|                           | setFeePerByte()       | Owner                       |
+|                           | setFeeRecipient()     | Owner                       |
+|                           | withdrawFees()        | Anyone (sends to recipient) |
+| **NativeOracle**          |                       |                             |
+|                           | initialize()          | GENESIS                     |
+|                           | recordHash()          | SYSTEM_CALLER               |
+|                           | recordData()          | SYSTEM_CALLER               |
+|                           | recordHashBatch()     | SYSTEM_CALLER               |
+|                           | recordDataBatch()     | SYSTEM_CALLER               |
+|                           | setCallback()         | GOVERNANCE                  |
+|                           | View functions        | Anyone                      |
+| **BlockchainEventRouter** |                       |                             |
+|                           | initialize()          | GENESIS                     |
+|                           | registerHandler()     | GOVERNANCE                  |
+|                           | unregisterHandler()   | GOVERNANCE                  |
+|                           | onOracleEvent()       | NATIVE_ORACLE               |
+|                           | View functions        | Anyone                      |
+| **GTokenBridge**          |                       |                             |
+|                           | bridgeToGravity()     | Anyone (with tokens + fee)  |
+| **NativeTokenMinter**     |                       |                             |
+|                           | initialize()          | GENESIS                     |
+|                           | handleMessage()       | BLOCKCHAIN_EVENT_ROUTER     |
+|                           | View functions        | Anyone                      |
 
 ---
 
 ## Security Considerations
 
-1. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
-2. **Callback Gas Limit**: Callbacks are invoked with limited gas (`CALLBACK_GAS_LIMIT = 500,000`) to prevent DOS
-3. **Callback Failure Tolerance**: Callback failures are caught - they do NOT revert oracle recording
-4. **Sync ID Ordering**: Prevents replay attacks and ensures data freshness
-5. **Source Isolation**: Each source has independent sync tracking and callback
-6. **No Overwrites**: Once recorded, only syncId can be updated (not replaced)
-7. **Governance Callback Control**: Only GOVERNANCE can register callbacks
+1. **Fee Validation**: GravityPortal requires sufficient ETH before accepting messages
+2. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
+3. **Two-Level Routing**: NativeOracle → Router → Handler provides defense in depth
+4. **Sender Verification**: Router verifies sender from payload, Handler re-verifies trusted bridge
+5. **Callback Gas Limits**: 500,000 for oracle callbacks, 400,000 for handlers
+6. **Callback Failure Tolerance**: Failures do NOT revert oracle recording
+7. **Replay Protection**: NativeTokenMinter tracks processed nonces
+8. **GOVERNANCE Control**: Callback and handler registration require governance
+9. **Sync ID Ordering**: Must start from 1 and strictly increase - prevents replay and ensures data freshness
 
 ---
 
 ## Invariants
 
-1. **Sync ID Monotonicity**: For each source, `latestSyncId` only increases
-2. **Record Existence**: If `exists == true`, record was written by SYSTEM_CALLER
-3. **Total Count**: `_totalRecords` equals count of unique hashes recorded
-4. **Callback Safety**: Callback failures never affect oracle state
-
----
-
-## Usage Patterns
-
-### Recording Cross-Chain Events
-
-```solidity
-// Consensus engine records Ethereum event
-bytes memory payload = abi.encode(sender, nonce, messageBody);
-bytes32 dataHash = keccak256(payload);
-bytes32 sourceName = oracle.computeSourceName(EventType.BLOCKCHAIN, keccak256("ethereum"));
-
-vm.prank(SYSTEM_CALLER);
-oracle.recordHash(dataHash, sourceName, blockNumber, payload);
-```
-
-### Verifying Event with Pre-Image
-
-```solidity
-function verifyDeposit(bytes calldata payload) external view returns (bool) {
-    (bool exists, ) = oracle.verifyPreImage(payload);
-    return exists;
-}
-```
-
-### Storing and Accessing JWK Data
-
-```solidity
-// Record JWK (data mode)
-bytes memory jwkData = abi.encode(kid, kty, alg, e, n);
-bytes32 dataHash = keccak256(jwkData);
-bytes32 sourceName = oracle.computeSourceName(EventType.JWK, keccak256("google"));
-
-vm.prank(SYSTEM_CALLER);
-oracle.recordData(dataHash, sourceName, timestamp, jwkData);
-
-// Later: access JWK directly
-bytes memory storedJwk = oracle.getData(dataHash);
-```
+1. **Sync ID Monotonicity**: For each (sourceType, sourceId), `latestSyncId` only increases
+2. **Sync ID Minimum**: First syncId for any source must be >= 1
+3. **Record Existence**: If `syncId > 0`, record was written by SYSTEM_CALLER
+4. **Nonce Uniqueness**: Each nonce from GravityPortal is unique (monotonic)
+5. **Total Count**: `_totalRecords` equals count of unique hashes recorded
+6. **Callback Safety**: Callback failures never affect oracle state
+7. **Handler Isolation**: Handler failures never affect router state
+8. **Token Conservation**: G tokens locked on Ethereum = native G minted on Gravity (minus failed mints)
 
 ---
 
 ## Testing Requirements
 
-### Unit Tests (39 tests implemented)
+### Unit Tests
 
-1. **Initialization**
-   - [x] Initialize correctly
-   - [x] Revert when not GENESIS
-   - [x] Revert when already initialized
+1. **GravityPortal**
 
-2. **Hash Recording**
-   - [x] Record single hash
-   - [x] Verify hash exists
-   - [x] Multiple sources independent
-   - [x] Revert when not SYSTEM_CALLER
-   - [x] Revert when not initialized
-   - [x] Revert when syncId not increasing
+   - Fee calculation correctness
+   - sendMessage with sufficient/insufficient fee
+   - sendMessageWithData
+   - Fee config updates (owner only)
+   - Fee withdrawal
+   - Nonce incrementing
 
-3. **Data Recording**
-   - [x] Record data with payload
-   - [x] Retrieve data directly
-   - [x] Revert when not SYSTEM_CALLER
+2. **NativeOracle**
 
-4. **Batch Operations**
-   - [x] Batch hash recording
-   - [x] Batch data recording
-   - [x] Array length validation
+   - Record hash/data with sourceType, sourceId, syncId
+   - Batch recording
+   - Sync ID validation (must start from 1, must increase)
+   - Callback invocation
+   - Callback failure handling
+   - GOVERNANCE callback registration
+   - Source name computation
 
-5. **Callbacks**
-   - [x] Register callback
-   - [x] Unregister callback
-   - [x] Callback invoked on record
-   - [x] Callback failure doesn't revert
-   - [x] Gas limit enforced
-   - [x] Callback invoked for batch
+3. **BlockchainEventRouter**
 
-6. **Verification**
-   - [x] Verify pre-image
-   - [x] isSyncedPast
-   - [x] getData empty for hash mode
+   - Payload decoding
+   - Handler registration (GOVERNANCE)
+   - Message routing by sender
+   - Handler failure handling
+   - Only NativeOracle can call
 
-7. **Fuzz Tests**
-   - [x] Random payloads and syncIds
-   - [x] SyncId ordering enforcement
-   - [x] Multiple records count
+4. **GTokenBridge**
 
-8. **Event Tests**
-   - [x] HashRecorded event
-   - [x] DataRecorded event
-   - [x] SyncStatusUpdated event
-   - [x] CallbackSet event
-   - [x] CallbackSuccess event
-   - [x] CallbackFailed event
+   - Token locking
+   - Portal integration
+   - Fee forwarding
+   - Message format
+
+5. **NativeTokenMinter**
+   - Message decoding
+   - Sender verification
+   - Nonce replay protection
+   - Precompile minting
+   - Only router can call
+
+### Integration Tests
+
+1. **End-to-End Bridge Flow**
+
+   - Lock tokens on Ethereum
+   - Record in oracle
+   - Route through router
+   - Mint native tokens
+
+2. **Failure Scenarios**
+   - Callback reverts
+   - Handler reverts
+   - Out of gas
+   - Invalid sender
+
+### Fuzz Tests
+
+1. **Random payloads and amounts**
+2. **Nonce ordering**
+3. **Fee calculations**
+4. **SyncId boundaries (must be >= 1)**
+5. **SourceType and SourceId combinations**
 
 ---
 
 ## Future Extensions
 
-1. **JWK Registry**: Dedicated module for managing JWK keys with patch support
-2. **Blockchain Event Router**: Route events by sender to application handlers
-3. **G Token Bridge**: Native token bridge using oracle for cross-chain deposits
-4. **DNS Verification**: On-chain DNS record verification for zkEmail and similar use cases
-
+1. **Gravity → Ethereum Bridge**: Burn native G, release locked G tokens
+2. **Multi-Chain Support**: Additional portals on BSC, Arbitrum, etc.
+3. **JWK Registry**: Dedicated module for JWK key management
+4. **DNS Verification**: On-chain DNS record verification
+5. **Generic Message Passing**: Application-level messaging protocol

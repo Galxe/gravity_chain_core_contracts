@@ -341,10 +341,12 @@ library Errors {
     // ========================================================================
 
     /// @notice Sync ID must be strictly increasing for each source
-    /// @param sourceName The source identifier
+    /// @dev For the first record, latestSyncId is 0, so syncId must be >= 1
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param currentSyncId The current sync ID for this source
     /// @param providedSyncId The provided sync ID that is not greater
-    error SyncIdNotIncreasing(bytes32 sourceName, uint128 currentSyncId, uint128 providedSyncId);
+    error SyncIdNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentSyncId, uint128 providedSyncId);
 
     /// @notice Batch arrays have mismatched lengths
     /// @param hashesLength Length of dataHashes array

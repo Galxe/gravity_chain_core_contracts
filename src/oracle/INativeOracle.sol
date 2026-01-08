@@ -16,17 +16,16 @@ interface INativeOracle {
 
     /// @notice Record stored in the oracle
     /// @dev For hash-only mode, data is empty. For data mode, data contains the full payload.
+    ///      Record existence is determined by syncId > 0.
     struct DataRecord {
-        /// @notice Whether this record exists
-        bool exists;
-        /// @notice Sync ID when this was recorded (for ordering/freshness)
+        /// @notice Sync ID when this was recorded (0 = not exists)
         uint128 syncId;
         /// @notice Stored data (empty for hash-only mode, populated for data mode)
         bytes data;
     }
 
     /// @notice Sync status for a source
-    /// @dev The syncId must be strictly increasing for each source
+    /// @dev The syncId must be strictly increasing for each source (starting from 1)
     struct SyncStatus {
         /// @notice Whether this source has been initialized
         bool initialized;
@@ -34,14 +33,16 @@ interface INativeOracle {
         uint128 latestSyncId;
     }
 
-    /// @notice Event source types
-    /// @dev Used to compute sourceName = keccak256(abi.encode(eventType, sourceId))
-    enum EventType {
-        BLOCKCHAIN, // Cross-chain events (Ethereum, BSC, etc.)
-        JWK, // JWK key providers (Google, Apple, etc.)
-        DNS, // DNS records
-        CUSTOM // Custom/extensible sources
-    }
+    // ========================================================================
+    // SOURCE TYPE CONSTANTS
+    // ========================================================================
+
+    // Well-known source types by convention:
+    //   0 = BLOCKCHAIN (cross-chain events from EVM chains)
+    //   1 = JWK (JSON Web Keys from OAuth providers)
+    //   2 = DNS (DNS records for zkEmail, etc.)
+    //   3 = PRICE_FEED (price data from oracles)
+    // New types can be added without contract upgrades.
 
     // ========================================================================
     // EVENTS
@@ -49,41 +50,79 @@ interface INativeOracle {
 
     /// @notice Emitted when a hash is recorded (hash-only mode)
     /// @param dataHash The hash of the data
-    /// @param sourceName The source identifier (hash of eventType + sourceId)
+    /// @param sourceType The source type (0 = BLOCKCHAIN, 1 = JWK, etc.)
+    /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param syncId The sync ID (block height, timestamp, etc.)
-    event HashRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId);
+    event HashRecorded(
+        bytes32 indexed dataHash,
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        uint128 syncId
+    );
 
     /// @notice Emitted when data is recorded (data mode)
     /// @param dataHash The hash of the data
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param syncId The sync ID
     /// @param dataLength Length of the stored data
-    event DataRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId, uint256 dataLength);
+    event DataRecorded(
+        bytes32 indexed dataHash,
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        uint128 syncId,
+        uint256 dataLength
+    );
 
     /// @notice Emitted when sync status is updated for a source
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param previousSyncId The previous sync ID
     /// @param newSyncId The new sync ID
-    event SyncStatusUpdated(bytes32 indexed sourceName, uint128 previousSyncId, uint128 newSyncId);
+    event SyncStatusUpdated(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        uint128 previousSyncId,
+        uint128 newSyncId
+    );
 
     /// @notice Emitted when a callback is registered or updated
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param oldCallback The previous callback address
     /// @param newCallback The new callback address
-    event CallbackSet(bytes32 indexed sourceName, address indexed oldCallback, address indexed newCallback);
+    event CallbackSet(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        address indexed oldCallback,
+        address newCallback
+    );
 
     /// @notice Emitted when a callback succeeds
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param dataHash The data hash
     /// @param callback The callback contract address
-    event CallbackSuccess(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback);
+    event CallbackSuccess(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        bytes32 dataHash,
+        address callback
+    );
 
     /// @notice Emitted when a callback fails (tx continues, does NOT revert)
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param dataHash The data hash
     /// @param callback The callback contract address
     /// @param reason The failure reason
-    event CallbackFailed(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback, bytes reason);
+    event CallbackFailed(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        bytes32 dataHash,
+        address callback,
+        bytes reason
+    );
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
@@ -92,12 +131,14 @@ interface INativeOracle {
     /// @notice Record a hash (hash-only mode, storage-efficient)
     /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
     /// @param dataHash The hash of the data being recorded
-    /// @param sourceName The source identifier (hash of eventType + sourceId)
-    /// @param syncId The sync ID (block height, timestamp, etc.) - must be > current
+    /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
+    /// @param sourceId The source identifier (e.g., chain ID for blockchains)
+    /// @param syncId The sync ID - must start from 1 and strictly increase
     /// @param payload The event payload (for callback, not stored in hash mode)
     function recordHash(
         bytes32 dataHash,
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         uint128 syncId,
         bytes calldata payload
     ) external;
@@ -105,12 +146,14 @@ interface INativeOracle {
     /// @notice Record data (data mode, direct access)
     /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
     /// @param dataHash The hash of the data (for indexing and verification)
-    /// @param sourceName The source identifier
-    /// @param syncId The sync ID - must be > current
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param syncId The sync ID - must start from 1 and strictly increase
     /// @param payload The event payload (stored on-chain)
     function recordData(
         bytes32 dataHash,
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         uint128 syncId,
         bytes calldata payload
     ) external;
@@ -118,12 +161,14 @@ interface INativeOracle {
     /// @notice Batch record multiple hashes from the same source
     /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
     /// @param dataHashes Array of hashes to record
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param syncId The sync ID for all records
     /// @param payloads Array of payloads (for callbacks)
     function recordHashBatch(
         bytes32[] calldata dataHashes,
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         uint128 syncId,
         bytes[] calldata payloads
     ) external;
@@ -131,12 +176,14 @@ interface INativeOracle {
     /// @notice Batch record multiple data entries from the same source
     /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
     /// @param dataHashes Array of hashes
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param syncId The sync ID for all records
     /// @param payloads Array of payloads to store
     function recordDataBatch(
         bytes32[] calldata dataHashes,
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         uint128 syncId,
         bytes[] calldata payloads
     ) external;
@@ -147,18 +194,22 @@ interface INativeOracle {
 
     /// @notice Register a callback handler for a source
     /// @dev Only callable by GOVERNANCE
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param callback The callback contract address (address(0) to unregister)
     function setCallback(
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         address callback
     ) external;
 
     /// @notice Get the callback handler for a source
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @return callback The callback contract address (address(0) if not set)
     function getCallback(
-        bytes32 sourceName
+        uint32 sourceType,
+        uint256 sourceId
     ) external view returns (address callback);
 
     // ========================================================================
@@ -166,21 +217,21 @@ interface INativeOracle {
     // ========================================================================
 
     /// @notice Verify a hash exists and get its record
+    /// @dev Record exists if record.syncId > 0
     /// @param dataHash The hash to verify
-    /// @return exists True if the hash is recorded
-    /// @return record The data record (data field empty if hash-only mode)
+    /// @return record The data record (syncId = 0 if not found, data field empty if hash-only mode)
     function verifyHash(
         bytes32 dataHash
-    ) external view returns (bool exists, DataRecord memory record);
+    ) external view returns (DataRecord memory record);
 
     /// @notice Verify pre-image matches a recorded hash
-    /// @dev Useful for hash-only mode where users provide original data as calldata
+    /// @dev Useful for hash-only mode where users provide original data as calldata.
+    ///      Record exists if record.syncId > 0.
     /// @param preImage The original data (provided as calldata)
-    /// @return exists True if hash(preImage) is recorded
-    /// @return record The data record
+    /// @return record The data record (syncId = 0 if not found)
     function verifyPreImage(
         bytes calldata preImage
-    ) external view returns (bool exists, DataRecord memory record);
+    ) external view returns (DataRecord memory record);
 
     /// @notice Get stored data directly (for data mode records)
     /// @param dataHash The hash key
@@ -194,18 +245,22 @@ interface INativeOracle {
     // ========================================================================
 
     /// @notice Get sync status for a source
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @return status The current sync status
     function getSyncStatus(
-        bytes32 sourceName
+        uint32 sourceType,
+        uint256 sourceId
     ) external view returns (SyncStatus memory status);
 
     /// @notice Check if a source has synced past a certain point
-    /// @param sourceName The source identifier
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
     /// @param syncId The sync ID to check
     /// @return True if latestSyncId >= syncId
     function isSyncedPast(
-        bytes32 sourceName,
+        uint32 sourceType,
+        uint256 sourceId,
         uint128 syncId
     ) external view returns (bool);
 
@@ -216,6 +271,20 @@ interface INativeOracle {
     /// @notice Get total number of records stored
     /// @return Total record count
     function getTotalRecords() external view returns (uint256);
+
+    // ========================================================================
+    // HELPERS
+    // ========================================================================
+
+    /// @notice Compute the internal sourceName from source type and source ID
+    /// @dev sourceName = keccak256(abi.encode(sourceType, sourceId))
+    /// @param sourceType The source type (uint32)
+    /// @param sourceId The source identifier (uint256)
+    /// @return sourceName The computed source name (used internally for storage)
+    function computeSourceName(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external pure returns (bytes32 sourceName);
 }
 
 /// @title IOracleCallback
@@ -232,4 +301,3 @@ interface IOracleCallback {
         bytes calldata payload
     ) external;
 }
-

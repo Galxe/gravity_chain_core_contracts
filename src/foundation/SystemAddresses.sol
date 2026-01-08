@@ -85,5 +85,13 @@ library SystemAddresses {
     /// @notice Execution configuration contract
     /// @dev Stores VM execution parameters as opaque bytes (BCS-serialized)
     address internal constant EXECUTION_CONFIG = address(0x0000000000000000000000000001625F202A);
+
+    /// @notice Blockchain event router contract
+    /// @dev Routes blockchain events from NativeOracle to application handlers by sender
+    address internal constant BLOCKCHAIN_EVENT_ROUTER = address(0x0000000000000000000000000001625F202B);
+
+    /// @notice Native token minter contract
+    /// @dev Mints native G tokens when bridge messages are received from Ethereum
+    address internal constant NATIVE_TOKEN_MINTER = address(0x0000000000000000000000000001625F202C);
 }
 
