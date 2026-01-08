@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @title IGTokenBridge
+/// @title IGBridgeSender
 /// @author Gravity Team
-/// @notice Interface for the GTokenBridge contract deployed on Ethereum
+/// @notice Interface for the GBridgeSender contract deployed on Ethereum
 /// @dev Locks G tokens (ERC20) on Ethereum and sends bridge message via GravityPortal.
-///      Works with NativeTokenMinter on Gravity to mint native G tokens.
-interface IGTokenBridge {
+///      Works with GBridgeReceiver on Gravity to mint native G tokens.
+interface IGBridgeSender {
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -22,17 +22,17 @@ interface IGTokenBridge {
     // ERRORS
     // ========================================================================
 
+    /// @notice Cannot use zero address
+    error ZeroAddress();
+
     /// @notice Cannot bridge zero amount
     error ZeroAmount();
 
     /// @notice Cannot bridge to zero address
     error ZeroRecipient();
 
-    /// @notice Token transfer failed
-    error TransferFailed();
-
     // ========================================================================
-    // BRIDGE FUNCTION
+    // BRIDGE FUNCTIONS
     // ========================================================================
 
     /// @notice Lock G tokens and bridge to Gravity
@@ -45,6 +45,26 @@ interface IGTokenBridge {
     function bridgeToGravity(
         uint256 amount,
         address recipient
+    ) external payable returns (uint128 messageNonce);
+
+    /// @notice Lock G tokens and bridge to Gravity using ERC20Permit
+    /// @dev Uses permit to approve and transfer in one transaction.
+    ///      ETH must be sent to cover the portal fee.
+    ///      Message format: abi.encode(amount, recipient)
+    /// @param amount Amount of G tokens to bridge
+    /// @param recipient Recipient address on Gravity chain
+    /// @param deadline The deadline timestamp for the permit signature
+    /// @param v The recovery byte of the signature
+    /// @param r Half of the ECDSA signature pair
+    /// @param s Half of the ECDSA signature pair
+    /// @return messageNonce The portal nonce assigned to this bridge operation
+    function bridgeToGravityWithPermit(
+        uint256 amount,
+        address recipient,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
     ) external payable returns (uint128 messageNonce);
 
     // ========================================================================
@@ -69,3 +89,4 @@ interface IGTokenBridge {
         address recipient
     ) external view returns (uint256 requiredFee);
 }
+

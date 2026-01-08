@@ -86,8 +86,8 @@ library SystemAddresses {
     /// @dev Stores VM execution parameters as opaque bytes (BCS-serialized)
     address internal constant EXECUTION_CONFIG = address(0x0000000000000000000000000001625F202A);
 
-    /// @notice Native token minter contract
-    /// @dev Mints native G tokens when bridge messages are received from Ethereum
-    address internal constant NATIVE_TOKEN_MINTER = address(0x0000000000000000000000000001625F202C);
+    /// @notice Native mint precompile
+    /// @dev Callable by authorized system contracts to mint native G tokens
+    address internal constant NATIVE_MINT_PRECOMPILE = address(0x0000000000000000000000000001625F2100);
 }
 

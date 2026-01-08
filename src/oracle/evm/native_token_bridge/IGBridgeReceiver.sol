@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @title INativeTokenMinter
+/// @title IGBridgeReceiver
 /// @author Gravity Team
-/// @notice Interface for the NativeTokenMinter contract on Gravity
-/// @dev Mints native G tokens when bridge messages are received from GTokenBridge.
+/// @notice Interface for the GBridgeReceiver contract on Gravity
+/// @dev Mints native G tokens when bridge messages are received from GBridgeSender.
 ///      Inherits from BlockchainEventHandler to receive routed messages from NativeOracle.
 ///      Uses a system precompile to mint native tokens.
-interface INativeTokenMinter {
+interface IGBridgeReceiver {
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -17,11 +17,6 @@ interface INativeTokenMinter {
     /// @param amount The amount of tokens minted
     /// @param nonce The bridge nonce (for tracking)
     event NativeMinted(address indexed recipient, uint256 amount, uint128 indexed nonce);
-
-    /// @notice Emitted when minting fails (logged but doesn't revert router)
-    /// @param nonce The bridge nonce that failed
-    /// @param reason The failure reason
-    event MintFailed(uint128 indexed nonce, bytes reason);
 
     // ========================================================================
     // ERRORS
@@ -36,20 +31,6 @@ interface INativeTokenMinter {
     /// @param nonce The duplicate nonce
     error AlreadyProcessed(uint128 nonce);
 
-    /// @notice Minter has not been initialized
-    error MinterNotInitialized();
-
-    /// @notice Mint precompile call failed
-    error MintPrecompileFailed();
-
-    // ========================================================================
-    // INITIALIZATION
-    // ========================================================================
-
-    /// @notice Initialize the minter
-    /// @dev Can only be called once by GENESIS
-    function initialize() external;
-
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
@@ -62,12 +43,8 @@ interface INativeTokenMinter {
     ) external view returns (bool);
 
     /// @notice Get the trusted bridge address on Ethereum
-    /// @return The trusted GTokenBridge address
+    /// @return The trusted GBridgeSender address
     function trustedBridge() external view returns (address);
-
-    /// @notice Check if the minter is initialized
-    /// @return True if initialized
-    function isInitialized() external view returns (bool);
 }
 
 /// @title INativeMintPrecompile
@@ -83,3 +60,4 @@ interface INativeMintPrecompile {
         uint256 amount
     ) external;
 }
+

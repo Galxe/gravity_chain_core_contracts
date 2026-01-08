@@ -1,28 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IGTokenBridge } from "./IGTokenBridge.sol";
+import { IGBridgeSender } from "./IGBridgeSender.sol";
 import { IGravityPortal } from "../IGravityPortal.sol";
+import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { IERC20 } from "@openzeppelin/token/ERC20/IERC20.sol";
+import { IERC20Permit } from "@openzeppelin/token/ERC20/extensions/IERC20Permit.sol";
+import { SafeERC20 } from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
-/// @title IERC20
-/// @notice Minimal ERC20 interface for token transfers
-interface IERC20 {
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) external returns (bool);
-    function balanceOf(
-        address account
-    ) external view returns (uint256);
-}
-
-/// @title GTokenBridge
+/// @title GBridgeSender
 /// @author Gravity Team
 /// @notice Locks G tokens on Ethereum and bridges to Gravity via GravityPortal
 /// @dev Deployed on Ethereum (or other EVM chains). NOT deployed on Gravity.
-///      Works with NativeTokenMinter on Gravity to mint native G tokens.
-contract GTokenBridge is IGTokenBridge {
+///      Works with GBridgeReceiver on Gravity to mint native G tokens.
+contract GBridgeSender is IGBridgeSender, Ownable2Step {
+    using SafeERC20 for IERC20;
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -37,15 +30,17 @@ contract GTokenBridge is IGTokenBridge {
     // CONSTRUCTOR
     // ========================================================================
 
-    /// @notice Deploy the GTokenBridge
+    /// @notice Deploy the GBridgeSender
     /// @param gToken_ The G token (ERC20) contract address
     /// @param gravityPortal_ The GravityPortal contract address
+    /// @param owner_ The owner address for Ownable2Step
     constructor(
         address gToken_,
-        address gravityPortal_
-    ) {
+        address gravityPortal_,
+        address owner_
+    ) Ownable(owner_) {
         if (gToken_ == address(0) || gravityPortal_ == address(0)) {
-            revert ZeroRecipient(); // Reusing error for zero address
+            revert ZeroAddress();
         }
 
         gToken = gToken_;
@@ -53,20 +48,47 @@ contract GTokenBridge is IGTokenBridge {
     }
 
     // ========================================================================
-    // BRIDGE FUNCTION
+    // BRIDGE FUNCTIONS
     // ========================================================================
 
-    /// @inheritdoc IGTokenBridge
+    /// @inheritdoc IGBridgeSender
     function bridgeToGravity(
         uint256 amount,
         address recipient
     ) external payable returns (uint128 messageNonce) {
+        return _bridgeToGravity(amount, recipient);
+    }
+
+    /// @inheritdoc IGBridgeSender
+    function bridgeToGravityWithPermit(
+        uint256 amount,
+        address recipient,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable returns (uint128 messageNonce) {
+        IERC20Permit(gToken).permit(msg.sender, address(this), amount, deadline, v, r, s);
+        return _bridgeToGravity(amount, recipient);
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    /// @notice Internal function to bridge tokens to Gravity
+    /// @param amount Amount of G tokens to bridge
+    /// @param recipient Recipient address on Gravity chain
+    /// @return messageNonce The portal nonce assigned to this bridge operation
+    function _bridgeToGravity(
+        uint256 amount,
+        address recipient
+    ) internal returns (uint128 messageNonce) {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroRecipient();
 
-        // Transfer G tokens from sender to this contract (lock)
-        bool success = IERC20(gToken).transferFrom(msg.sender, address(this), amount);
-        if (!success) revert TransferFailed();
+        // Transfer G tokens from sender to this contract (lock) using SafeERC20
+        IERC20(gToken).safeTransferFrom(msg.sender, address(this), amount);
 
         // Encode bridge message: (amount, recipient)
         bytes memory message = abi.encode(amount, recipient);
@@ -81,7 +103,7 @@ contract GTokenBridge is IGTokenBridge {
     // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @inheritdoc IGTokenBridge
+    /// @inheritdoc IGBridgeSender
     function calculateBridgeFee(
         uint256 amount,
         address recipient

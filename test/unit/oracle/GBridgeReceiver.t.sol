@@ -2,45 +2,33 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { NativeTokenMinter } from "@src/oracle/evm/native_token_bridge/NativeTokenMinter.sol";
-import { INativeTokenMinter, INativeMintPrecompile } from "@src/oracle/evm/native_token_bridge/INativeTokenMinter.sol";
+import { GBridgeReceiver } from "@src/oracle/evm/native_token_bridge/GBridgeReceiver.sol";
+import { IGBridgeReceiver, INativeMintPrecompile } from "@src/oracle/evm/native_token_bridge/IGBridgeReceiver.sol";
 import { BlockchainEventHandler } from "@src/oracle/evm/BlockchainEventHandler.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
-import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title MockNativeMintPrecompile
 /// @notice Mock precompile for testing native token minting
 contract MockNativeMintPrecompile is INativeMintPrecompile {
     mapping(address => uint256) public balances;
     uint256 public totalMinted;
-    bool public shouldFail;
 
     function mint(
         address recipient,
         uint256 amount
     ) external override {
-        if (shouldFail) {
-            revert("MockPrecompile: mint failed");
-        }
         balances[recipient] += amount;
         totalMinted += amount;
     }
-
-    function setFail(
-        bool _shouldFail
-    ) external {
-        shouldFail = _shouldFail;
-    }
 }
 
-/// @title NativeTokenMinterTest
-/// @notice Unit tests for NativeTokenMinter contract
-contract NativeTokenMinterTest is Test {
-    NativeTokenMinter public minter;
+/// @title GBridgeReceiverTest
+/// @notice Unit tests for GBridgeReceiver contract
+contract GBridgeReceiverTest is Test {
+    GBridgeReceiver public receiver;
     MockNativeMintPrecompile public mockPrecompile;
 
-    address public genesis;
     address public nativeOracle;
     address public trustedBridge;
     address public alice;
@@ -50,22 +38,17 @@ contract NativeTokenMinterTest is Test {
     uint256 public constant ETHEREUM_SOURCE_ID = 1;
 
     function setUp() public {
-        genesis = SystemAddresses.GENESIS;
         nativeOracle = SystemAddresses.NATIVE_ORACLE;
-        trustedBridge = makeAddr("gTokenBridge");
+        trustedBridge = makeAddr("gBridgeSender");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
         // Deploy mock precompile at the expected address
         mockPrecompile = new MockNativeMintPrecompile();
-        vm.etch(address(0x0000000000000000000000000001625F2100), address(mockPrecompile).code);
+        vm.etch(SystemAddresses.NATIVE_MINT_PRECOMPILE, address(mockPrecompile).code);
 
-        // Deploy minter with trusted bridge
-        minter = new NativeTokenMinter(trustedBridge);
-
-        // Initialize minter
-        vm.prank(genesis);
-        minter.initialize();
+        // Deploy receiver with trusted bridge
+        receiver = new GBridgeReceiver(trustedBridge);
     }
 
     // ========================================================================
@@ -84,26 +67,11 @@ contract NativeTokenMinterTest is Test {
     }
 
     // ========================================================================
-    // INITIALIZATION TESTS
+    // CONSTRUCTOR TESTS
     // ========================================================================
 
-    function test_Initialize() public view {
-        assertTrue(minter.isInitialized());
-        assertEq(minter.trustedBridge(), trustedBridge);
-    }
-
-    function test_Initialize_RevertWhenNotGenesis() public {
-        NativeTokenMinter newMinter = new NativeTokenMinter(trustedBridge);
-
-        vm.prank(alice);
-        vm.expectRevert();
-        newMinter.initialize();
-    }
-
-    function test_Initialize_RevertWhenAlreadyInitialized() public {
-        vm.prank(genesis);
-        vm.expectRevert(Errors.AlreadyInitialized.selector);
-        minter.initialize();
+    function test_Constructor() public view {
+        assertEq(receiver.trustedBridge(), trustedBridge);
     }
 
     // ========================================================================
@@ -118,10 +86,10 @@ contract NativeTokenMinterTest is Test {
 
         vm.prank(nativeOracle);
         vm.expectEmit(true, true, true, true);
-        emit INativeTokenMinter.NativeMinted(alice, amount, messageNonce);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+        emit IGBridgeReceiver.NativeMinted(alice, amount, messageNonce);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
-        assertTrue(minter.isProcessed(messageNonce));
+        assertTrue(receiver.isProcessed(messageNonce));
     }
 
     function test_OnOracleEvent_RevertWhenNotNativeOracle() public {
@@ -129,7 +97,7 @@ contract NativeTokenMinterTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(BlockchainEventHandler.OnlyNativeOracle.selector);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
     }
 
     function test_OnOracleEvent_RevertWhenInvalidSender() public {
@@ -137,8 +105,8 @@ contract NativeTokenMinterTest is Test {
         bytes memory payload = _createOraclePayload(fakeBridge, 0, 100, alice);
 
         vm.prank(nativeOracle);
-        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.InvalidSender.selector, fakeBridge, trustedBridge));
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        vm.expectRevert(abi.encodeWithSelector(IGBridgeReceiver.InvalidSender.selector, fakeBridge, trustedBridge));
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
     }
 
     function test_OnOracleEvent_RevertWhenAlreadyProcessed() public {
@@ -149,21 +117,12 @@ contract NativeTokenMinterTest is Test {
 
         // First call succeeds
         vm.prank(nativeOracle);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
         // Second call with same message nonce fails
         vm.prank(nativeOracle);
-        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, messageNonce));
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
-    }
-
-    function test_OnOracleEvent_RevertWhenNotInitialized() public {
-        NativeTokenMinter newMinter = new NativeTokenMinter(trustedBridge);
-        bytes memory payload = _createOraclePayload(trustedBridge, 0, 100, alice);
-
-        vm.prank(nativeOracle);
-        vm.expectRevert(INativeTokenMinter.MinterNotInitialized.selector);
-        newMinter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        vm.expectRevert(abi.encodeWithSelector(IGBridgeReceiver.AlreadyProcessed.selector, messageNonce));
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
     }
 
     function test_OnOracleEvent_DifferentNonces() public {
@@ -174,9 +133,9 @@ contract NativeTokenMinterTest is Test {
             uint128 oracleNonce = 1000 + i;
 
             vm.prank(nativeOracle);
-            minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+            receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
-            assertTrue(minter.isProcessed(i));
+            assertTrue(receiver.isProcessed(i));
         }
     }
 
@@ -185,20 +144,20 @@ contract NativeTokenMinterTest is Test {
     // ========================================================================
 
     function test_IsProcessed_False() public view {
-        assertFalse(minter.isProcessed(999));
+        assertFalse(receiver.isProcessed(999));
     }
 
     function test_IsProcessed_True() public {
         bytes memory payload = _createOraclePayload(trustedBridge, 123, 100, alice);
 
         vm.prank(nativeOracle);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
 
-        assertTrue(minter.isProcessed(123));
+        assertTrue(receiver.isProcessed(123));
     }
 
     function test_TrustedBridge() public view {
-        assertEq(minter.trustedBridge(), trustedBridge);
+        assertEq(receiver.trustedBridge(), trustedBridge);
     }
 
     // ========================================================================
@@ -211,15 +170,15 @@ contract NativeTokenMinterTest is Test {
         uint128 messageNonce
     ) public {
         vm.assume(recipient != address(0));
-        vm.assume(!minter.isProcessed(messageNonce));
+        vm.assume(!receiver.isProcessed(messageNonce));
 
         bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, amount, recipient);
         uint128 oracleNonce = 1000;
 
         vm.prank(nativeOracle);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
-        assertTrue(minter.isProcessed(messageNonce));
+        assertTrue(receiver.isProcessed(messageNonce));
     }
 
     function testFuzz_ReplayProtection(
@@ -230,11 +189,12 @@ contract NativeTokenMinterTest is Test {
 
         // First call succeeds
         vm.prank(nativeOracle);
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
 
         // Second call fails
         vm.prank(nativeOracle);
-        vm.expectRevert(abi.encodeWithSelector(INativeTokenMinter.AlreadyProcessed.selector, messageNonce));
-        minter.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
+        vm.expectRevert(abi.encodeWithSelector(IGBridgeReceiver.AlreadyProcessed.selector, messageNonce));
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
     }
 }
+

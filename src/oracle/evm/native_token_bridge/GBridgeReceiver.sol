@@ -1,31 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { INativeTokenMinter, INativeMintPrecompile } from "./INativeTokenMinter.sol";
+import { IGBridgeReceiver, INativeMintPrecompile } from "./IGBridgeReceiver.sol";
 import { BlockchainEventHandler } from "../BlockchainEventHandler.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
-import { requireAllowed } from "@src/foundation/SystemAccessControl.sol";
-import { Errors } from "@src/foundation/Errors.sol";
 
-/// @title NativeTokenMinter
+/// @title GBridgeReceiver
 /// @author Gravity Team
-/// @notice Mints native G tokens when bridge messages are received from GTokenBridge
+/// @notice Mints native G tokens when bridge messages are received from GBridgeSender
 /// @dev Deployed on Gravity only. Inherits BlockchainEventHandler to receive oracle callbacks.
 ///      Uses a system precompile to mint native tokens.
-contract NativeTokenMinter is INativeTokenMinter, BlockchainEventHandler {
-    // ========================================================================
-    // CONSTANTS
-    // ========================================================================
-
-    /// @notice Address of the native mint precompile
-    /// @dev This precompile is only callable by authorized system contracts
-    address public constant NATIVE_MINT_PRECOMPILE = address(0x0000000000000000000000000001625F2100);
-
+contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     // ========================================================================
     // IMMUTABLES
     // ========================================================================
 
-    /// @notice Trusted GTokenBridge address on Ethereum
+    /// @notice Trusted GBridgeSender address on Ethereum
     /// @dev Only messages from this sender are processed
     address public immutable trustedBridge;
 
@@ -36,46 +26,16 @@ contract NativeTokenMinter is INativeTokenMinter, BlockchainEventHandler {
     /// @notice Processed nonces for replay protection
     mapping(uint128 => bool) private _processedNonces;
 
-    /// @notice Whether the contract has been initialized
-    bool private _initialized;
-
     // ========================================================================
     // CONSTRUCTOR
     // ========================================================================
 
-    /// @notice Deploy the NativeTokenMinter
-    /// @param trustedBridge_ The trusted GTokenBridge address on Ethereum
+    /// @notice Deploy the GBridgeReceiver
+    /// @param trustedBridge_ The trusted GBridgeSender address on Ethereum
     constructor(
         address trustedBridge_
     ) {
         trustedBridge = trustedBridge_;
-    }
-
-    // ========================================================================
-    // INITIALIZATION
-    // ========================================================================
-
-    /// @inheritdoc INativeTokenMinter
-    function initialize() external {
-        requireAllowed(SystemAddresses.GENESIS);
-
-        if (_initialized) {
-            revert Errors.AlreadyInitialized();
-        }
-
-        _initialized = true;
-    }
-
-    // ========================================================================
-    // MODIFIERS
-    // ========================================================================
-
-    /// @notice Require the contract to be initialized
-    modifier whenInitialized() {
-        if (!_initialized) {
-            revert MinterNotInitialized();
-        }
-        _;
     }
 
     // ========================================================================
@@ -97,19 +57,17 @@ contract NativeTokenMinter is INativeTokenMinter, BlockchainEventHandler {
         address sender,
         uint128 messageNonce,
         bytes memory message
-    ) internal override whenInitialized {
+    ) internal override {
         // Silence unused variable warnings - these are for future extensibility
         (sourceType, sourceId, oracleNonce);
 
         // Verify sender is the trusted bridge (defense in depth)
         if (sender != trustedBridge) {
-            emit MintFailed(messageNonce, abi.encodePacked("Invalid sender"));
             revert InvalidSender(sender, trustedBridge);
         }
 
         // Check for replay
         if (_processedNonces[messageNonce]) {
-            emit MintFailed(messageNonce, abi.encodePacked("Already processed"));
             revert AlreadyProcessed(messageNonce);
         }
 
@@ -119,30 +77,21 @@ contract NativeTokenMinter is INativeTokenMinter, BlockchainEventHandler {
         // Mark nonce as processed BEFORE minting (CEI pattern)
         _processedNonces[messageNonce] = true;
 
-        // Mint native tokens via precompile
-        try INativeMintPrecompile(NATIVE_MINT_PRECOMPILE).mint(recipient, amount) {
-            emit NativeMinted(recipient, amount, messageNonce);
-        } catch (bytes memory reason) {
-            // Revert the nonce marking if mint failed
-            _processedNonces[messageNonce] = false;
-            emit MintFailed(messageNonce, reason);
-            revert MintPrecompileFailed();
-        }
+        // Mint native tokens via precompile (precompile never reverts)
+        INativeMintPrecompile(SystemAddresses.NATIVE_MINT_PRECOMPILE).mint(recipient, amount);
+
+        emit NativeMinted(recipient, amount, messageNonce);
     }
 
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @inheritdoc INativeTokenMinter
+    /// @inheritdoc IGBridgeReceiver
     function isProcessed(
         uint128 nonce
     ) external view returns (bool) {
         return _processedNonces[nonce];
     }
-
-    /// @inheritdoc INativeTokenMinter
-    function isInitialized() external view returns (bool) {
-        return _initialized;
-    }
 }
+
