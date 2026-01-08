@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { GravityPortal } from "../../../src/oracle/GravityPortal.sol";
 import { IGravityPortal } from "../../../src/oracle/IGravityPortal.sol";
+import { PortalMessage } from "../../../src/oracle/PortalMessage.sol";
+import { Ownable } from "@openzeppelin/access/Ownable.sol";
 
 /// @title GravityPortalTest
 /// @notice Unit tests for GravityPortal contract (deployed on Ethereum)
@@ -50,7 +52,7 @@ contract GravityPortalTest is Test {
     }
 
     function test_Constructor_RevertWhenZeroOwner() public {
-        vm.expectRevert(IGravityPortal.ZeroAddress.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
         new GravityPortal(address(0), INITIAL_BASE_FEE, INITIAL_FEE_PER_BYTE, feeRecipient);
     }
 
@@ -74,12 +76,12 @@ contract GravityPortalTest is Test {
         assertEq(portal.nonce(), 1);
     }
 
-    function test_SendMessage_EmitsEvent() public {
+    function test_SendMessage_EmitsEventWithCompactEncoding() public {
         bytes memory message = abi.encode(uint256(100), bob);
         uint256 fee = portal.calculateFee(message.length);
 
-        // Build expected payload
-        bytes memory expectedPayload = abi.encode(alice, uint256(0), message);
+        // Build expected payload using compact encoding
+        bytes memory expectedPayload = PortalMessage.encode(alice, uint256(0), message);
         bytes32 expectedHash = keccak256(expectedPayload);
 
         vm.prank(alice);
@@ -103,9 +105,8 @@ contract GravityPortalTest is Test {
 
     function test_SendMessage_RevertWhenInsufficientFee() public {
         bytes memory message = abi.encode(uint256(100), bob);
-        
-        // The actual payload is abi.encode(sender, nonce, message) which is larger
-        // than just the message, so sending 0 wei should definitely fail
+
+        // The actual payload is compact encoded so sending 0 wei should fail
         vm.prank(alice);
         vm.expectRevert(); // Will revert with InsufficientFee
         portal.sendMessage{ value: 0 }(message);
@@ -122,11 +123,11 @@ contract GravityPortalTest is Test {
         assertEq(portal.nonce(), 1);
     }
 
-    function test_SendMessageWithData_EmitsEvent() public {
+    function test_SendMessageWithData_EmitsEventWithCompactEncoding() public {
         bytes memory message = abi.encode(uint256(100), bob);
         uint256 fee = portal.calculateFee(message.length);
 
-        bytes memory expectedPayload = abi.encode(alice, uint256(0), message);
+        bytes memory expectedPayload = PortalMessage.encode(alice, uint256(0), message);
         bytes32 expectedHash = keccak256(expectedPayload);
 
         vm.prank(alice);
@@ -136,25 +137,80 @@ contract GravityPortalTest is Test {
     }
 
     // ========================================================================
+    // COMPACT ENCODING VERIFICATION TESTS
+    // ========================================================================
+
+    function test_CompactEncodingFormat() public {
+        bytes memory message = hex"deadbeef";
+        uint256 fee = portal.calculateFee(message.length);
+
+        vm.prank(alice);
+
+        // Capture the event
+        vm.recordLogs();
+        portal.sendMessage{ value: fee }(message);
+
+        // Get the emitted event
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 1, "Should emit one event");
+
+        // Decode the payload from the event
+        bytes memory payload = abi.decode(entries[0].data, (bytes));
+
+        // Verify compact encoding: 20 (sender) + 32 (nonce) + message.length = 56 bytes
+        assertEq(payload.length, 52 + message.length, "Compact payload length");
+
+        // Decode and verify
+        (address sender, uint256 nonce, bytes memory decodedMessage) = PortalMessage.decode(payload);
+        assertEq(sender, alice, "Decoded sender");
+        assertEq(nonce, 0, "Decoded nonce");
+        assertEq(decodedMessage, message, "Decoded message");
+    }
+
+    function test_CompactEncodingSmallerThanAbi() public {
+        bytes memory message = hex"0102030405060708";
+        uint256 fee = portal.calculateFee(message.length);
+
+        vm.prank(alice);
+
+        vm.recordLogs();
+        portal.sendMessage{ value: fee }(message);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes memory compactPayload = abi.decode(entries[0].data, (bytes));
+
+        // Compare with ABI encoding
+        bytes memory abiPayload = abi.encode(alice, uint256(0), message);
+
+        // Compact should be significantly smaller
+        assertLt(compactPayload.length, abiPayload.length, "Compact should be smaller");
+
+        // Compact: 52 + 8 = 60 bytes
+        // ABI: ~160+ bytes (with dynamic bytes overhead)
+        assertEq(compactPayload.length, 60, "Compact should be exactly 60 bytes");
+    }
+
+    // ========================================================================
     // FEE CALCULATION TESTS
     // ========================================================================
 
     function test_CalculateFee() public view {
-        // Test with 0 bytes
-        assertEq(portal.calculateFee(0), INITIAL_BASE_FEE + 128 * INITIAL_FEE_PER_BYTE);
+        // Test with 0 bytes: 52 (header) * feePerByte + baseFee
+        assertEq(portal.calculateFee(0), INITIAL_BASE_FEE + 52 * INITIAL_FEE_PER_BYTE);
 
-        // Test with 32 bytes
-        assertEq(portal.calculateFee(32), INITIAL_BASE_FEE + 160 * INITIAL_FEE_PER_BYTE);
+        // Test with 32 bytes: 84 bytes total
+        assertEq(portal.calculateFee(32), INITIAL_BASE_FEE + 84 * INITIAL_FEE_PER_BYTE);
 
-        // Test with 100 bytes (rounds up to 128)
-        assertEq(portal.calculateFee(100), INITIAL_BASE_FEE + 256 * INITIAL_FEE_PER_BYTE);
+        // Test with 100 bytes: 152 bytes total
+        assertEq(portal.calculateFee(100), INITIAL_BASE_FEE + 152 * INITIAL_FEE_PER_BYTE);
     }
 
     function testFuzz_CalculateFee(uint256 messageLength) public view {
         messageLength = bound(messageLength, 0, 10000);
 
         uint256 fee = portal.calculateFee(messageLength);
-        uint256 expectedPayloadLength = 128 + ((messageLength + 31) / 32) * 32;
+        // Compact encoding: 52 bytes overhead + message length
+        uint256 expectedPayloadLength = 52 + messageLength;
         uint256 expectedFee = INITIAL_BASE_FEE + (expectedPayloadLength * INITIAL_FEE_PER_BYTE);
 
         assertEq(fee, expectedFee);
@@ -177,7 +233,7 @@ contract GravityPortalTest is Test {
 
     function test_SetBaseFee_RevertWhenNotOwner() public {
         vm.prank(alice);
-        vm.expectRevert(IGravityPortal.OnlyOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         portal.setBaseFee(0.002 ether);
     }
 
@@ -194,7 +250,7 @@ contract GravityPortalTest is Test {
 
     function test_SetFeePerByte_RevertWhenNotOwner() public {
         vm.prank(alice);
-        vm.expectRevert(IGravityPortal.OnlyOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         portal.setFeePerByte(200 wei);
     }
 
@@ -211,7 +267,7 @@ contract GravityPortalTest is Test {
 
     function test_SetFeeRecipient_RevertWhenNotOwner() public {
         vm.prank(alice);
-        vm.expectRevert(IGravityPortal.OnlyOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         portal.setFeeRecipient(bob);
     }
 
@@ -264,26 +320,117 @@ contract GravityPortalTest is Test {
     }
 
     // ========================================================================
-    // OWNERSHIP TESTS
+    // OWNABLE2STEP TESTS
     // ========================================================================
 
-    function test_TransferOwnership() public {
+    function test_TransferOwnership_TwoStep() public {
+        // Step 1: Owner initiates transfer
         vm.prank(owner);
         portal.transferOwnership(alice);
 
+        // Owner is still the same
+        assertEq(portal.owner(), owner);
+        // Pending owner is set
+        assertEq(portal.pendingOwner(), alice);
+    }
+
+    function test_AcceptOwnership() public {
+        // Step 1: Owner initiates transfer
+        vm.prank(owner);
+        portal.transferOwnership(alice);
+
+        // Step 2: New owner accepts
+        vm.prank(alice);
+        portal.acceptOwnership();
+
+        // Ownership transferred
         assertEq(portal.owner(), alice);
+        assertEq(portal.pendingOwner(), address(0));
+    }
+
+    function test_AcceptOwnership_RevertWhenNotPendingOwner() public {
+        vm.prank(owner);
+        portal.transferOwnership(alice);
+
+        // Bob cannot accept
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
+        portal.acceptOwnership();
     }
 
     function test_TransferOwnership_RevertWhenNotOwner() public {
         vm.prank(alice);
-        vm.expectRevert(IGravityPortal.OnlyOwner.selector);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         portal.transferOwnership(bob);
     }
 
-    function test_TransferOwnership_RevertWhenZeroAddress() public {
+    function test_TransferOwnership_CanCancelByTransferringToZero() public {
+        // Initiate transfer
         vm.prank(owner);
-        vm.expectRevert(IGravityPortal.ZeroAddress.selector);
+        portal.transferOwnership(alice);
+        assertEq(portal.pendingOwner(), alice);
+
+        // Cancel by transferring to zero (or another address)
+        vm.prank(owner);
         portal.transferOwnership(address(0));
+        assertEq(portal.pendingOwner(), address(0));
+
+        // Alice can no longer accept
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.acceptOwnership();
+    }
+
+    function test_TransferOwnership_CanChangeBeforeAccept() public {
+        // Initiate transfer to alice
+        vm.prank(owner);
+        portal.transferOwnership(alice);
+
+        // Change to bob before alice accepts
+        vm.prank(owner);
+        portal.transferOwnership(bob);
+
+        assertEq(portal.pendingOwner(), bob);
+
+        // Alice can no longer accept
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.acceptOwnership();
+
+        // Bob can accept
+        vm.prank(bob);
+        portal.acceptOwnership();
+        assertEq(portal.owner(), bob);
+    }
+
+    function test_NewOwnerCanManageFees() public {
+        // Transfer ownership
+        vm.prank(owner);
+        portal.transferOwnership(alice);
+        vm.prank(alice);
+        portal.acceptOwnership();
+
+        // New owner can set fees
+        vm.prank(alice);
+        portal.setBaseFee(0.005 ether);
+        assertEq(portal.baseFee(), 0.005 ether);
+
+        // Old owner cannot
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
+        portal.setBaseFee(0.001 ether);
+    }
+
+    function test_RenounceOwnership() public {
+        vm.prank(owner);
+        portal.renounceOwnership();
+
+        assertEq(portal.owner(), address(0));
+
+        // No one can set fees now
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, owner));
+        portal.setBaseFee(0.002 ether);
     }
 
     // ========================================================================
@@ -313,5 +460,26 @@ contract GravityPortalTest is Test {
         assertEq(portal.baseFee(), baseFee);
         assertEq(portal.feePerByte(), feePerByte);
     }
-}
 
+    function testFuzz_PayloadEncodingConsistency(address sender, bytes memory message) public {
+        // Verify that the portal's encoding matches the library's encoding
+        uint256 fee = portal.calculateFee(message.length);
+
+        vm.deal(sender, fee);
+        vm.prank(sender);
+
+        vm.recordLogs();
+        portal.sendMessage{ value: fee }(message);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes memory emittedPayload = abi.decode(entries[0].data, (bytes));
+
+        // Decode using library
+        (address decodedSender, uint256 decodedNonce, bytes memory decodedMessage) =
+            PortalMessage.decode(emittedPayload);
+
+        assertEq(decodedSender, sender, "Sender should match");
+        assertEq(decodedNonce, 0, "First message nonce should be 0");
+        assertEq(keccak256(decodedMessage), keccak256(message), "Message should match");
+    }
+}

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.30;
 
 import { IGravityPortal } from "./IGravityPortal.sol";
+import { PortalMessage } from "./PortalMessage.sol";
+import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 
 /// @title GravityPortal
 /// @author Gravity Team
@@ -9,7 +11,8 @@ import { IGravityPortal } from "./IGravityPortal.sol";
 /// @dev Deployed on Ethereum (or other EVM chains). NOT deployed on Gravity.
 ///      Charges fees in native token (ETH) for message bridging.
 ///      Consensus engine monitors MessageSent events and bridges to Gravity.
-contract GravityPortal is IGravityPortal {
+///      Uses compact encoding via PortalMessage library: sender (20B) + nonce (32B) + message.
+contract GravityPortal is IGravityPortal, Ownable2Step {
     // ========================================================================
     // STATE
     // ========================================================================
@@ -26,9 +29,6 @@ contract GravityPortal is IGravityPortal {
     /// @notice Monotonically increasing nonce for message ordering
     uint256 public nonce;
 
-    /// @notice Contract owner (can update fee configuration)
-    address public owner;
-
     // ========================================================================
     // CONSTRUCTOR
     // ========================================================================
@@ -43,24 +43,13 @@ contract GravityPortal is IGravityPortal {
         uint256 initialBaseFee,
         uint256 initialFeePerByte,
         address initialFeeRecipient
-    ) {
+    ) Ownable(initialOwner) {
         if (initialOwner == address(0)) revert ZeroAddress();
         if (initialFeeRecipient == address(0)) revert ZeroAddress();
 
-        owner = initialOwner;
         baseFee = initialBaseFee;
         feePerByte = initialFeePerByte;
         feeRecipient = initialFeeRecipient;
-    }
-
-    // ========================================================================
-    // MODIFIERS
-    // ========================================================================
-
-    /// @notice Restrict to owner only
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert OnlyOwner();
-        _;
     }
 
     // ========================================================================
@@ -69,9 +58,9 @@ contract GravityPortal is IGravityPortal {
 
     /// @inheritdoc IGravityPortal
     function sendMessage(bytes calldata message) external payable returns (uint256 messageNonce) {
-        // Encode full payload: sender + nonce + message
+        // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
         messageNonce = nonce++;
-        bytes memory payload = abi.encode(msg.sender, messageNonce, message);
+        bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
 
         // Calculate and validate fee
         uint256 requiredFee = _calculateFee(payload.length);
@@ -88,9 +77,9 @@ contract GravityPortal is IGravityPortal {
 
     /// @inheritdoc IGravityPortal
     function sendMessageWithData(bytes calldata message) external payable returns (uint256 messageNonce) {
-        // Encode full payload: sender + nonce + message
+        // Encode full payload using compact encoding: sender (20B) + nonce (32B) + message
         messageNonce = nonce++;
-        bytes memory payload = abi.encode(msg.sender, messageNonce, message);
+        bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
 
         // Calculate and validate fee
         uint256 requiredFee = _calculateFee(payload.length);
@@ -145,23 +134,15 @@ contract GravityPortal is IGravityPortal {
         emit FeesWithdrawn(recipient, balance);
     }
 
-    /// @notice Transfer ownership to a new address
-    /// @param newOwner The new owner address
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroAddress();
-        owner = newOwner;
-    }
-
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
     function calculateFee(uint256 messageLength) external view returns (uint256 requiredFee) {
-        // Estimate encoded payload length:
-        // sender (32 bytes) + nonce (32 bytes) + message length offset (32 bytes) + message length (32 bytes) + message
-        // Simplified: ~128 bytes overhead + message length (rounded up to 32-byte words)
-        uint256 estimatedPayloadLength = 128 + ((messageLength + 31) / 32) * 32;
+        // Estimate encoded payload length using compact encoding:
+        // sender (20 bytes) + nonce (32 bytes) + message length = 52 + messageLength
+        uint256 estimatedPayloadLength = PortalMessage.MIN_PAYLOAD_LENGTH + messageLength;
         return _calculateFee(estimatedPayloadLength);
     }
 
@@ -176,4 +157,3 @@ contract GravityPortal is IGravityPortal {
         return baseFee + (payloadLength * feePerByte);
     }
 }
-

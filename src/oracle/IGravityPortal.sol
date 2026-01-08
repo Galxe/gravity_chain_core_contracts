@@ -7,6 +7,7 @@ pragma solidity ^0.8.30;
 /// @dev Entry point for sending messages from Ethereum to Gravity chain.
 ///      Messages are fee-based with configurable baseFee and feePerByte.
 ///      Supports two modes: hash-only (sendMessage) and full data (sendMessageWithData).
+///      Uses compact encoding: sender (20 bytes) + nonce (32 bytes) + message (variable).
 interface IGravityPortal {
     // ========================================================================
     // EVENTS
@@ -16,7 +17,7 @@ interface IGravityPortal {
     /// @param payloadHash The keccak256 hash of the full payload
     /// @param sender The address that called sendMessage (msg.sender)
     /// @param nonce The unique nonce for this message
-    /// @param payload The full payload: abi.encode(sender, nonce, message)
+    /// @param payload The full payload: sender (20B) || nonce (32B) || message
     event MessageSent(
         bytes32 indexed payloadHash,
         address indexed sender,
@@ -28,7 +29,7 @@ interface IGravityPortal {
     /// @param payloadHash The keccak256 hash of the full payload
     /// @param sender The address that called sendMessageWithData
     /// @param nonce The unique nonce for this message
-    /// @param payload The full payload: abi.encode(sender, nonce, message)
+    /// @param payload The full payload: sender (20B) || nonce (32B) || message
     event MessageSentWithData(
         bytes32 indexed payloadHash,
         address indexed sender,
@@ -66,22 +67,19 @@ interface IGravityPortal {
     /// @notice No fees available to withdraw
     error NoFeesToWithdraw();
 
-    /// @notice Only owner can call this function
-    error OnlyOwner();
-
     // ========================================================================
     // MESSAGE BRIDGING
     // ========================================================================
 
     /// @notice Send a message to Gravity (hash-only mode, storage-efficient)
-    /// @dev The full payload is: abi.encode(msg.sender, nonce, message)
+    /// @dev The full payload uses compact encoding: sender (20B) || nonce (32B) || message
     ///      Only the hash is stored on Gravity; users must provide pre-image for verification.
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
     function sendMessage(bytes calldata message) external payable returns (uint256 messageNonce);
 
     /// @notice Send a message to Gravity (data mode, stored on-chain)
-    /// @dev The full payload is: abi.encode(msg.sender, nonce, message)
+    /// @dev The full payload uses compact encoding: sender (20B) || nonce (32B) || message
     ///      The full payload is stored on Gravity for direct access.
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
@@ -128,9 +126,8 @@ interface IGravityPortal {
 
     /// @notice Calculate the required fee for a message of given length
     /// @dev Fee = baseFee + (encodedPayloadLength * feePerByte)
-    ///      Encoded payload includes sender (32 bytes) + nonce (32 bytes) + message + ABI overhead
+    ///      Encoded payload = 52 bytes (sender + nonce) + message length
     /// @param messageLength Length of the message in bytes
     /// @return requiredFee The required fee in wei
     function calculateFee(uint256 messageLength) external view returns (uint256 requiredFee);
 }
-
