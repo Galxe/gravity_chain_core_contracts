@@ -10,143 +10,77 @@ import { Errors } from "../foundation/Errors.sol";
 /// @author Gravity Team
 /// @notice Stores verified data from external sources (blockchains, JWK providers, DNS records)
 /// @dev Data is recorded by the consensus engine via SYSTEM_CALLER after validators reach consensus.
-///      Supports two storage modes:
-///      - Hash mode: Store only keccak256(payload), storage-efficient
-///      - Data mode: Store full payload for direct contract access
-///      Callbacks are invoked with limited gas and failures do NOT revert oracle recording.
+///      Records are keyed by (sourceType, sourceId, nonce) tuple.
+///      Callbacks are invoked with caller-specified gas limit and failures do NOT revert oracle recording.
 contract NativeOracle is INativeOracle {
-    // ========================================================================
-    // CONSTANTS
-    // ========================================================================
-
-    /// @notice Gas limit for callback execution
-    /// @dev Prevents malicious callbacks from consuming excessive gas
-    uint256 public constant CALLBACK_GAS_LIMIT = 500_000;
-
     // ========================================================================
     // STATE
     // ========================================================================
 
-    /// @notice Data records: hash => DataRecord
-    /// @dev The hash serves as the unique key for each record
-    mapping(bytes32 => DataRecord) private _dataRecords;
+    /// @notice Data records: sourceType -> sourceId -> nonce -> DataRecord
+    mapping(uint32 => mapping(uint256 => mapping(uint128 => DataRecord))) private _records;
 
-    /// @notice Sync status per source: sourceName => SyncStatus
-    /// @dev Tracks the latest verified position for each source
-    mapping(bytes32 => SyncStatus) private _syncStatus;
+    /// @notice Latest nonce per source: sourceType -> sourceId -> nonce
+    mapping(uint32 => mapping(uint256 => uint128)) private _nonces;
 
-    /// @notice Callback handlers: sourceName => callback contract
-    /// @dev When an event is recorded, the callback is invoked (if registered)
-    mapping(bytes32 => address) private _callbacks;
+    /// @notice Default callback handlers: sourceType -> callback contract
+    mapping(uint32 => address) private _defaultCallbacks;
 
-    /// @notice Total number of records stored
-    uint256 private _totalRecords;
-
-    /// @notice Whether the contract has been initialized
-    bool private _initialized;
-
-    // ========================================================================
-    // INITIALIZATION
-    // ========================================================================
-
-    /// @notice Initialize the oracle contract
-    /// @dev Can only be called once by GENESIS
-    function initialize() external {
-        requireAllowed(SystemAddresses.GENESIS);
-
-        if (_initialized) {
-            revert Errors.AlreadyInitialized();
-        }
-
-        _initialized = true;
-    }
-
-    // ========================================================================
-    // MODIFIERS
-    // ========================================================================
-
-    /// @notice Require the contract to be initialized
-    modifier whenInitialized() {
-        if (!_initialized) {
-            revert Errors.OracleNotInitialized();
-        }
-        _;
-    }
+    /// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
+    mapping(uint32 => mapping(uint256 => address)) private _callbacks;
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function recordHash(
-        bytes32 dataHash,
-        bytes32 sourceName,
-        uint128 syncId,
-        bytes calldata payload
-    ) external whenInitialized {
+    function record(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
+    ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
-        // Update sync status (validates syncId is increasing)
-        _updateSyncStatus(sourceName, syncId);
+        // Validate and update nonce (always done regardless of storage)
+        _updateNonce(sourceType, sourceId, nonce);
 
-        // Record hash without storing payload data
-        _recordHashInternal(dataHash, syncId);
-
-        emit HashRecorded(dataHash, sourceName, syncId);
-
-        // Invoke callback if registered
-        _invokeCallback(sourceName, dataHash, payload);
-    }
-
-    /// @inheritdoc INativeOracle
-    function recordData(
-        bytes32 dataHash,
-        bytes32 sourceName,
-        uint128 syncId,
-        bytes calldata payload
-    ) external whenInitialized {
-        requireAllowed(SystemAddresses.SYSTEM_CALLER);
-
-        // Update sync status (validates syncId is increasing)
-        _updateSyncStatus(sourceName, syncId);
-
-        // Record with full data storage
-        _recordDataInternal(dataHash, syncId, payload);
-
-        emit DataRecorded(dataHash, sourceName, syncId, payload.length);
-
-        // Invoke callback if registered
-        _invokeCallback(sourceName, dataHash, payload);
-    }
-
-    /// @inheritdoc INativeOracle
-    function recordHashBatch(
-        bytes32[] calldata dataHashes,
-        bytes32 sourceName,
-        uint128 syncId,
-        bytes[] calldata payloads
-    ) external whenInitialized {
-        requireAllowed(SystemAddresses.SYSTEM_CALLER);
-
-        // Validate array lengths match
-        if (dataHashes.length != payloads.length) {
-            revert Errors.ArrayLengthMismatch(dataHashes.length, payloads.length);
+        // Invoke callback first to determine if we should store
+        // Default: store if no callback or callback fails
+        bool shouldStore = true;
+        if (callbackGasLimit > 0) {
+            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
         }
 
-        // Update sync status once for the batch
-        _updateSyncStatus(sourceName, syncId);
+        // Conditionally store record based on callback result
+        if (shouldStore) {
+            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
+        }
+    }
 
-        // Record all hashes
-        uint256 length = dataHashes.length;
+    /// @inheritdoc INativeOracle
+    function recordBatch(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128[] calldata nonces,
+        bytes[] calldata payloads,
+        uint256[] calldata callbackGasLimits
+    ) external {
+        requireAllowed(SystemAddresses.SYSTEM_CALLER);
+
+        uint256 length = nonces.length;
+        if (length == 0) return;
+
+        // Validate array lengths match
+        if (length != payloads.length || length != callbackGasLimits.length) {
+            revert Errors.OracleBatchArrayLengthMismatch(length, payloads.length, callbackGasLimits.length);
+        }
+
+        // Record all data entries with individual nonce validation
         for (uint256 i; i < length;) {
-            bytes32 dataHash = dataHashes[i];
-
-            _recordHashInternal(dataHash, syncId);
-
-            emit HashRecorded(dataHash, sourceName, syncId);
-
-            // Invoke callback for each record
-            _invokeCallback(sourceName, dataHash, payloads[i]);
+            _recordSingle(sourceType, sourceId, nonces[i], payloads[i], callbackGasLimits[i]);
 
             unchecked {
                 ++i;
@@ -154,39 +88,33 @@ contract NativeOracle is INativeOracle {
         }
     }
 
-    /// @inheritdoc INativeOracle
-    function recordDataBatch(
-        bytes32[] calldata dataHashes,
-        bytes32 sourceName,
-        uint128 syncId,
-        bytes[] calldata payloads
-    ) external whenInitialized {
-        requireAllowed(SystemAddresses.SYSTEM_CALLER);
+    /// @notice Internal helper to record a single entry (reduces stack depth)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce
+    /// @param payload The payload data
+    /// @param callbackGasLimit Gas limit for callback (0 = no callback)
+    function _recordSingle(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
+    ) private {
+        // Validate and update nonce (always done regardless of storage)
+        _updateNonce(sourceType, sourceId, nonce);
 
-        // Validate array lengths match
-        if (dataHashes.length != payloads.length) {
-            revert Errors.ArrayLengthMismatch(dataHashes.length, payloads.length);
+        // Invoke callback first to determine if we should store
+        // Default: store if no callback or callback fails
+        bool shouldStore = true;
+        if (callbackGasLimit > 0) {
+            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
         }
 
-        // Update sync status once for the batch
-        _updateSyncStatus(sourceName, syncId);
-
-        // Record all data entries
-        uint256 length = dataHashes.length;
-        for (uint256 i; i < length;) {
-            bytes32 dataHash = dataHashes[i];
-            bytes calldata payload = payloads[i];
-
-            _recordDataInternal(dataHash, syncId, payload);
-
-            emit DataRecorded(dataHash, sourceName, syncId, payload.length);
-
-            // Invoke callback for each record
-            _invokeCallback(sourceName, dataHash, payload);
-
-            unchecked {
-                ++i;
-            }
+        // Conditionally store record based on callback result
+        if (shouldStore) {
+            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }
 
@@ -195,194 +123,155 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function setCallback(
-        bytes32 sourceName,
+    function setDefaultCallback(
+        uint32 sourceType,
         address callback
-    ) external whenInitialized {
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
 
-        address oldCallback = _callbacks[sourceName];
-        _callbacks[sourceName] = callback;
+        address oldCallback = _defaultCallbacks[sourceType];
+        _defaultCallbacks[sourceType] = callback;
 
-        emit CallbackSet(sourceName, oldCallback, callback);
+        emit DefaultCallbackSet(sourceType, oldCallback, callback);
+    }
+
+    /// @inheritdoc INativeOracle
+    function getDefaultCallback(
+        uint32 sourceType
+    ) external view returns (address callback) {
+        return _defaultCallbacks[sourceType];
+    }
+
+    /// @inheritdoc INativeOracle
+    function setCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        address callback
+    ) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+
+        address oldCallback = _callbacks[sourceType][sourceId];
+        _callbacks[sourceType][sourceId] = callback;
+
+        emit CallbackSet(sourceType, sourceId, oldCallback, callback);
     }
 
     /// @inheritdoc INativeOracle
     function getCallback(
-        bytes32 sourceName
+        uint32 sourceType,
+        uint256 sourceId
     ) external view returns (address callback) {
-        return _callbacks[sourceName];
+        address specialized = _callbacks[sourceType][sourceId];
+        if (specialized != address(0)) {
+            return specialized;
+        }
+        return _defaultCallbacks[sourceType];
     }
 
     // ========================================================================
-    // VERIFICATION FUNCTIONS
+    // QUERY FUNCTIONS
     // ========================================================================
 
     /// @inheritdoc INativeOracle
-    function verifyHash(
-        bytes32 dataHash
-    ) external view returns (bool exists, DataRecord memory record) {
-        record = _dataRecords[dataHash];
-        exists = record.exists;
+    function getRecord(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (DataRecord memory) {
+        return _records[sourceType][sourceId][nonce];
     }
 
     /// @inheritdoc INativeOracle
-    function verifyPreImage(
-        bytes calldata preImage
-    ) external view returns (bool exists, DataRecord memory record) {
-        bytes32 dataHash = keccak256(preImage);
-        record = _dataRecords[dataHash];
-        exists = record.exists;
-    }
-
-    /// @inheritdoc INativeOracle
-    function getData(
-        bytes32 dataHash
-    ) external view returns (bytes memory data) {
-        return _dataRecords[dataHash].data;
-    }
-
-    // ========================================================================
-    // SYNC STATUS
-    // ========================================================================
-
-    /// @inheritdoc INativeOracle
-    function getSyncStatus(
-        bytes32 sourceName
-    ) external view returns (SyncStatus memory status) {
-        return _syncStatus[sourceName];
+    function getLatestNonce(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (uint128 nonce) {
+        return _nonces[sourceType][sourceId];
     }
 
     /// @inheritdoc INativeOracle
     function isSyncedPast(
-        bytes32 sourceName,
-        uint128 syncId
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
     ) external view returns (bool) {
-        SyncStatus storage status = _syncStatus[sourceName];
-        return status.initialized && status.latestSyncId >= syncId;
-    }
-
-    // ========================================================================
-    // STATISTICS
-    // ========================================================================
-
-    /// @inheritdoc INativeOracle
-    function getTotalRecords() external view returns (uint256) {
-        return _totalRecords;
-    }
-
-    /// @notice Check if the contract has been initialized
-    /// @return True if initialized
-    function isInitialized() external view returns (bool) {
-        return _initialized;
+        uint128 latestNonce = _nonces[sourceType][sourceId];
+        return latestNonce > 0 && latestNonce >= nonce;
     }
 
     // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
 
-    /// @notice Update sync status for a source
-    /// @dev Validates that syncId is strictly increasing
-    /// @param sourceName The source identifier
-    /// @param syncId The new sync ID
-    function _updateSyncStatus(
-        bytes32 sourceName,
-        uint128 syncId
+    /// @notice Update nonce for a source
+    /// @dev Validates that nonce is strictly increasing (and >= 1 for first record)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The new nonce (must be > current nonce)
+    function _updateNonce(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
     ) internal {
-        SyncStatus storage status = _syncStatus[sourceName];
+        uint128 currentNonce = _nonces[sourceType][sourceId];
 
-        if (status.initialized) {
-            // Sync ID must be strictly increasing
-            if (syncId <= status.latestSyncId) {
-                revert Errors.SyncIdNotIncreasing(sourceName, status.latestSyncId, syncId);
-            }
+        // Nonce must be strictly increasing (currentNonce defaults to 0, so first nonce must be >= 1)
+        if (nonce <= currentNonce) {
+            revert Errors.NonceNotIncreasing(sourceType, sourceId, currentNonce, nonce);
         }
 
-        uint128 previousSyncId = status.latestSyncId;
-        status.initialized = true;
-        status.latestSyncId = syncId;
-
-        emit SyncStatusUpdated(sourceName, previousSyncId, syncId);
+        _nonces[sourceType][sourceId] = nonce;
     }
 
-    /// @notice Record a hash without storing payload data
-    /// @param dataHash The hash to record
-    /// @param syncId The sync ID for this record
-    function _recordHashInternal(
-        bytes32 dataHash,
-        uint128 syncId
-    ) internal {
-        DataRecord storage record = _dataRecords[dataHash];
-
-        // Only increment total if this is a new record
-        if (!record.exists) {
-            _totalRecords++;
+    /// @notice Resolve callback using 2-layer lookup
+    /// @dev Returns specialized callback if set, otherwise default callback
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @return callback The resolved callback address (address(0) if none set)
+    function _resolveCallback(
+        uint32 sourceType,
+        uint256 sourceId
+    ) internal view returns (address callback) {
+        address specialized = _callbacks[sourceType][sourceId];
+        if (specialized != address(0)) {
+            return specialized;
         }
-
-        record.exists = true;
-        record.syncId = syncId;
-        // Note: record.data remains empty for hash-only mode
+        return _defaultCallbacks[sourceType];
     }
 
-    /// @notice Record data with full payload storage
-    /// @param dataHash The hash to record
-    /// @param syncId The sync ID for this record
-    /// @param payload The payload to store
-    function _recordDataInternal(
-        bytes32 dataHash,
-        uint128 syncId,
-        bytes calldata payload
-    ) internal {
-        DataRecord storage record = _dataRecords[dataHash];
-
-        // Only increment total if this is a new record
-        if (!record.exists) {
-            _totalRecords++;
-        }
-
-        record.exists = true;
-        record.syncId = syncId;
-        record.data = payload;
-    }
-
-    /// @notice Invoke callback with limited gas
-    /// @dev Failures are caught to prevent DOS attacks
-    /// @param sourceName The source identifier
-    /// @param dataHash The data hash
+    /// @notice Invoke callback with specified gas limit
+    /// @dev Failures are caught to prevent DOS attacks. Returns whether storage should happen.
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce of the record
     /// @param payload The event payload
+    /// @param gasLimit Gas limit for callback execution
+    /// @return shouldStore True if payload should be stored, false to skip storage
     function _invokeCallback(
-        bytes32 sourceName,
-        bytes32 dataHash,
-        bytes calldata payload
-    ) internal {
-        address callback = _callbacks[sourceName];
-        if (callback == address(0)) return;
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 gasLimit
+    ) internal returns (bool shouldStore) {
+        address callback = _resolveCallback(sourceType, sourceId);
+        if (callback == address(0)) return true; // No callback = store by default
 
-        // Try to call the callback with limited gas
+        // Try to call the callback with specified gas limit
         // This prevents malicious callbacks from:
         // 1. Consuming excessive gas
         // 2. Blocking oracle updates by reverting
-        try IOracleCallback(callback).onOracleEvent{ gas: CALLBACK_GAS_LIMIT }(dataHash, payload) {
-            emit CallbackSuccess(sourceName, dataHash, callback);
+        try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) returns (
+            bool callbackShouldStore
+        ) {
+            emit CallbackSuccess(sourceType, sourceId, nonce, callback);
+            if (!callbackShouldStore) {
+                emit StorageSkipped(sourceType, sourceId, nonce, callback);
+            }
+            return callbackShouldStore;
         } catch (bytes memory reason) {
-            emit CallbackFailed(sourceName, dataHash, callback, reason);
+            emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
+            return true; // On failure, store by default to preserve data
         }
     }
-
-    // ========================================================================
-    // HELPER FUNCTIONS
-    // ========================================================================
-
-    /// @notice Compute the sourceName from event type and source ID
-    /// @dev sourceName = keccak256(abi.encode(eventType, sourceId))
-    /// @param eventType The event type enum value
-    /// @param sourceId The source identifier (e.g., keccak256("ethereum"))
-    /// @return sourceName The computed source name
-    function computeSourceName(
-        EventType eventType,
-        bytes32 sourceId
-    ) external pure returns (bytes32) {
-        return keccak256(abi.encode(eventType, sourceId));
-    }
 }
-

@@ -8,565 +8,470 @@ layer: oracle
 
 ## Overview
 
-The Native Oracle module stores and verifies data from external sources, enabling Gravity smart contracts to access
-validated information from other blockchains and real-world systems. The oracle is powered by the Gravity validator
-consensus—information is only accepted after validators reach consensus on its validity.
+The Native Oracle module enables Gravity to receive and store **verified external data** from any source. It is a single
+contract deployed on Gravity that provides:
 
-**Supported data sources include:**
+1. **Consensus-validated data recording** from any external source
+2. **Flexible callback routing** based on source type and source ID
+3. **Replay protection** via strictly increasing nonces
+
+**Supported data sources include (extensible via governance):**
 
 - **Blockchains**: Ethereum, other EVM chains (events, state roots, etc.)
-- **Real-world state**: JWK keys (Google, Apple, etc.), DNS records, and other verifiable data
-
-## Design Goals
-
-1. **Consensus-Gated**: Only SYSTEM_CALLER (consensus engine) can record data after validators agree
-2. **Storage Flexibility**: Hash-only mode (storage-efficient) or data mode (direct access)
-3. **Callback Support**: Optional callbacks for event-driven processing
-4. **Governance Control**: Callback registration requires governance approval (GOVERNANCE)
-5. **Failure Tolerance**: Callback failures do NOT revert oracle recording
-6. **Source Isolation**: Independent sync tracking per source
+- **JWK Keys**: OAuth providers (Google, Apple, etc.) for signature verification
+- **DNS Records**: TXT records, DKIM keys for zkEmail
+- **Price Feeds**: Stock prices, crypto prices, forex rates
+- **Any custom source**: Extensible via governance
 
 ---
 
 ## Architecture
 
 ```
-src/oracle/
-├── INativeOracle.sol  # Interface with events, errors, and data structures
-└── NativeOracle.sol   # Core implementation
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              EXTERNAL SOURCES                               │
+│                                                                             │
+│   Blockchains (ETH, BSC, ...)  │  JWK Providers  │  DNS  │  Price Feeds   │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ Validators monitor external sources
+                                    │ Reach consensus on data validity
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              GRAVITY CHAIN                                  │
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                    SYSTEM_CALLER (Consensus)                         │  │
+│   │                    Calls record / recordBatch                        │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                        │
+│                                    ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                         NativeOracle                                 │  │
+│   │                                                                      │  │
+│   │  • Stores verified data keyed by (sourceType, sourceId, nonce)     │  │
+│   │  • Tracks latest nonce per source (sourceType, sourceId)           │  │
+│   │  • Invokes callbacks with CALLER-SPECIFIED gas limit               │  │
+│   │  • Callback failures do NOT revert recording                        │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                         │                                                   │
+│                         │ Callback: onOracleEvent()                        │
+│                         ▼                                                   │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                   Application Handlers                               │  │
+│   │                   (Implement IOracleCallback)                        │  │
+│   │                                                                      │  │
+│   │  Examples:                                                           │  │
+│   │  • BlockchainEventHandler → Handles cross-chain events              │  │
+│   │  • JWKManager → Handles JWK key updates                             │  │
+│   │  • PriceFeedHandler → Handles price updates                         │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### System Address
+### Contract Deployment
 
-| Constant | Address | Description |
-|----------|---------|-------------|
-| `NATIVE_ORACLE` | `0x0000000000000000000000000001625F2023` | Native Oracle contract |
-
-### Dependency Graph
-
-```mermaid
-flowchart TD
-    subgraph ExternalChains[External Chains]
-        GP[GravityPortal on Ethereum]
-    end
-    
-    subgraph GravityChain[Gravity Chain]
-        CE[Consensus Engine]
-        SC[SYSTEM_CALLER]
-        NO[NativeOracle]
-        CB[Callback Handler]
-    end
-    
-    GP -->|Events monitored by| CE
-    CE -->|Reaches consensus| SC
-    SC -->|recordHash/recordData| NO
-    NO -->|onOracleEvent| CB
-    
-    GOV[Governance] -->|setCallback| NO
-
-    subgraph Foundation[Foundation Layer]
-        SA[SystemAddresses]
-        SAC[SystemAccessControl]
-        E[Errors]
-    end
-    
-    NO --> SA
-    NO --> SAC
-    NO --> E
-```
-
----
-
-## Storage Modes
-
-The Native Oracle supports two storage modes to balance efficiency and accessibility:
-
-### 1. Hash Storage Mode (Storage-Efficient)
-
-Stores only the hash of verified data. When verifying, users provide the original data (pre-image) as transaction
-calldata (much cheaper than storage), and the contract hashes it to recover and verify against the stored hash.
-
-**Use cases:**
-
-- Cross-chain event verification (deposits, withdrawals)
-- Large data where calldata is cheaper than storage
-- Cost-sensitive applications
-
-**Verification flow:**
-
-```
-User transaction calldata: original_data
-Contract execution: keccak256(original_data) == stored_hash
-```
-
-### 2. Data Storage Mode (Direct Access)
-
-Stores the full data on-chain, allowing smart contracts to access it directly without user input.
-
-**Use cases:**
-
-- JWK keys (for signature verification)
-- DNS records (for use cases like zkEmail that rely on reading DNS records on-chain)
-- Any data that contracts need to read directly without user providing pre-image
+| Chain   | Contract     | System Address                           |
+| ------- | ------------ | ---------------------------------------- |
+| Gravity | NativeOracle | `0x0000000000000000000000000001625F2023` |
 
 ---
 
 ## Data Structures
 
+### Source Type
+
+Source types are represented as `uint32` values for extensibility. New source types can be added by governance without
+requiring contract upgrades.
+
+```solidity
+/// @notice Source type identifier (uint32)
+/// @dev Well-known types by convention:
+///      0 = BLOCKCHAIN (cross-chain events from EVM chains)
+///      1 = JWK (JSON Web Keys from OAuth providers)
+///      2 = DNS (DNS records for zkEmail, etc.)
+///      3 = PRICE_FEED (price data from oracles)
+///      New types can be added without contract upgrades
+uint32 sourceType;
+```
+
+| Value | Name       | Description                         |
+| ----- | ---------- | ----------------------------------- |
+| 0     | BLOCKCHAIN | Cross-chain events (Ethereum, BSC)  |
+| 1     | JWK        | JSON Web Keys (Google, Apple OAuth) |
+| 2     | DNS        | DNS records (TXT, DKIM keys)        |
+| 3     | PRICE_FEED | Price data (stocks, crypto, forex)  |
+| 4+    | (Reserved) | New types added via governance      |
+
+### Source ID
+
+The `sourceId` is a flexible `uint256` that uniquely identifies a specific source within a source type. Its
+interpretation depends on the source type:
+
+```solidity
+/// @notice Source identifier (uint256)
+/// @dev Interpretation depends on sourceType:
+///      - BLOCKCHAIN: Chain ID (1 = Ethereum, 56 = BSC, etc.)
+///      - JWK: Provider ID (1 = Google, 2 = Apple, etc.)
+///      - DNS: Record type ID
+///      - PRICE_FEED: Asset pair ID
+uint256 sourceId;
+```
+
+| Source Type | Source ID | Example                     |
+| ----------- | --------- | --------------------------- |
+| BLOCKCHAIN  | `1`       | Ethereum mainnet (chain ID) |
+| BLOCKCHAIN  | `56`      | BNB Smart Chain (chain ID)  |
+| BLOCKCHAIN  | `42161`   | Arbitrum One (chain ID)     |
+| JWK         | `1`       | Google OAuth                |
+| JWK         | `2`       | Apple Sign-In               |
+| DNS         | `1`       | TXT records                 |
+| PRICE_FEED  | `1`       | ETH/USD                     |
+| PRICE_FEED  | `2`       | BTC/USD                     |
+
+### Nonce
+
+The `nonce` is a `uint128` value that uniquely identifies a record within a (sourceType, sourceId) pair.
+
+**Requirements:**
+
+- **Must start from 1**: The first nonce for any source must be >= 1 (cannot be 0)
+- **Strictly increasing**: Each subsequent nonce must be greater than the previous
+
+```solidity
+/// @notice Nonce (uint128)
+/// @dev Must start from 1 and strictly increase for each source
+///      Interpretation depends on source type:
+///      - BLOCKCHAIN: Block number or event index
+///      - JWK: Unix timestamp or sequence
+///      - DNS: Unix timestamp or sequence
+///      - PRICE_FEED: Sequence number or timestamp
+uint128 nonce;
+```
+
+| Source Type | Nonce Meaning   | Example                     |
+| ----------- | --------------- | --------------------------- |
+| Blockchain  | Block number    | `19000000` (Ethereum block) |
+| JWK         | Unix timestamp  | `1704067200`                |
+| DNS         | Unix timestamp  | `1704067200`                |
+| Custom      | Sequence number | `1`, `2`, `3`, ...          |
+
+**Invariants:**
+
+- `nonce >= 1` for the first record
+- `nonce` must be strictly increasing for each (sourceType, sourceId) pair
+
 ### DataRecord
 
 ```solidity
 struct DataRecord {
-    bool exists;       // Whether this record exists
-    uint128 syncId;    // Sync ID when this was recorded (for ordering)
-    bytes data;        // Empty for hash-only mode, populated for data mode
+    uint64 recordedAt;  // Timestamp when recorded (0 = not exists)
+    bytes data;         // Stored payload data
 }
 ```
 
-### SyncStatus
-
-```solidity
-struct SyncStatus {
-    bool initialized;      // Whether this source has been initialized
-    uint128 latestSyncId;  // Latest sync ID (block height, timestamp, etc.)
-}
-```
-
-### EventType
-
-```solidity
-enum EventType {
-    BLOCKCHAIN,  // Cross-chain events (Ethereum, BSC, etc.)
-    JWK,         // JWK key providers (Google, Apple, etc.)
-    DNS,         // DNS records
-    CUSTOM       // Custom/extensible sources
-}
-```
+Record existence is determined by `recordedAt > 0`.
 
 ---
 
-## Contract: `NativeOracle.sol`
+## Contract: NativeOracle
 
-### Constants
-
-```solidity
-/// @notice Gas limit for callback execution
-/// @dev Prevents malicious callbacks from consuming excessive gas
-uint256 public constant CALLBACK_GAS_LIMIT = 500_000;
-```
+Stores verified data from external sources. Only writable by SYSTEM_CALLER via consensus.
 
 ### State Variables
 
 ```solidity
-/// @notice Data records: hash => DataRecord
-mapping(bytes32 => DataRecord) private _dataRecords;
+/// @notice Data records: sourceType -> sourceId -> nonce -> DataRecord
+mapping(uint32 => mapping(uint256 => mapping(uint128 => DataRecord))) private _records;
 
-/// @notice Sync status per source: sourceName => SyncStatus
-mapping(bytes32 => SyncStatus) private _syncStatus;
+/// @notice Latest nonce per source: sourceType -> sourceId -> nonce
+mapping(uint32 => mapping(uint256 => uint128)) private _nonces;
 
-/// @notice Callback handlers: sourceName => callback contract
-mapping(bytes32 => address) private _callbacks;
+/// @notice Default callback handlers: sourceType -> callback contract
+/// @dev Fallback callback for all sources of a given type
+mapping(uint32 => address) private _defaultCallbacks;
 
-/// @notice Total number of records stored
-uint256 private _totalRecords;
-
-/// @notice Whether the contract has been initialized
-bool private _initialized;
+/// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
+/// @dev Overrides default callback for specific (sourceType, sourceId) pairs
+mapping(uint32 => mapping(uint256 => address)) private _callbacks;
 ```
 
 ### Interface
 
 ```solidity
 interface INativeOracle {
-    // ========== Initialization ==========
-    function initialize() external;
+    // ========== Recording (SYSTEM_CALLER Only) ==========
 
-    // ========== Recording (Consensus Only) ==========
-    function recordHash(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
-    function recordData(bytes32 dataHash, bytes32 sourceName, uint128 syncId, bytes calldata payload) external;
-    function recordHashBatch(bytes32[] calldata dataHashes, bytes32 sourceName, uint128 syncId, bytes[] calldata payloads) external;
-    function recordDataBatch(bytes32[] calldata dataHashes, bytes32 sourceName, uint128 syncId, bytes[] calldata payloads) external;
+    /// @notice Record a single data entry
+    /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
+    /// @param sourceId The source identifier (e.g., chain ID for blockchains)
+    /// @param nonce The nonce - must start from 1 and strictly increase
+    /// @param payload The data payload to store
+    /// @param callbackGasLimit Gas limit for callback execution (0 = no callback)
+    function record(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
+    ) external;
 
-    // ========== Callback Management (Governance Only) ==========
-    function setCallback(bytes32 sourceName, address callback) external;
-    function getCallback(bytes32 sourceName) external view returns (address);
+    /// @notice Batch record multiple data entries from the same source
+    /// @dev Each payload is recorded at sequential nonces starting from the provided nonce.
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The starting nonce for the batch
+    /// @param payloads Array of payloads to store
+    /// @param callbackGasLimit Gas limit for callback execution per record (0 = no callback)
+    function recordBatch(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes[] calldata payloads,
+        uint256 callbackGasLimit
+    ) external;
 
-    // ========== Verification ==========
-    function verifyHash(bytes32 dataHash) external view returns (bool exists, DataRecord memory record);
-    function verifyPreImage(bytes calldata preImage) external view returns (bool exists, DataRecord memory record);
-    function getData(bytes32 dataHash) external view returns (bytes memory data);
+    // ========== Callback Management (GOVERNANCE Only) ==========
+    //
+    // Callbacks use a 2-layer resolution system:
+    //   1. Default callback per sourceType - applies to all sources of that type
+    //   2. Specialized callback per (sourceType, sourceId) - overrides default
+    //
+    // When an oracle event is recorded, the system first checks for a specialized
+    // callback. If none is set, it falls back to the default callback for that
+    // source type.
 
-    // ========== Sync Status ==========
-    function getSyncStatus(bytes32 sourceName) external view returns (SyncStatus memory);
-    function isSyncedPast(bytes32 sourceName, uint128 syncId) external view returns (bool);
+    /// @notice Register default callback for a source type
+    function setDefaultCallback(uint32 sourceType, address callback) external;
 
-    // ========== Statistics ==========
-    function getTotalRecords() external view returns (uint256);
-    function isInitialized() external view returns (bool);
+    /// @notice Get default callback for a source type
+    function getDefaultCallback(uint32 sourceType) external view returns (address);
 
-    // ========== Helpers ==========
-    function computeSourceName(EventType eventType, bytes32 sourceId) external pure returns (bytes32);
+    /// @notice Register specialized callback for a specific source (overrides default)
+    function setCallback(uint32 sourceType, uint256 sourceId, address callback) external;
+
+    /// @notice Get effective callback for a source (2-layer resolution)
+    /// @dev Returns specialized if set, otherwise default
+    function getCallback(uint32 sourceType, uint256 sourceId) external view returns (address);
+
+    // ========== Query Functions ==========
+
+    /// @notice Get a record by its key tuple
+    /// @dev Record exists if record.recordedAt > 0
+    function getRecord(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (DataRecord memory record);
+
+    /// @notice Get the latest nonce for a source
+    function getLatestNonce(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (uint128 nonce);
+
+    /// @notice Check if synced past a certain point
+    function isSyncedPast(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (bool);
 }
 ```
 
----
-
-## Function Specifications
-
-### `initialize()`
-
-Initialize the oracle contract at genesis.
-
-**Access Control**: GENESIS only
-
-**Behavior**:
-1. Set `_initialized = true`
-
-**Reverts**:
-- `AlreadyInitialized` - Contract already initialized
-
----
-
-### `recordHash(dataHash, sourceName, syncId, payload)`
-
-Record a hash (hash-only mode, storage-efficient).
-
-**Access Control**: SYSTEM_CALLER only
-
-**Parameters**:
-- `dataHash` - The hash of the data being recorded
-- `sourceName` - The source identifier (hash of eventType + sourceId)
-- `syncId` - The sync ID (block height, timestamp, etc.) - must be > current
-- `payload` - The event payload (for callback, not stored)
-
-**Behavior**:
-1. Validate syncId is strictly increasing for this source
-2. Store record with `exists = true`, `syncId`, empty data
-3. Increment total records (if new hash)
-4. Emit `HashRecorded` event
-5. Invoke callback (if registered) with gas limit
-
-**Reverts**:
-- `OracleNotInitialized` - Contract not initialized
-- `SyncIdNotIncreasing` - syncId <= current syncId for source
-
----
-
-### `recordData(dataHash, sourceName, syncId, payload)`
-
-Record data (data mode, direct access).
-
-**Access Control**: SYSTEM_CALLER only
-
-**Parameters**: Same as `recordHash`
-
-**Behavior**:
-1. Validate syncId is strictly increasing for this source
-2. Store record with `exists = true`, `syncId`, `data = payload`
-3. Increment total records (if new hash)
-4. Emit `DataRecorded` event
-5. Invoke callback (if registered) with gas limit
-
----
-
-### `recordHashBatch(dataHashes, sourceName, syncId, payloads)`
-
-Batch record multiple hashes from the same source.
-
-**Access Control**: SYSTEM_CALLER only
-
-**Behavior**:
-1. Validate array lengths match
-2. Update sync status once for entire batch
-3. Record each hash and invoke callback
-
-**Reverts**:
-- `ArrayLengthMismatch` - Array lengths don't match
-
----
-
-### `setCallback(sourceName, callback)`
-
-Register a callback handler for a source.
-
-**Access Control**: GOVERNANCE only
-
-**Parameters**:
-- `sourceName` - The source identifier
-- `callback` - The callback contract address (address(0) to unregister)
-
-**Behavior**:
-1. Update callback mapping
-2. Emit `CallbackSet` event
-
----
-
-### `verifyHash(dataHash)`
-
-Verify a hash exists and get its record.
-
-**Access Control**: Anyone
-
-**Returns**:
-- `exists` - True if the hash is recorded
-- `record` - The data record (data field empty if hash-only mode)
-
----
-
-### `verifyPreImage(preImage)`
-
-Verify pre-image matches a recorded hash.
-
-**Access Control**: Anyone
-
-**Behavior**:
-1. Compute `keccak256(preImage)`
-2. Look up record
-
-**Returns**:
-- `exists` - True if hash(preImage) is recorded
-- `record` - The data record
-
----
-
-## Callback Interface
+### Callback Interface
 
 ```solidity
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failures are caught - they do NOT revert the oracle recording.
-    ///      Callbacks are invoked with limited gas (CALLBACK_GAS_LIMIT = 500,000).
-    function onOracleEvent(bytes32 dataHash, bytes calldata payload) external;
+    /// @dev Callback failures are caught - do NOT revert oracle recording
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce of the record
+    /// @param payload The event payload (encoding depends on event type)
+    function onOracleEvent(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload
+    ) external;
 }
 ```
 
-### Callback Execution (Failure-Tolerant)
+### Callback Resolution (2-Layer System)
+
+The callback system uses a 2-layer resolution:
+
+1. **Default callback per sourceType**: Applies to all sources of that type (e.g., all blockchain events)
+2. **Specialized callback per (sourceType, sourceId)**: Overrides the default for specific sources (e.g., only Ethereum
+   events)
 
 ```solidity
-function _invokeCallback(bytes32 sourceName, bytes32 dataHash, bytes calldata payload) internal {
-    address callback = _callbacks[sourceName];
+/// @notice Resolve callback using 2-layer lookup
+function _resolveCallback(
+    uint32 sourceType,
+    uint256 sourceId
+) internal view returns (address callback) {
+    // First check for specialized callback
+    address specialized = _callbacks[sourceType][sourceId];
+    if (specialized != address(0)) {
+        return specialized;
+    }
+    // Fall back to default callback for this source type
+    return _defaultCallbacks[sourceType];
+}
+
+function _invokeCallback(
+    uint32 sourceType,
+    uint256 sourceId,
+    uint128 nonce,
+    bytes calldata payload,
+    uint256 gasLimit
+) internal {
+    address callback = _resolveCallback(sourceType, sourceId);
     if (callback == address(0)) return;
 
-    // Try to call the callback with limited gas
-    // This prevents malicious callbacks from:
-    // 1. Consuming excessive gas
-    // 2. Blocking oracle updates by reverting
-    try IOracleCallback(callback).onOracleEvent{gas: CALLBACK_GAS_LIMIT}(dataHash, payload) {
-        emit CallbackSuccess(sourceName, dataHash, callback);
+    try IOracleCallback(callback).onOracleEvent{gas: gasLimit}(
+        sourceType, sourceId, nonce, payload
+    ) {
+        emit CallbackSuccess(sourceType, sourceId, nonce, callback);
     } catch (bytes memory reason) {
-        emit CallbackFailed(sourceName, dataHash, callback, reason);
+        emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
     }
 }
 ```
 
----
+**Example Usage:**
 
-## Source Name Convention
+```
+// Set a handler as default callback for all BLOCKCHAIN events
+governance.setDefaultCallback(0, blockchainEventHandlerAddress);
 
-Sources are identified by a `bytes32` hash computed from event type and source ID:
+// Now all blockchain events (Ethereum, Arbitrum, BSC, etc.) route to the handler
 
-```solidity
-sourceName = keccak256(abi.encode(eventType, sourceId))
+// Optionally, set a specialized callback for a specific chain (e.g., Optimism chain ID 10)
+governance.setCallback(0, 10, optimismSpecialHandlerAddress);
+
+// Now: Optimism events → optimismSpecialHandler, all other chains → blockchainEventHandler
 ```
 
-| Event Type | Source ID | Example sourceName |
-|------------|-----------|-------------------|
-| BLOCKCHAIN | `keccak256("ethereum")` | `keccak256(abi.encode(EventType.BLOCKCHAIN, keccak256("ethereum")))` |
-| BLOCKCHAIN | `keccak256("bsc")` | `keccak256(abi.encode(EventType.BLOCKCHAIN, keccak256("bsc")))` |
-| JWK | `keccak256("google")` | `keccak256(abi.encode(EventType.JWK, keccak256("google")))` |
-| DNS | `keccak256("txt")` | `keccak256(abi.encode(EventType.DNS, keccak256("txt")))` |
-
-### Sync ID Semantics
-
-The `syncId` (uint128) meaning depends on source type:
-
-| Source Type | syncId Meaning | Example |
-|-------------|---------------|---------|
-| Blockchain | Block number | `19000000` (Ethereum block) |
-| JWK | Unix timestamp | `1704067200` (2024-01-01 00:00:00) |
-| DNS | Unix timestamp | `1704067200` |
-| Custom | Sequence number | `1`, `2`, `3`, ... |
-
-**Invariant**: `syncId` must be strictly increasing for each source.
-
----
-
-## Events
+### Events
 
 ```solidity
-/// @notice Emitted when a hash is recorded (hash-only mode)
-event HashRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId);
+/// @notice Emitted when data is recorded
+event DataRecorded(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 nonce,
+    uint256 dataLength
+);
 
-/// @notice Emitted when data is recorded (data mode)
-event DataRecorded(bytes32 indexed dataHash, bytes32 indexed sourceName, uint128 syncId, uint256 dataLength);
+/// @notice Emitted when a default callback is registered or updated
+event DefaultCallbackSet(
+    uint32 indexed sourceType,
+    address indexed oldCallback,
+    address newCallback
+);
 
-/// @notice Emitted when sync status is updated
-event SyncStatusUpdated(bytes32 indexed sourceName, uint128 previousSyncId, uint128 newSyncId);
-
-/// @notice Emitted when a callback is registered or updated
-event CallbackSet(bytes32 indexed sourceName, address indexed oldCallback, address indexed newCallback);
+/// @notice Emitted when a specialized callback is registered or updated
+event CallbackSet(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    address indexed oldCallback,
+    address newCallback
+);
 
 /// @notice Emitted when a callback succeeds
-event CallbackSuccess(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback);
+event CallbackSuccess(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 nonce,
+    address callback
+);
 
-/// @notice Emitted when a callback fails (tx continues)
-event CallbackFailed(bytes32 indexed sourceName, bytes32 indexed dataHash, address indexed callback, bytes reason);
+/// @notice Emitted when a callback fails (tx continues, does NOT revert)
+event CallbackFailed(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 nonce,
+    address callback,
+    bytes reason
+);
 ```
 
----
-
-## Errors
+### Errors
 
 ```solidity
-/// @notice Sync ID must be strictly increasing for each source
-error SyncIdNotIncreasing(bytes32 sourceName, uint128 currentSyncId, uint128 providedSyncId);
-
-/// @notice Batch arrays have mismatched lengths
-error ArrayLengthMismatch(uint256 hashesLength, uint256 payloadsLength);
-
-/// @notice Data record not found for the given hash
-error DataRecordNotFound(bytes32 dataHash);
-
-/// @notice Oracle contract has not been initialized
-error OracleNotInitialized();
+/// @dev For first record, latestNonce is 0, so nonce must be >= 1
+error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
 ```
 
 ---
 
 ## Access Control Matrix
 
-| Function | Allowed Callers |
-|----------|-----------------|
-| `initialize()` | GENESIS only |
-| `recordHash()` | SYSTEM_CALLER only |
-| `recordData()` | SYSTEM_CALLER only |
-| `recordHashBatch()` | SYSTEM_CALLER only |
-| `recordDataBatch()` | SYSTEM_CALLER only |
-| `setCallback()` | GOVERNANCE only |
-| All view/pure functions | Anyone |
+| Contract         | Function             | Allowed Callers |
+| ---------------- | -------------------- | --------------- |
+| **NativeOracle** |                      |                 |
+|                  | record()             | SYSTEM_CALLER   |
+|                  | recordBatch()        | SYSTEM_CALLER   |
+|                  | setDefaultCallback() | GOVERNANCE      |
+|                  | setCallback()        | GOVERNANCE      |
+|                  | View functions       | Anyone          |
 
 ---
 
 ## Security Considerations
 
 1. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
-2. **Callback Gas Limit**: Callbacks are invoked with limited gas (`CALLBACK_GAS_LIMIT = 500,000`) to prevent DOS
-3. **Callback Failure Tolerance**: Callback failures are caught - they do NOT revert oracle recording
-4. **Sync ID Ordering**: Prevents replay attacks and ensures data freshness
-5. **Source Isolation**: Each source has independent sync tracking and callback
-6. **No Overwrites**: Once recorded, only syncId can be updated (not replaced)
-7. **Governance Callback Control**: Only GOVERNANCE can register callbacks
+2. **Callback Gas Limits**: Caller-specified gas limit prevents excessive gas consumption
+3. **Callback Failure Tolerance**: Failures do NOT revert oracle recording
+4. **GOVERNANCE Control**: Callback registration requires governance approval
+5. **Nonce Ordering**: Must start from 1 and strictly increase - prevents replay and ensures data freshness
 
 ---
 
 ## Invariants
 
-1. **Sync ID Monotonicity**: For each source, `latestSyncId` only increases
-2. **Record Existence**: If `exists == true`, record was written by SYSTEM_CALLER
-3. **Total Count**: `_totalRecords` equals count of unique hashes recorded
+1. **Nonce Monotonicity**: For each (sourceType, sourceId), `latestNonce` only increases
+2. **Nonce Minimum**: First nonce for any source must be >= 1
+3. **Record Existence**: If `recordedAt > 0`, record was written by SYSTEM_CALLER
 4. **Callback Safety**: Callback failures never affect oracle state
-
----
-
-## Usage Patterns
-
-### Recording Cross-Chain Events
-
-```solidity
-// Consensus engine records Ethereum event
-bytes memory payload = abi.encode(sender, nonce, messageBody);
-bytes32 dataHash = keccak256(payload);
-bytes32 sourceName = oracle.computeSourceName(EventType.BLOCKCHAIN, keccak256("ethereum"));
-
-vm.prank(SYSTEM_CALLER);
-oracle.recordHash(dataHash, sourceName, blockNumber, payload);
-```
-
-### Verifying Event with Pre-Image
-
-```solidity
-function verifyDeposit(bytes calldata payload) external view returns (bool) {
-    (bool exists, ) = oracle.verifyPreImage(payload);
-    return exists;
-}
-```
-
-### Storing and Accessing JWK Data
-
-```solidity
-// Record JWK (data mode)
-bytes memory jwkData = abi.encode(kid, kty, alg, e, n);
-bytes32 dataHash = keccak256(jwkData);
-bytes32 sourceName = oracle.computeSourceName(EventType.JWK, keccak256("google"));
-
-vm.prank(SYSTEM_CALLER);
-oracle.recordData(dataHash, sourceName, timestamp, jwkData);
-
-// Later: access JWK directly
-bytes memory storedJwk = oracle.getData(dataHash);
-```
 
 ---
 
 ## Testing Requirements
 
-### Unit Tests (39 tests implemented)
+### Unit Tests
 
-1. **Initialization**
-   - [x] Initialize correctly
-   - [x] Revert when not GENESIS
-   - [x] Revert when already initialized
+1. **NativeOracle**
+   - Record data with sourceType, sourceId, nonce
+   - Batch recording with sequential nonces
+   - Nonce validation (must start from 1, must increase)
+   - Callback invocation with specified gas limit
+   - Callback failure handling (should not revert)
+   - 2-layer callback resolution:
+     - Default callback per sourceType
+     - Specialized callback per (sourceType, sourceId)
+     - Specialized overrides default
+     - Fallback to default when no specialized set
+   - GOVERNANCE callback registration (setDefaultCallback, setCallback)
+   - Query functions (getRecord, getLatestNonce, isSyncedPast)
 
-2. **Hash Recording**
-   - [x] Record single hash
-   - [x] Verify hash exists
-   - [x] Multiple sources independent
-   - [x] Revert when not SYSTEM_CALLER
-   - [x] Revert when not initialized
-   - [x] Revert when syncId not increasing
+### Fuzz Tests
 
-3. **Data Recording**
-   - [x] Record data with payload
-   - [x] Retrieve data directly
-   - [x] Revert when not SYSTEM_CALLER
-
-4. **Batch Operations**
-   - [x] Batch hash recording
-   - [x] Batch data recording
-   - [x] Array length validation
-
-5. **Callbacks**
-   - [x] Register callback
-   - [x] Unregister callback
-   - [x] Callback invoked on record
-   - [x] Callback failure doesn't revert
-   - [x] Gas limit enforced
-   - [x] Callback invoked for batch
-
-6. **Verification**
-   - [x] Verify pre-image
-   - [x] isSyncedPast
-   - [x] getData empty for hash mode
-
-7. **Fuzz Tests**
-   - [x] Random payloads and syncIds
-   - [x] SyncId ordering enforcement
-   - [x] Multiple records count
-
-8. **Event Tests**
-   - [x] HashRecorded event
-   - [x] DataRecorded event
-   - [x] SyncStatusUpdated event
-   - [x] CallbackSet event
-   - [x] CallbackSuccess event
-   - [x] CallbackFailed event
+1. **Random payloads and amounts**
+2. **Nonce ordering**
+3. **Nonce boundaries (must be >= 1)**
+4. **SourceType and SourceId combinations**
+5. **Callback gas limit boundaries**
 
 ---
 
 ## Future Extensions
 
-1. **JWK Registry**: Dedicated module for managing JWK keys with patch support
-2. **Blockchain Event Router**: Route events by sender to application handlers
-3. **G Token Bridge**: Native token bridge using oracle for cross-chain deposits
-4. **DNS Verification**: On-chain DNS record verification for zkEmail and similar use cases
-
+1. **Additional Source Types**: DNS verification, price feeds, etc.
+2. **Batch Recording Optimization**: Gas-optimized batch operations
+3. **Callback Prioritization**: Multiple callbacks per source with priority

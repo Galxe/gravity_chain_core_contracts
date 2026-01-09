@@ -340,23 +340,19 @@ library Errors {
     // NATIVE ORACLE ERRORS
     // ========================================================================
 
-    /// @notice Sync ID must be strictly increasing for each source
-    /// @param sourceName The source identifier
-    /// @param currentSyncId The current sync ID for this source
-    /// @param providedSyncId The provided sync ID that is not greater
-    error SyncIdNotIncreasing(bytes32 sourceName, uint128 currentSyncId, uint128 providedSyncId);
+    /// @notice Nonce must be strictly increasing for each source
+    /// @dev For the first record, latestNonce is 0, so nonce must be >= 1
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param currentNonce The current nonce for this source
+    /// @param providedNonce The provided nonce that is not greater
+    error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
 
     /// @notice Batch arrays have mismatched lengths
-    /// @param hashesLength Length of dataHashes array
+    /// @param noncesLength Length of nonces array
     /// @param payloadsLength Length of payloads array
-    error ArrayLengthMismatch(uint256 hashesLength, uint256 payloadsLength);
-
-    /// @notice Data record not found for the given hash
-    /// @param dataHash The hash that was not found
-    error DataRecordNotFound(bytes32 dataHash);
-
-    /// @notice Oracle contract has not been initialized
-    error OracleNotInitialized();
+    /// @param gasLimitsLength Length of callbackGasLimits array
+    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
 
     // ========================================================================
     // VERSION CONFIG ERRORS
@@ -422,5 +418,36 @@ library Errors {
 
     /// @notice Config bytes cannot be empty
     error EmptyConfig();
+
+    // ========================================================================
+    // JWK MANAGER ERRORS
+    // ========================================================================
+
+    /// @notice Only NativeOracle can call JWKManager callback
+    error JWKOnlyNativeOracle();
+
+    /// @notice JWK version must be strictly increasing
+    /// @param issuer The issuer URL
+    /// @param currentVersion Current version for this issuer
+    /// @param providedVersion Provided version that is not greater
+    error JWKVersionNotIncreasing(bytes issuer, uint64 currentVersion, uint64 providedVersion);
+
+    /// @notice Provider not found in JWK set
+    /// @param issuer The issuer URL that was not found
+    error JWKProviderNotFound(bytes issuer);
+
+    /// @notice JWK not found for issuer
+    /// @param issuer The issuer URL
+    /// @param kid The key ID that was not found
+    error JWKNotFound(bytes issuer, string kid);
+
+    /// @notice Invalid patch type
+    /// @param patchType The invalid patch type value
+    error JWKInvalidPatchType(uint8 patchType);
+
+    /// @notice Provider index out of bounds
+    /// @param index The requested index
+    /// @param count The total number of providers
+    error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
 }
 
