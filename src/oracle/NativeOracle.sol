@@ -29,6 +29,42 @@ contract NativeOracle is INativeOracle {
     /// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
     mapping(uint32 => mapping(uint256 => address)) private _callbacks;
 
+    /// @notice Whether the contract has been initialized
+    bool private _initialized;
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @notice Initialize the contract (can only be called once by GENESIS)
+    /// @param sourceTypes Array of source types to configure
+    /// @param callbacks Array of default callback addresses matching sourceTypes
+    function initialize(
+        uint32[] calldata sourceTypes,
+        address[] calldata callbacks
+    ) external {
+        requireAllowed(SystemAddresses.GENESIS);
+
+        if (_initialized) {
+            revert Errors.AlreadyInitialized();
+        }
+
+        uint256 length = sourceTypes.length;
+        if (length != callbacks.length) {
+            revert Errors.ArrayLengthMismatch(length, callbacks.length);
+        }
+
+        for (uint256 i; i < length;) {
+            _defaultCallbacks[sourceTypes[i]] = callbacks[i];
+            emit DefaultCallbackSet(sourceTypes[i], address(0), callbacks[i]);
+            unchecked {
+                ++i;
+            }
+        }
+
+        _initialized = true;
+    }
+
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================

@@ -51,6 +51,57 @@ contract JWKManager is IJWKManager, IOracleCallback {
         bool exists;
     }
 
+    /// @notice Whether the contract has been initialized
+    bool private _initialized;
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @notice Initialize the contract (can only be called once by GENESIS)
+    /// @param issuers Array of initial provider issuers
+    /// @param jwks Array of JWK arrays corresponding to each issuer
+    function initialize(
+        bytes[] calldata issuers,
+        RSA_JWK[][] calldata jwks
+    ) external {
+        requireAllowed(SystemAddresses.GENESIS);
+
+        if (_initialized) {
+            revert Errors.AlreadyInitialized();
+        }
+
+        uint256 length = issuers.length;
+        if (length != jwks.length) {
+            revert Errors.ArrayLengthMismatch(length, jwks.length);
+        }
+
+        for (uint256 i; i < length;) {
+            bytes memory issuer = issuers[i];
+            bytes32 issuerHash = keccak256(issuer);
+            
+            // Initial version is 1 for genesis validators
+            uint64 version = 1;
+
+            // Update version tracking
+            _issuerVersions[issuerHash] = version;
+
+            // Upsert into observed JWKs
+            _upsertObservedProvider(issuerHash, issuer, version, jwks[i]);
+
+            emit ObservedJWKsUpdated(issuer, version, jwks[i].length);
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        // Regenerate patched JWKs (populates public state from observed)
+        _regeneratePatchedJWKs();
+
+        _initialized = true;
+    }
+
     // ========================================================================
     // ORACLE CALLBACK
     // ========================================================================
