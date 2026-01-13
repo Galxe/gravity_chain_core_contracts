@@ -1,0 +1,116 @@
+{
+  "_comment": "New genesis config for gravity_chain_core_contracts Genesis.initialize(GenesisInitParams)",
+
+  "validatorConfig": {
+    "_comment": "ValidatorConfig.initialize params",
+    "minimumBond": "1000000000000000000",
+    "maximumBond": "1000000000000000000000000",
+    "unbondingDelayMicros": 604800000000,
+    "allowValidatorSetChange": true,
+    "votingPowerIncreaseLimitPct": 20,
+    "maxValidatorSetSize": "100"
+  },
+
+  "stakingConfig": {
+    "_comment": "StakingConfig.initialize params - for governance staking",
+    "minimumStake": "1000000000000000000",
+    "lockupDurationMicros": 86400000000,
+    "unbondingDelayMicros": 86400000000,
+    "minimumProposalStake": "10000000000000000000"
+  },
+
+  "governanceConfig": {
+    "_comment": "GovernanceConfig.initialize params",
+    "minVotingThreshold": "1000000000000000000",
+    "requiredProposerStake": "10000000000000000000",
+    "votingDurationMicros": 604800000000
+  },
+
+  "epochIntervalMicros": 7200000000,
+
+  "majorVersion": 1,
+
+  "consensusConfig": "0x00",
+
+  "executionConfig": "0x00",
+
+  "randomnessConfig": {
+    "_comment": "RandomnessConfig - variant: 0=Off, 1=V2",
+    "variant": 0,
+    "configV2": {
+      "secrecyThreshold": 0,
+      "reconstructionThreshold": 0,
+      "fastPathSecrecyThreshold": 0
+    }
+  },
+
+  "oracleConfig": {
+    "_comment": "NativeOracle.initialize - sourceType 1 = JWK",
+    "sourceTypes": [1],
+    "callbacks": ["0x00000000000000000000000000000001625F2018"]
+  },
+
+  "jwkConfig": {
+    "_comment": "JWKManager.initialize - issuers and jwks",
+    "issuers": [
+      "0x68747470733a2f2f6163636f756e74732e676f6f676c652e636f6d"
+    ],
+    "jwks": [
+      [
+        {
+          "kid": "f5f4c0ae6e6090a65ab0a694d6ba6f19d5d0b4e6",
+          "alg": "RS256",
+          "e": "AQAB",
+          "n": "2K7epoJWl_aBoYGpXmDBBiEnwQ0QdVRU1gsbGXNrEbrZEQdY5KjH5P5gZMq3d3KvT1j5KsD2tF_9jFMDLqV4VWDNJRLgSNJxhJuO_oLO2BXUSL9a7fLHxnZCUfJvT2K-O8AXjT3_ZM8UuL8d4jBn_fZLzdEI4MHrZLVSaHDvvKqL_mExQo6cFD-qyLZ-T6aHv2x8R7L_3X7E1nGMjKVVZMveQ_HMeXvnGxKf5yfEP0hIQlC_kFm4L_1kV1S0UPmMptZL2qI4VnXqmqI6TZJyE-3VXHgNn1Z1O_9QZlPC0fF0spLHf2S3nNqI0v3k2E7q3DkqxVf5xvn7q_X-gPqzVE9Jw"
+        }
+      ]
+    ]
+  },
+
+  "validators": [
+    {
+      "operator": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
+      "owner": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
+      "stakeAmount": "20000000000000000000000",
+      "moniker": "validator-1",
+      "consensusPubkey": "0x851d41932d866f5fabed6673898e15473e6a0adcf5033d2c93816c6b115c85ad3451e0bac61d570d5ed9f23e1e7f77c4",
+      "consensusPop": "0x",
+      "networkAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032342f6e6f6973652d696b2f326438366234306131643639326330373439613061303432366532303231656532346532343330646130663562623963326165366335383662663365306130662f68616e647368616b652f30",
+      "fullnodeAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032342f6e6f6973652d696b2f326438366234306131643639326330373439613061303432366532303231656532346532343330646130663562623963326165366335383662663365306130662f68616e647368616b652f30",
+      "votingPower": "20000000000000000000000"
+    },
+    {
+      "operator": "0xedde7f05ae91961d0804ec634d7535969b7d171f",
+      "owner": "0xedde7f05ae91961d0804ec634d7535969b7d171f",
+      "stakeAmount": "20000000000000000000000",
+      "moniker": "validator-2",
+      "consensusPubkey": "0x99ff89f453d9a9bf273e3ae8b61b99a2b336edc7b6eb9b8e308249fd59f3b76211771d7e0daaa97fad11518c4ad8eabd",
+      "consensusPop": "0x",
+      "networkAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032352f6e6f6973652d696b2f636161666335623635386630353930643765333164653931656464653766303561653931393631643038303465633633346437353335393639623764313731662f68616e647368616b652f30",
+      "fullnodeAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032352f6e6f6973652d696b2f636161666335623635386630353930643765333164653931656464653766303561653931393631643038303465633633346437353335393639623764313731662f68616e647368616b652f30",
+      "votingPower": "20000000000000000000000"
+    },
+    {
+      "operator": "0x02eb0186ea845ed75b01740726e581215de8625b",
+      "owner": "0x02eb0186ea845ed75b01740726e581215de8625b",
+      "stakeAmount": "20000000000000000000000",
+      "moniker": "validator-3",
+      "consensusPubkey": "0xb7a931fa544c2d1d54dee27619edfb70cc801bc599dd7a3f56f641a588cee4600b63e35d0d35fe69f2e454462b0ce9b2",
+      "consensusPop": "0x",
+      "networkAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032362f6e6f6973652d696b2f393964316337373039623134373737656462646265306336303265623031383665613834356564373562303137343037323665353831323135646538363235622f68616e647368616b652f30",
+      "fullnodeAddresses": "0x2f6970342f3132372e302e302e312f7463702f323032362f6e6f6973652d696b2f393964316337373039623134373737656462646265306336303265623031383665613834356564373562303137343037323665353831323135646538363235622f68616e647368616b652f30",
+      "votingPower": "20000000000000000000000"
+    },
+    {
+      "operator": "0x3872e99f21165874B20Cb9C8c877f8A0A0c5b779",
+      "owner": "0x3872e99f21165874B20Cb9C8c877f8A0A0c5b779",
+      "stakeAmount": "20000000000000000000000",
+      "moniker": "validator-4",
+      "consensusPubkey": "0x958a9e1e0aef70cc5d99f22403c5cf9de35f8d818553f499b6f29a975aa3b70a95fcb45281f04070e516ad7acd9c7c99",
+      "consensusPop": "0x",
+      "networkAddresses": "0x2f6970342f3132372e302e302e312f7463702f363138302f6e6f6973652d696b2f373638326462626232656665366133653030356237666131333837326539396632313136353837346232306362396338633837376638613061306335623737392f68616e647368616b652f30",
+      "fullnodeAddresses": "0x2f6970342f3132372e302e302e312f7463702f363138302f6e6f6973652d696b2f373638326462626232656665366133653030356237666131333837326539396632313136353837346232306362396338633837376638613061306335623737392f68616e647368616b652f30",
+      "votingPower": "20000000000000000000000"
+    }
+  ]
+}

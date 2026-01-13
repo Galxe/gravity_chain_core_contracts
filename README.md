@@ -46,7 +46,33 @@ forge test
 
 # Test with verbosity
 forge test -vvv
+
+# Generate genesis.json
+./scripts/generate_genesis.sh
 ```
+
+## Genesis Generation
+
+The `genesis-tool` generates a complete genesis configuration for the Gravity Chain.
+
+```bash
+# Default settings (2-hour epoch interval)
+./scripts/generate_genesis.sh
+
+# Custom epoch interval (e.g., 4 hours)
+./scripts/generate_genesis.sh -i 4
+
+# Custom config file
+./scripts/generate_genesis.sh -c path/to/config.json
+
+# Help
+./scripts/generate_genesis.sh --help
+```
+
+**Generated files:**
+- `genesis.json` — Main genesis file
+- `output/genesis_accounts.json` — Account states
+- `output/genesis_contracts.json` — Contract bytecodes
 
 ## Documentation
 
@@ -72,6 +98,14 @@ src/
 ├── blocker/        # Layer 4: Epoch and block management
 ├── governance/     # Layer 5: On-chain governance
 └── oracle/         # Layer 6: External data oracle
+
+genesis-tool/       # Genesis generation tool (Rust)
+├── src/            # Rust source code
+└── config/         # Genesis configuration files
+
+scripts/
+├── generate_genesis.sh  # Genesis generation script
+└── helpers/             # Python helper scripts
 
 test/
 ├── unit/           # Unit tests

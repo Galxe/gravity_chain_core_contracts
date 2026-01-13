@@ -1,0 +1,60 @@
+[package]
+name = "genesis-tool"
+version = "0.1.0"
+edition = "2021"
+authors = ["Gravity Team"]
+description = "Genesis generation tool for Gravity Chain"
+license = "MIT"
+
+[[bin]]
+name = "genesis-tool"
+path = "src/main.rs"
+
+[dependencies]
+grevm = { git = "https://github.com/Galxe/grevm.git", rev = "a7db31ab20e920196c2a617b0365a278727df514" }
+revm = { package = "revm", git = "https://github.com/Galxe/revm", branch = "v19.5.0-gravity" }
+revm-primitives = { package = "revm-primitives", git = "https://github.com/Galxe/revm", branch = "v19.5.0-gravity" }
+ahash = { version = "0.8.11", features = ["serde"] }
+rayon = "1.10.0"
+atomic = "0.6.0"
+parking_lot = "0.12"
+
+# Alloy
+alloy-chains = "0.1.32"
+alloy-primitives = { version = "0.8.20", default-features = false, features = ["map-foldhash"] }
+
+# async
+futures = "0.3"
+rand = "0.8.5"
+auto_impl = "1"
+lazy_static = "1.5.0"
+dashmap = "6.0"
+
+# metrics
+metrics = "0.24"
+metrics-derive = "0.1"
+
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+clap = { version = "4", features = ["derive"] }
+
+criterion = "0.5.1"
+metrics-util = "0.19.0"
+walkdir = "2.5.0"
+revme = { package = "revme", git = "https://github.com/Galxe/revm", branch = "v19.5.0-gravity" }
+tikv-jemallocator = "0.6"
+bincode = "1.3.3"
+alloy-sol-macro = "0.8.9"
+alloy-sol-types = "0.8.20"
+alloy-rlp = { version = "0.3.10", default-features = false }
+
+# for BCS serialize and deserialize
+bcs = { git = "https://github.com/aptos-labs/bcs.git", rev = "d31fab9d81748e2594be5cd5cdf845786a30562d" }
+
+[features]
+default = []
