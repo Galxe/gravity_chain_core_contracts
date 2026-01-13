@@ -297,8 +297,9 @@ contract NativeOracle is INativeOracle {
         // This prevents malicious callbacks from:
         // 1. Consuming excessive gas
         // 2. Blocking oracle updates by reverting
-        try IOracleCallback(callback)
-        .onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) returns (bool callbackShouldStore) {
+        try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) returns (
+            bool callbackShouldStore
+        ) {
             emit CallbackSuccess(sourceType, sourceId, nonce, callback);
             if (!callbackShouldStore) {
                 emit StorageSkipped(sourceType, sourceId, nonce, callback);

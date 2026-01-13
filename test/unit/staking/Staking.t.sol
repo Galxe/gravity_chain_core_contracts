@@ -123,9 +123,7 @@ contract StakingTest is Test {
         uint64 lockedUntil = INITIAL_TIMESTAMP + LOCKUP_DURATION;
 
         vm.prank(alice);
-        address pool = staking.createPool{
-            value: MIN_STAKE
-        }(
+        address pool = staking.createPool{ value: MIN_STAKE }(
             alice, // owner
             bob, // staker
             charlie, // operator

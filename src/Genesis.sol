@@ -238,10 +238,7 @@ contract Genesis {
             // We need to ensure we have enough value.
             // We call it with {value: v.stakeAmount}.
 
-            address pool = Staking(SystemAddresses.STAKING)
-            .createPool{
-                value: v.stakeAmount
-            }(
+            address pool = Staking(SystemAddresses.STAKING).createPool{ value: v.stakeAmount }(
                 v.owner, // owner
                 v.owner, // staker (initially same as owner)
                 v.operator, // operator
