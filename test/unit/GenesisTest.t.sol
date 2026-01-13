@@ -38,7 +38,7 @@ contract GenesisTest is Test {
         vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);
         vm.etch(SystemAddresses.VERSION_CONFIG, address(new VersionConfig()).code);
         vm.etch(SystemAddresses.RANDOMNESS_CONFIG, address(new RandomnessConfig()).code);
-        
+
         vm.etch(SystemAddresses.STAKING, address(new Staking()).code);
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new ValidatorManagement()).code);
         vm.etch(SystemAddresses.RECONFIGURATION, address(new Reconfiguration()).code);
@@ -55,7 +55,7 @@ contract GenesisTest is Test {
     function test_Genesis_Success() public {
         // Setup initial params
         Genesis.GenesisInitParams memory params;
-        
+
         // Validator Config
         params.validatorConfig.minimumBond = 100 ether;
         params.validatorConfig.maximumBond = 10000 ether;
@@ -120,17 +120,17 @@ contract GenesisTest is Test {
 
         // Impersonate SYSTEM_CALLER
         vm.startPrank(SystemAddresses.SYSTEM_CALLER);
-        
+
         // Ensure Genesis has funds to create pools
         vm.deal(SystemAddresses.SYSTEM_CALLER, 1000 ether); // Actually msg.sender pays? No, Genesis calls Staking.
-        vm.deal(SystemAddresses.GENESIS, 1000 ether); 
-        
+        vm.deal(SystemAddresses.GENESIS, 1000 ether);
+
         // Execute Initialize
         // Note: Genesis.initialize is payable, but since we prank SYSTEM_CALLER, we can send value?
         // Actually, Genesis logic is: `Staking.createPool{value: v.stakeAmount}`.
         // This value is taken from Genesis contract balance.
         // So we just need to fund Genesis contract.
-        
+
         genesis.initialize(params);
         vm.stopPrank();
 
@@ -144,15 +144,15 @@ contract GenesisTest is Test {
         assertTrue(VersionConfig(SystemAddresses.VERSION_CONFIG).isInitialized());
         assertTrue(RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).isInitialized());
         assertTrue(ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).isInitialized());
-        
+
         // Verify NativeOracle callback
         assertEq(NativeOracle(SystemAddresses.NATIVE_ORACLE).getDefaultCallback(1), SystemAddresses.JWK_MANAGER);
-        
+
         // Verify JWK Manager
         IJWKManager.AllProvidersJWKs memory observed = JWKManager(SystemAddresses.JWK_MANAGER).getObservedJWKs();
         assertEq(observed.entries.length, 1);
         assertEq(observed.entries[0].issuer, "https://accounts.google.com");
-        
+
         // Verify Validator
         assertEq(ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount(), 1);
         // We can't easily guess the pool address because of CREATE2 or nonce

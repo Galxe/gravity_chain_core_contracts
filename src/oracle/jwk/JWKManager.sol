@@ -79,7 +79,7 @@ contract JWKManager is IJWKManager, IOracleCallback {
         for (uint256 i; i < length;) {
             bytes memory issuer = issuers[i];
             bytes32 issuerHash = keccak256(issuer);
-            
+
             // Initial version is 1 for genesis validators
             uint64 version = 1;
 

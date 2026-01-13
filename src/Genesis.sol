@@ -155,21 +155,23 @@ contract Genesis {
     function _initializeConfigs(
         GenesisInitParams calldata params
     ) internal {
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).initialize(
-            params.validatorConfig.minimumBond,
-            params.validatorConfig.maximumBond,
-            params.validatorConfig.unbondingDelayMicros,
-            params.validatorConfig.allowValidatorSetChange,
-            params.validatorConfig.votingPowerIncreaseLimitPct,
-            params.validatorConfig.maxValidatorSetSize
-        );
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .initialize(
+                params.validatorConfig.minimumBond,
+                params.validatorConfig.maximumBond,
+                params.validatorConfig.unbondingDelayMicros,
+                params.validatorConfig.allowValidatorSetChange,
+                params.validatorConfig.votingPowerIncreaseLimitPct,
+                params.validatorConfig.maxValidatorSetSize
+            );
 
-        StakingConfig(SystemAddresses.STAKE_CONFIG).initialize(
-            params.stakingConfig.minimumStake,
-            params.stakingConfig.lockupDurationMicros,
-            params.stakingConfig.unbondingDelayMicros,
-            params.stakingConfig.minimumProposalStake
-        );
+        StakingConfig(SystemAddresses.STAKE_CONFIG)
+            .initialize(
+                params.stakingConfig.minimumStake,
+                params.stakingConfig.lockupDurationMicros,
+                params.stakingConfig.unbondingDelayMicros,
+                params.stakingConfig.minimumProposalStake
+            );
 
         EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(params.epochIntervalMicros);
 
@@ -177,11 +179,12 @@ contract Genesis {
 
         ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).initialize(params.executionConfig);
 
-        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).initialize(
-            params.governanceConfig.minVotingThreshold,
-            params.governanceConfig.requiredProposerStake,
-            params.governanceConfig.votingDurationMicros
-        );
+        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG)
+            .initialize(
+                params.governanceConfig.minVotingThreshold,
+                params.governanceConfig.requiredProposerStake,
+                params.governanceConfig.votingDurationMicros
+            );
 
         VersionConfig(SystemAddresses.VERSION_CONFIG).initialize(params.majorVersion);
 
@@ -205,16 +208,14 @@ contract Genesis {
         InitialValidator[] calldata validators
     ) internal returns (GenesisValidator[] memory) {
         uint256 len = validators.length;
-        GenesisValidator[] memory genesisValidators = new GenesisValidator[](
-            len
-        );
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](len);
 
         uint64 lockupDuration = StakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
         // Initial lockedUntil implies genesis timestamp is 0 or handled by Staking contract?
         // Staking.createPool takes lockedUntil.
         // We assume genesis timestamp is effectively 0 (or whatever block.timestamp is).
         // Since we are at genesis, we should probably set lockedUntil based on current block timestamp + duration.
-        // However, Blocker initializes timestamp to 0. 
+        // However, Blocker initializes timestamp to 0.
         // We'll use block.timestamp which should be the genesis block time.
         // Note: Blocker.initialize logic calls updateGlobalTime(0, 0).
         // But Staking.createPool uses Timestamp contract? No, it takes lockedUntil as arg.
@@ -223,7 +224,7 @@ contract Genesis {
         // Let's use 0 + lockupDuration for simplicity as this effectively starts from time 0.
         // Or better, query Timestamp? Timestamp is not initialized yet (Blocker init comes last).
         // So we assume genesis time is 0.
-        uint64 initialLockedUntil = lockupDuration; 
+        uint64 initialLockedUntil = lockupDuration;
 
         for (uint256 i; i < len;) {
             InitialValidator calldata v = validators[i];
@@ -232,12 +233,15 @@ contract Genesis {
             // The Genesis contract must hold enough funds to create these pools if msg.value is used.
             // OR `Genesis.initialize` must be payable and receive enough funds.
             // We transfer `v.stakeAmount` to the pool.
-            
+
             // Note: Staking.createPool is payable.
             // We need to ensure we have enough value.
             // We call it with {value: v.stakeAmount}.
-            
-            address pool = Staking(SystemAddresses.STAKING).createPool{ value: v.stakeAmount }(
+
+            address pool = Staking(SystemAddresses.STAKING)
+            .createPool{
+                value: v.stakeAmount
+            }(
                 v.owner, // owner
                 v.owner, // staker (initially same as owner)
                 v.operator, // operator
