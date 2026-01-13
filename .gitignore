@@ -29,3 +29,22 @@ jspm_packages
 !.yarn/sdks
 !.yarn/versions
 .pnp.*
+
+# Genesis tool - Rust build outputs
+genesis-tool/target/
+genesis-tool/Cargo.lock
+
+# Genesis generation outputs
+output/
+account_alloc.json
+genesis.json
+*.log
+
+# Bytecode files (generated)
+out/*.hex
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+scripts/helpers/__pycache__/

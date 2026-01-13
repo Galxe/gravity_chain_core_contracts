@@ -1,0 +1,452 @@
+use alloy_sol_macro::sol;
+use alloy_sol_types::SolCall;
+use revm_primitives::{Address, Bytes, ExecutionResult, TxEnv, U256, hex};
+use serde::{Deserialize, Serialize};
+use tracing::{error, info};
+
+use crate::{
+    post_genesis::handle_execution_result,
+    utils::{GENESIS_ADDR, VALIDATOR_MANAGER_ADDR, new_system_call_txn, new_system_call_txn_with_value},
+};
+
+// ============================================================================
+// JSON CONFIG STRUCTURES - Matching new Genesis.sol GenesisInitParams
+// ============================================================================
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GenesisConfig {
+    #[serde(rename = "validatorConfig")]
+    pub validator_config: ValidatorConfigParams,
+    
+    #[serde(rename = "stakingConfig")]
+    pub staking_config: StakingConfigParams,
+    
+    #[serde(rename = "governanceConfig")]
+    pub governance_config: GovernanceConfigParams,
+    
+    #[serde(rename = "epochIntervalMicros")]
+    pub epoch_interval_micros: u64,
+    
+    #[serde(rename = "majorVersion")]
+    pub major_version: u64,
+    
+    #[serde(rename = "consensusConfig")]
+    pub consensus_config: String,  // hex bytes
+    
+    #[serde(rename = "executionConfig")]
+    pub execution_config: String,  // hex bytes
+    
+    #[serde(rename = "randomnessConfig")]
+    pub randomness_config: RandomnessConfigData,
+    
+    #[serde(rename = "oracleConfig")]
+    pub oracle_config: OracleInitParams,
+    
+    #[serde(rename = "jwkConfig")]
+    pub jwk_config: JWKInitParams,
+    
+    pub validators: Vec<InitialValidator>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ValidatorConfigParams {
+    #[serde(rename = "minimumBond")]
+    pub minimum_bond: String,
+    
+    #[serde(rename = "maximumBond")]
+    pub maximum_bond: String,
+    
+    #[serde(rename = "unbondingDelayMicros")]
+    pub unbonding_delay_micros: u64,
+    
+    #[serde(rename = "allowValidatorSetChange")]
+    pub allow_validator_set_change: bool,
+    
+    #[serde(rename = "votingPowerIncreaseLimitPct")]
+    pub voting_power_increase_limit_pct: u64,
+    
+    #[serde(rename = "maxValidatorSetSize")]
+    pub max_validator_set_size: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct StakingConfigParams {
+    #[serde(rename = "minimumStake")]
+    pub minimum_stake: String,
+    
+    #[serde(rename = "lockupDurationMicros")]
+    pub lockup_duration_micros: u64,
+    
+    #[serde(rename = "unbondingDelayMicros")]
+    pub unbonding_delay_micros: u64,
+    
+    #[serde(rename = "minimumProposalStake")]
+    pub minimum_proposal_stake: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GovernanceConfigParams {
+    #[serde(rename = "minVotingThreshold")]
+    pub min_voting_threshold: String,
+    
+    #[serde(rename = "requiredProposerStake")]
+    pub required_proposer_stake: String,
+    
+    #[serde(rename = "votingDurationMicros")]
+    pub voting_duration_micros: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RandomnessConfigData {
+    pub variant: u8,  // 0 = Off, 1 = V2
+    
+    #[serde(rename = "configV2")]
+    pub config_v2: ConfigV2Data,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ConfigV2Data {
+    #[serde(rename = "secrecyThreshold")]
+    pub secrecy_threshold: u64,
+    
+    #[serde(rename = "reconstructionThreshold")]
+    pub reconstruction_threshold: u64,
+    
+    #[serde(rename = "fastPathSecrecyThreshold")]
+    pub fast_path_secrecy_threshold: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct OracleInitParams {
+    #[serde(rename = "sourceTypes")]
+    pub source_types: Vec<u32>,
+    
+    pub callbacks: Vec<String>,  // addresses as hex strings
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct JWKInitParams {
+    pub issuers: Vec<String>,  // hex-encoded bytes
+    pub jwks: Vec<Vec<RSA_JWK_Json>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RSA_JWK_Json {
+    pub kid: String,
+    pub alg: String,
+    pub e: String,
+    pub n: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct InitialValidator {
+    pub operator: String,
+    pub owner: String,
+    
+    #[serde(rename = "stakeAmount")]
+    pub stake_amount: String,
+    
+    pub moniker: String,
+    
+    #[serde(rename = "consensusPubkey")]
+    pub consensus_pubkey: String,  // hex bytes
+    
+    #[serde(rename = "consensusPop")]
+    pub consensus_pop: String,  // hex bytes
+    
+    #[serde(rename = "networkAddresses")]
+    pub network_addresses: String,  // hex bytes
+    
+    #[serde(rename = "fullnodeAddresses")]
+    pub fullnode_addresses: String,  // hex bytes
+    
+    #[serde(rename = "votingPower")]
+    pub voting_power: String,
+}
+
+// ============================================================================
+// SOLIDITY ABI DEFINITIONS - Matching new Genesis.sol
+// ============================================================================
+
+sol! {
+    struct SolValidatorConfigParams {
+        uint256 minimumBond;
+        uint256 maximumBond;
+        uint64 unbondingDelayMicros;
+        bool allowValidatorSetChange;
+        uint64 votingPowerIncreaseLimitPct;
+        uint256 maxValidatorSetSize;
+    }
+    
+    struct SolStakingConfigParams {
+        uint256 minimumStake;
+        uint64 lockupDurationMicros;
+        uint64 unbondingDelayMicros;
+        uint256 minimumProposalStake;
+    }
+    
+    struct SolGovernanceConfigParams {
+        uint128 minVotingThreshold;
+        uint256 requiredProposerStake;
+        uint64 votingDurationMicros;
+    }
+    
+    struct SolConfigV2Data {
+        uint64 secrecyThreshold;
+        uint64 reconstructionThreshold;
+        uint64 fastPathSecrecyThreshold;
+    }
+    
+    struct SolRandomnessConfigData {
+        uint8 variant;
+        SolConfigV2Data configV2;
+    }
+    
+    struct SolOracleInitParams {
+        uint32[] sourceTypes;
+        address[] callbacks;
+    }
+    
+    struct SolRSA_JWK {
+        string kid;
+        string alg;
+        string e;
+        string n;
+    }
+    
+    struct SolJWKInitParams {
+        bytes[] issuers;
+        SolRSA_JWK[][] jwks;
+    }
+    
+    struct SolInitialValidator {
+        address operator;
+        address owner;
+        uint256 stakeAmount;
+        string moniker;
+        bytes consensusPubkey;
+        bytes consensusPop;
+        bytes networkAddresses;
+        bytes fullnodeAddresses;
+        uint256 votingPower;
+    }
+    
+    struct SolGenesisInitParams {
+        SolValidatorConfigParams validatorConfig;
+        SolStakingConfigParams stakingConfig;
+        SolGovernanceConfigParams governanceConfig;
+        uint64 epochIntervalMicros;
+        uint64 majorVersion;
+        bytes consensusConfig;
+        bytes executionConfig;
+        SolRandomnessConfigData randomnessConfig;
+        SolOracleInitParams oracleConfig;
+        SolJWKInitParams jwkConfig;
+        SolInitialValidator[] validators;
+    }
+    
+    contract Genesis {
+        function initialize(SolGenesisInitParams calldata params) external payable;
+    }
+}
+
+// ============================================================================
+// CONVERSION FUNCTIONS
+// ============================================================================
+
+fn parse_u256(s: &str) -> U256 {
+    s.parse::<U256>().expect(&format!("Invalid U256 string: {}", s))
+}
+
+fn parse_u128(s: &str) -> u128 {
+    s.parse::<u128>().expect(&format!("Invalid u128 string: {}", s))
+}
+
+fn parse_address(s: &str) -> Address {
+    s.parse::<Address>().expect(&format!("Invalid address: {}", s))
+}
+
+fn parse_hex_bytes(s: &str) -> Vec<u8> {
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    if s.is_empty() {
+        return Vec::new();
+    }
+    hex::decode(s).expect(&format!("Invalid hex string: {}", s))
+}
+
+pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
+    // Convert ValidatorConfig
+    let validator_config = SolValidatorConfigParams {
+        minimumBond: parse_u256(&config.validator_config.minimum_bond),
+        maximumBond: parse_u256(&config.validator_config.maximum_bond),
+        unbondingDelayMicros: config.validator_config.unbonding_delay_micros,
+        allowValidatorSetChange: config.validator_config.allow_validator_set_change,
+        votingPowerIncreaseLimitPct: config.validator_config.voting_power_increase_limit_pct,
+        maxValidatorSetSize: parse_u256(&config.validator_config.max_validator_set_size),
+    };
+    
+    // Convert StakingConfig
+    let staking_config = SolStakingConfigParams {
+        minimumStake: parse_u256(&config.staking_config.minimum_stake),
+        lockupDurationMicros: config.staking_config.lockup_duration_micros,
+        unbondingDelayMicros: config.staking_config.unbonding_delay_micros,
+        minimumProposalStake: parse_u256(&config.staking_config.minimum_proposal_stake),
+    };
+    
+    // Convert GovernanceConfig
+    let governance_config = SolGovernanceConfigParams {
+        minVotingThreshold: parse_u128(&config.governance_config.min_voting_threshold),
+        requiredProposerStake: parse_u256(&config.governance_config.required_proposer_stake),
+        votingDurationMicros: config.governance_config.voting_duration_micros,
+    };
+    
+    // Convert RandomnessConfig
+    let randomness_config = SolRandomnessConfigData {
+        variant: config.randomness_config.variant,
+        configV2: SolConfigV2Data {
+            secrecyThreshold: config.randomness_config.config_v2.secrecy_threshold,
+            reconstructionThreshold: config.randomness_config.config_v2.reconstruction_threshold,
+            fastPathSecrecyThreshold: config.randomness_config.config_v2.fast_path_secrecy_threshold,
+        },
+    };
+    
+    // Convert OracleConfig
+    let oracle_config = SolOracleInitParams {
+        sourceTypes: config.oracle_config.source_types.clone(),
+        callbacks: config.oracle_config.callbacks.iter()
+            .map(|s| parse_address(s))
+            .collect(),
+    };
+    
+    // Convert JWKConfig
+    let jwk_config = SolJWKInitParams {
+        issuers: config.jwk_config.issuers.iter()
+            .map(|s| parse_hex_bytes(s).into())
+            .collect(),
+        jwks: config.jwk_config.jwks.iter()
+            .map(|provider_jwks| {
+                provider_jwks.iter()
+                    .map(|jwk| SolRSA_JWK {
+                        kid: jwk.kid.clone(),
+                        alg: jwk.alg.clone(),
+                        e: jwk.e.clone(),
+                        n: jwk.n.clone(),
+                    })
+                    .collect()
+            })
+            .collect(),
+    };
+    
+    // Convert Validators
+    let validators: Vec<SolInitialValidator> = config.validators.iter()
+        .map(|v| SolInitialValidator {
+            operator: parse_address(&v.operator),
+            owner: parse_address(&v.owner),
+            stakeAmount: parse_u256(&v.stake_amount),
+            moniker: v.moniker.clone(),
+            consensusPubkey: parse_hex_bytes(&v.consensus_pubkey).into(),
+            consensusPop: parse_hex_bytes(&v.consensus_pop).into(),
+            networkAddresses: parse_hex_bytes(&v.network_addresses).into(),
+            fullnodeAddresses: parse_hex_bytes(&v.fullnode_addresses).into(),
+            votingPower: parse_u256(&v.voting_power),
+        })
+        .collect();
+    
+    SolGenesisInitParams {
+        validatorConfig: validator_config,
+        stakingConfig: staking_config,
+        governanceConfig: governance_config,
+        epochIntervalMicros: config.epoch_interval_micros,
+        majorVersion: config.major_version,
+        consensusConfig: parse_hex_bytes(&config.consensus_config).into(),
+        executionConfig: parse_hex_bytes(&config.execution_config).into(),
+        randomnessConfig: randomness_config,
+        oracleConfig: oracle_config,
+        jwkConfig: jwk_config,
+        validators,
+    }
+}
+
+/// Calculate total stake amount needed for Genesis.initialize (payable)
+pub fn calculate_total_stake(config: &GenesisConfig) -> U256 {
+    config.validators.iter()
+        .map(|v| parse_u256(&v.stake_amount))
+        .fold(U256::ZERO, |acc, stake| acc + stake)
+}
+
+pub fn call_genesis_initialize(genesis_address: Address, config: &GenesisConfig) -> TxEnv {
+    let sol_params = convert_config_to_sol(config);
+    let total_stake = calculate_total_stake(config);
+    
+    info!("=== Genesis Initialize Parameters ===");
+    info!("Genesis address: {:?}", genesis_address);
+    info!("Total stake value: {} wei", total_stake);
+    info!("Validator count: {}", config.validators.len());
+    info!("Epoch interval: {} micros", config.epoch_interval_micros);
+    info!("Major version: {}", config.major_version);
+    info!("Randomness variant: {}", config.randomness_config.variant);
+    info!("Oracle source types: {:?}", config.oracle_config.source_types);
+    info!("JWK issuers count: {}", config.jwk_config.issuers.len());
+    
+    let call_data = Genesis::initializeCall {
+        params: sol_params,
+    }.abi_encode();
+    
+    info!("Call data length: {}", call_data.len());
+    
+    // Genesis.initialize is payable - need to send total stake amount
+    new_system_call_txn_with_value(genesis_address, call_data.into(), total_stake)
+}
+
+// ============================================================================
+// VALIDATOR SET QUERY (for verification)
+// ============================================================================
+
+sol! {
+    interface IValidatorManagement {
+        #[derive(Debug)]
+        struct ValidatorConsensusInfo {
+            address validator;
+            bytes consensusPubkey;
+            bytes consensusPop;
+            uint256 votingPower;
+            uint64 validatorIndex;
+        }
+        
+        function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
+    }
+}
+
+pub fn call_get_active_validators() -> TxEnv {
+    let call_data = IValidatorManagement::getActiveValidatorsCall {}.abi_encode();
+    new_system_call_txn(VALIDATOR_MANAGER_ADDR, call_data.into())
+}
+
+pub fn print_active_validators_result(result: &ExecutionResult, config: &GenesisConfig) {
+    handle_execution_result(result, "getActiveValidators", |output_bytes| {
+        let decoded = IValidatorManagement::getActiveValidatorsCall::abi_decode_returns(output_bytes, false)
+            .expect("Failed to decode getActiveValidators result");
+        
+        let validators = &decoded._0;
+        info!("Active validators count: {}", validators.len());
+        
+        // Validate against config
+        if validators.len() != config.validators.len() {
+            error!(
+                "❌ Validator count mismatch! Expected: {}, Actual: {}",
+                config.validators.len(),
+                validators.len()
+            );
+            return;
+        }
+        
+        for (i, validator) in validators.iter().enumerate() {
+            info!("--- Validator {} ---", i + 1);
+            info!("  Address: {:?}", validator.validator);
+            info!("  Index: {}", validator.validatorIndex);
+            info!("  Voting Power: {}", validator.votingPower);
+        }
+        
+        info!("🎉 All {} validators initialized successfully!", validators.len());
+    });
+}
