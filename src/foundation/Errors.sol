@@ -284,6 +284,11 @@ library Errors {
     /// @notice Contract has already been initialized
     error AlreadyInitialized();
 
+    /// @notice Array lengths do not match
+    /// @param expected Expected length
+    /// @param actual Actual length
+    error ArrayLengthMismatch(uint256 expected, uint256 actual);
+
     /// @notice Lockup duration must be greater than zero
     error InvalidLockupDuration();
 
