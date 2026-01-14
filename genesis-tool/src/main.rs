@@ -1,6 +1,6 @@
 use anyhow::Result;
-use clap::Parser;
-use genesis_tool::{execute, genesis::GenesisConfig, post_genesis};
+use clap::{Parser, Subcommand};
+use genesis_tool::{execute, genesis::GenesisConfig, post_genesis, verify};
 use serde_json;
 use std::fs;
 use tracing::{Level, info};
@@ -37,27 +37,42 @@ impl Drop for LogGuard {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "Gravity Genesis Tool", long_about = None)]
 struct Args {
     /// Enable debug logging
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     debug: bool,
 
-    /// Byte code directory (containing .hex files for each contract)
-    #[arg(short, long)]
-    byte_code_dir: String,
-
-    /// Genesis configuration file (new format with nested config structs)
-    #[arg(short, long, default_value = "generate/new_genesis_config.json")]
-    config_file: String,
-
-    /// Output directory
-    #[arg(short, long)]
-    output: Option<String>,
-
     /// Log file path (optional)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     log_file: Option<String>,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate a new genesis.json file
+    Generate {
+        /// Byte code directory (containing .hex files for each contract)
+        #[arg(short, long)]
+        byte_code_dir: String,
+
+        /// Genesis configuration file (new format with nested config structs)
+        #[arg(short, long, default_value = "generate/new_genesis_config.json")]
+        config_file: String,
+
+        /// Output directory
+        #[arg(short, long)]
+        output: String,
+    },
+    /// Verify an existing genesis.json file for ABI compatibility
+    Verify {
+        /// Path to the genesis.json file to verify
+        #[arg(short, long)]
+        genesis_file: String,
+    },
 }
 
 #[tokio::main]
@@ -112,10 +127,15 @@ async fn main() -> Result<()> {
         original_hook(panic_info);
     }));
 
-    info!("Starting Gravity Genesis Binary (New Contract Version)");
-
-    // Run the main logic
-    let result = run_main_logic(&args).await;
+    // Run the appropriate command
+    let result = match &args.command {
+        Commands::Generate { byte_code_dir, config_file, output } => {
+            run_generate(byte_code_dir, config_file, output).await
+        }
+        Commands::Verify { genesis_file } => {
+            run_verify(genesis_file)
+        }
+    };
 
     // Ensure logs are flushed before exiting
     info!("Main execution completed");
@@ -124,25 +144,26 @@ async fn main() -> Result<()> {
     result
 }
 
-async fn run_main_logic(args: &Args) -> Result<()> {
-    info!("Reading Genesis configuration from: {}", args.config_file);
-    let config_content = fs::read_to_string(&args.config_file)?;
+async fn run_generate(byte_code_dir: &str, config_file: &str, output: &str) -> Result<()> {
+    info!("Starting Gravity Genesis Generate");
+    info!("Reading Genesis configuration from: {}", config_file);
+    
+    let config_content = fs::read_to_string(config_file)?;
     let config: GenesisConfig = serde_json::from_str(&config_content)?;
+    
     info!("Genesis configuration loaded successfully");
     info!("Validator count: {}", config.validators.len());
     info!("Epoch interval: {} micros", config.epoch_interval_micros);
     info!("Major version: {}", config.major_version);
 
-    if let Some(output_dir) = &args.output {
-        if !fs::metadata(&output_dir).is_ok() {
-            fs::create_dir_all(&output_dir).unwrap();
-        }
-        info!("Output directory: {}", output_dir);
+    if !fs::metadata(output).is_ok() {
+        fs::create_dir_all(output).unwrap();
     }
+    info!("Output directory: {}", output);
 
     let (db, bundle_state) = execute::genesis_generate(
-        &args.byte_code_dir,
-        &args.output.as_ref().unwrap(),
+        byte_code_dir,
+        output,
         &config,
     );
 
@@ -152,6 +173,20 @@ async fn run_main_logic(args: &Args) -> Result<()> {
         &config,
     );
 
-    info!("Gravity Genesis Binary completed successfully");
+    info!("Gravity Genesis Generate completed successfully");
     Ok(())
+}
+
+fn run_verify(genesis_file: &str) -> Result<()> {
+    info!("Starting Gravity Genesis Verify");
+    
+    let result = verify::verify_genesis_file(genesis_file)?;
+    verify::print_verify_summary(&result);
+    
+    if result.success {
+        info!("Gravity Genesis Verify completed successfully");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Genesis verification failed"))
+    }
 }

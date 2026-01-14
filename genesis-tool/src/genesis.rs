@@ -411,6 +411,8 @@ sol! {
             bytes consensusPop;
             uint256 votingPower;
             uint64 validatorIndex;
+            bytes networkAddresses;
+            bytes fullnodeAddresses;
         }
         
         function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
