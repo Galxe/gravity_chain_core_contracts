@@ -87,9 +87,17 @@ contract TypesTest is Test {
     function test_ValidatorConsensusInfo_Creation() public pure {
         bytes memory pubkey = hex"aabbccdd";
         bytes memory pop = hex"11223344";
+        bytes memory networkAddrs = hex"55667788";
+        bytes memory fullnodeAddrs = hex"99aabbcc";
 
         ValidatorConsensusInfo memory info = ValidatorConsensusInfo({
-            validator: address(0x1234), consensusPubkey: pubkey, consensusPop: pop, votingPower: 1000, validatorIndex: 5
+            validator: address(0x1234),
+            consensusPubkey: pubkey,
+            consensusPop: pop,
+            votingPower: 1000,
+            validatorIndex: 5,
+            networkAddresses: networkAddrs,
+            fullnodeAddresses: fullnodeAddrs
         });
 
         assertEq(info.validator, address(0x1234));
@@ -97,7 +105,10 @@ contract TypesTest is Test {
         assertEq(info.consensusPop, pop);
         assertEq(info.votingPower, 1000);
         assertEq(info.validatorIndex, 5);
+        assertEq(info.networkAddresses, networkAddrs);
+        assertEq(info.fullnodeAddresses, fullnodeAddrs);
     }
+
 
     // ========================================================================
     // ValidatorRecord Tests

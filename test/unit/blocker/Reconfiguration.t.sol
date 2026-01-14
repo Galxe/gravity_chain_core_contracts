@@ -205,11 +205,14 @@ contract ReconfigurationTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
         return validators;
     }
+
 
     function _initializeReconfiguration() internal {
         vm.prank(SystemAddresses.GENESIS);
@@ -586,21 +589,27 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         dealers[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)),
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
         dealers[2] = ValidatorConsensusInfo({
             validator: address(uint160(3)), // pending_inactive
             consensusPubkey: abi.encodePacked("pubkey2"),
             consensusPop: abi.encodePacked("pop2"),
             votingPower: 150,
-            validatorIndex: 2
+            validatorIndex: 2,
+            networkAddresses: abi.encodePacked("network2"),
+            fullnodeAddresses: abi.encodePacked("fullnode2")
         });
 
         // Targets: exclude pending_inactive validator (3), include new pending_active (4)
@@ -610,21 +619,27 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         targets[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)),
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
         targets[2] = ValidatorConsensusInfo({
             validator: address(uint160(4)), // new pending_active
             consensusPubkey: abi.encodePacked("pubkey3"),
             consensusPop: abi.encodePacked("pop3"),
             votingPower: 120,
-            validatorIndex: 2
+            validatorIndex: 2,
+            networkAddresses: abi.encodePacked("network3"),
+            fullnodeAddresses: abi.encodePacked("fullnode3")
         });
 
         // Set up mock with different dealers and targets
@@ -650,14 +665,18 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         dealers[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)), // pending_inactive, still in dealers
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
 
         // Targets exclude the pending_inactive validator
@@ -667,7 +686,9 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
 
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
@@ -689,7 +710,9 @@ contract ReconfigurationTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
 
@@ -703,14 +726,18 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey", uint256(0)),
             consensusPop: abi.encodePacked("pop", uint256(0)),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         targets[1] = ValidatorConsensusInfo({
             validator: address(uint160(3)),
             consensusPubkey: abi.encodePacked("pubkey", uint256(2)),
             consensusPop: abi.encodePacked("pop", uint256(2)),
             votingPower: 300,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network2"),
+            fullnodeAddresses: abi.encodePacked("fullnode2")
         });
 
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
