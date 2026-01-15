@@ -9,6 +9,18 @@ use crate::{
     utils::{GENESIS_ADDR, VALIDATOR_MANAGER_ADDR, new_system_call_txn, new_system_call_txn_with_value},
 };
 
+/// Derive 32-byte AccountAddress from BLS consensus public key using SHA3-256
+/// This matches the derivation used in gravity-reth for validator identity
+fn derive_account_address_from_consensus_pubkey(consensus_pubkey: &[u8]) -> [u8; 32] {
+    use tiny_keccak::{Hasher, Sha3};
+    
+    let mut hasher = Sha3::v256();
+    hasher.update(consensus_pubkey);
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    output
+}
+
 // ============================================================================
 // JSON CONFIG STRUCTURES - Matching new Genesis.sol GenesisInitParams
 // ============================================================================
@@ -450,8 +462,13 @@ pub fn print_active_validators_result(result: &ExecutionResult, config: &Genesis
         }
         
         for (i, validator) in validators.iter().enumerate() {
+            // Derive account address from consensus pubkey using SHA3-256
+            let account_address = derive_account_address_from_consensus_pubkey(&validator.consensusPubkey);
+            
             info!("--- Validator {} ---", i + 1);
-            info!("  Address: {:?}", validator.validator);
+            info!("  ETH Address: {:?}", validator.validator);
+            info!("  Account Address (from consensus pubkey): 0x{}", hex::encode(account_address));
+            info!("  Consensus Pubkey: 0x{}", hex::encode(&validator.consensusPubkey));
             info!("  Index: {}", validator.validatorIndex);
             info!("  Voting Power: {}", validator.votingPower);
         }
