@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { SystemAddresses } from "../foundation/SystemAddresses.sol";
-import { requireAllowed } from "../foundation/SystemAccessControl.sol";
-import { Errors } from "../foundation/Errors.sol";
-import { ValidatorConsensusInfo } from "../foundation/Types.sol";
-import { RandomnessConfig } from "./RandomnessConfig.sol";
-import { IDKG } from "./IDKG.sol";
-import { ITimestamp } from "./ITimestamp.sol";
+import {SystemAddresses} from "../foundation/SystemAddresses.sol";
+import {requireAllowed} from "../foundation/SystemAccessControl.sol";
+import {Errors} from "../foundation/Errors.sol";
+import {ValidatorConsensusInfo} from "../foundation/Types.sol";
+import {RandomnessConfig} from "./RandomnessConfig.sol";
+import {IDKG} from "./IDKG.sol";
+import {ITimestamp} from "./ITimestamp.sol";
 
 /// @title DKG
 /// @author Gravity Team
@@ -18,23 +18,6 @@ import { ITimestamp } from "./ITimestamp.sol";
 ///      Note: Full validator arrays are emitted in events only (not stored in contract state)
 ///      to avoid storage limitations with dynamic arrays.
 contract DKG is IDKG {
-    // ========================================================================
-    // TYPES
-    // ========================================================================
-
-    /// @notice Full DKG session metadata for events
-    /// @dev Emitted in DKGStartEvent for consensus engine
-    struct DKGSessionMetadata {
-        /// @notice Epoch number of the dealers (current validators)
-        uint64 dealerEpoch;
-        /// @notice Randomness configuration for this session
-        RandomnessConfig.RandomnessConfigData randomnessConfig;
-        /// @notice Current validators who will run DKG (dealers)
-        ValidatorConsensusInfo[] dealerValidatorSet;
-        /// @notice Next epoch validators who will receive keys (targets)
-        ValidatorConsensusInfo[] targetValidatorSet;
-    }
-
     // ========================================================================
     // STATE
     // ========================================================================
@@ -61,7 +44,11 @@ contract DKG is IDKG {
     /// @param dealerEpoch Epoch of the dealer validators
     /// @param startTimeUs When the session started (microseconds)
     /// @param metadata Full session metadata for consensus engine
-    event DKGStartEvent(uint64 indexed dealerEpoch, uint64 startTimeUs, DKGSessionMetadata metadata);
+    event DKGStartEvent(
+        uint64 indexed dealerEpoch,
+        uint64 startTimeUs,
+        IDKG.DKGSessionMetadata metadata
+    );
 
     /// @notice Emitted when a DKG session completes
     /// @param dealerEpoch Epoch of the dealer validators
@@ -99,43 +86,37 @@ contract DKG is IDKG {
         // Get current timestamp from Timestamp contract
         uint64 startTimeUs = _getCurrentTimeMicros();
 
-        // Store essential session info on-chain
+        // Store full session info on-chain
         // TODO(lightman): validator's voting power needs to be uint64 on the consensus engine.
-        _inProgress = IDKG.DKGSessionInfo({
-            dealerEpoch: dealerEpoch,
-            configVariant: randomnessConfig.variant,
-            dealerCount: uint64(dealerValidatorSet.length),
-            targetCount: uint64(targetValidatorSet.length),
-            startTimeUs: startTimeUs,
-            transcript: ""
-        });
+        _inProgress.metadata.dealerEpoch = dealerEpoch;
+        _inProgress.metadata.randomnessConfig = randomnessConfig;
+        _inProgress.startTimeUs = startTimeUs;
+        _inProgress.transcript = "";
+        // Copy validator arrays
+        delete _inProgress.metadata.dealerValidatorSet;
+        for (uint256 i = 0; i < dealerValidatorSet.length; i++) {
+            _inProgress.metadata.dealerValidatorSet.push(dealerValidatorSet[i]);
+        }
+        delete _inProgress.metadata.targetValidatorSet;
+        for (uint256 i = 0; i < targetValidatorSet.length; i++) {
+            _inProgress.metadata.targetValidatorSet.push(targetValidatorSet[i]);
+        }
         hasInProgress = true;
 
-        // Emit full metadata in event for consensus engine
-        // Note: We create the memory struct here to include the calldata arrays
-        DKGSessionMetadata memory metadata = DKGSessionMetadata({
-            dealerEpoch: dealerEpoch,
-            randomnessConfig: randomnessConfig,
-            dealerValidatorSet: dealerValidatorSet,
-            targetValidatorSet: targetValidatorSet
-        });
-
-        emit DKGStartEvent(dealerEpoch, startTimeUs, metadata);
+        emit DKGStartEvent(dealerEpoch, startTimeUs, _inProgress.metadata);
     }
 
     /// @notice Complete a DKG session with the generated transcript
     /// @dev Called by RECONFIGURATION after DKG completes off-chain
     /// @param transcript The DKG transcript from consensus engine
-    function finish(
-        bytes calldata transcript
-    ) external override {
+    function finish(bytes calldata transcript) external override {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
             revert Errors.DKGNotInProgress();
         }
 
-        uint64 dealerEpoch = _inProgress.dealerEpoch;
+        uint64 dealerEpoch = _inProgress.metadata.dealerEpoch;
 
         // Store transcript and move to completed
         _inProgress.transcript = transcript;
@@ -159,7 +140,7 @@ contract DKG is IDKG {
             return;
         }
 
-        uint64 dealerEpoch = _inProgress.dealerEpoch;
+        uint64 dealerEpoch = _inProgress.metadata.dealerEpoch;
         _clearInProgress();
 
         emit DKGSessionCleared(dealerEpoch);
@@ -178,7 +159,12 @@ contract DKG is IDKG {
     /// @notice Get the incomplete session info if any
     /// @return hasSession Whether an in-progress session exists
     /// @return info Session info (only valid if hasSession is true)
-    function getIncompleteSession() external view override returns (bool hasSession, IDKG.DKGSessionInfo memory info) {
+    function getIncompleteSession()
+        external
+        view
+        override
+        returns (bool hasSession, IDKG.DKGSessionInfo memory info)
+    {
         if (hasInProgress) {
             return (true, _inProgress);
         }
@@ -206,7 +192,26 @@ contract DKG is IDKG {
     function sessionDealerEpoch(
         IDKG.DKGSessionInfo calldata info
     ) external pure override returns (uint64) {
-        return info.dealerEpoch;
+        return info.metadata.dealerEpoch;
+    }
+
+    /// @notice Get complete DKG state for debugging
+    /// @return lastCompleted Last completed session
+    /// @return hasLastCompleted_ Whether a completed session exists
+    /// @return inProgress_ In-progress session
+    /// @return hasInProgress_ Whether an in-progress session exists
+    function getDKGState()
+        external
+        view
+        override
+        returns (
+            IDKG.DKGSessionInfo memory lastCompleted,
+            bool hasLastCompleted_,
+            IDKG.DKGSessionInfo memory inProgress_,
+            bool hasInProgress_
+        )
+    {
+        return (_lastCompleted, hasLastCompleted, _inProgress, hasInProgress);
     }
 
     // ========================================================================
