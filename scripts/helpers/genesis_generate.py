@@ -66,7 +66,8 @@ def create_genesis_json(
     print("🔧 Setting large balance for system addresses...")
     system_addresses = {
         "0x0000000000000000000000000000000000002013": "VALIDATOR_MANAGER_ADDR",
-        "0x0000000000000000000000000000000000002018": "JWK_MANAGER_ADDR"
+        "0x0000000000000000000000000000000000002018": "JWK_MANAGER_ADDR",
+        "0x00000000000000000000000000000001625f0000": "SYSTEM_CALLER"
     }
     
     # Use the same large balance as other accounts

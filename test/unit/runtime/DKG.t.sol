@@ -74,7 +74,6 @@ contract DKGTest is Test {
         return validators;
     }
 
-
     function _startSession() internal {
         _startSession(EPOCH_1);
     }

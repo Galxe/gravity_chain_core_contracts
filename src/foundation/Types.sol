@@ -52,7 +52,6 @@ struct ValidatorConsensusInfo {
     bytes fullnodeAddresses;
 }
 
-
 /// @notice Full validator record
 /// @dev Contains all validator state, stored in ValidatorManager.
 ///      All timestamps are in microseconds (from Timestamp contract).
@@ -128,4 +127,3 @@ struct Proposal {
     /// @notice When proposal was resolved (microseconds)
     uint64 resolutionTime;
 }
-

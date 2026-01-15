@@ -64,7 +64,7 @@ contract Reconfiguration is IReconfiguration {
             revert Errors.AlreadyInitialized();
         }
 
-        currentEpoch = 0;
+        currentEpoch = 1;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         _transitionState = TransitionState.Idle;
         _transitionStartedAtEpoch = 0;

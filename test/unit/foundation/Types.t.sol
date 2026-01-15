@@ -109,7 +109,6 @@ contract TypesTest is Test {
         assertEq(info.fullnodeAddresses, fullnodeAddrs);
     }
 
-
     // ========================================================================
     // ValidatorRecord Tests
     // ========================================================================
