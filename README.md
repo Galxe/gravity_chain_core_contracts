@@ -55,19 +55,43 @@ forge test -vvv
 
 The `genesis-tool` generates a complete genesis configuration for the Gravity Chain.
 
+### Multi-Node (4 validators)
+
 ```bash
-# Default settings (2-hour epoch interval)
+# Default settings (4 nodes, 2-hour epoch interval)
 ./scripts/generate_genesis.sh
 
 # Custom epoch interval (e.g., 4 hours)
 ./scripts/generate_genesis.sh -i 4
 
-# Custom config file
-./scripts/generate_genesis.sh -c path/to/config.json
-
 # Help
 ./scripts/generate_genesis.sh --help
 ```
+
+### Single-Node (1 validator)
+
+```bash
+# Single node genesis (for local testing)
+./scripts/generate_genesis_single.sh
+
+# Single node with custom epoch interval
+./scripts/generate_genesis_single.sh -i 1
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-i, --interval HOURS` | Set epoch interval in hours (default: 2) |
+| `-c, --config FILE` | Use custom config file |
+| `-h, --help` | Show help message |
+
+### Configuration Files
+
+| File | Description |
+|------|-------------|
+| `genesis-tool/config/genesis_config.json` | 4-node configuration |
+| `genesis-tool/config/genesis_config_single.json` | Single-node configuration |
 
 **Generated files:**
 - `genesis.json` — Main genesis file
