@@ -261,9 +261,9 @@ contract ConsensusEngineFlowTest is Test {
         _createRegisterAndJoin(bob, MIN_BOND * 2, "bob");
         _processEpoch(); // Activate validators
 
-        // Verify initial state (epoch 0 → epoch 1 in validatorManager)
+        // Verify initial state (epoch 1 after initialization)
         assertEq(validatorManager.getActiveValidatorCount(), 2, "Should have 2 active validators");
-        assertEq(reconfig.currentEpoch(), 0, "Reconfiguration should be at epoch 0");
+        assertEq(reconfig.currentEpoch(), 1, "Reconfiguration should be at epoch 1");
 
         // Simulate blocks during epoch (no transition)
         for (uint256 i = 0; i < 5; i++) {
@@ -283,7 +283,7 @@ contract ConsensusEngineFlowTest is Test {
         // Verify DKG session was started
         (bool hasSession, IDKG.DKGSessionInfo memory sessionInfo) = dkg.getIncompleteSession();
         assertTrue(hasSession, "Should have in-progress DKG session");
-        assertEq(sessionInfo.dealerEpoch, 0, "DKG session epoch should match");
+        assertEq(sessionInfo.dealerEpoch, 1, "DKG session epoch should match");
         assertEq(sessionInfo.dealerCount, 2, "Should have 2 dealers");
         assertEq(sessionInfo.targetCount, 2, "Should have 2 targets");
 
@@ -291,7 +291,7 @@ contract ConsensusEngineFlowTest is Test {
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
 
         // Verify new epoch
-        assertEq(reconfig.currentEpoch(), 1, "Should be at epoch 1");
+        assertEq(reconfig.currentEpoch(), 2, "Should be at epoch 2");
         assertFalse(reconfig.isTransitionInProgress(), "Transition should be complete");
     }
 
@@ -386,7 +386,7 @@ contract ConsensusEngineFlowTest is Test {
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
 
         // Verify epoch completed
-        assertEq(reconfig.currentEpoch(), 1, "Epoch should advance");
+        assertEq(reconfig.currentEpoch(), 2, "Epoch should advance");
 
         // Verify validator changes applied
         assertEq(
@@ -500,7 +500,7 @@ contract ConsensusEngineFlowTest is Test {
         _processEpoch();
 
         // Run through 5 epochs
-        for (uint64 epoch = 0; epoch < 5; epoch++) {
+        for (uint64 epoch = 1; epoch < 6; epoch++) {
             assertEq(reconfig.currentEpoch(), epoch, "Should be at correct epoch");
 
             // Advance time and trigger transition
@@ -556,7 +556,7 @@ contract ConsensusEngineFlowTest is Test {
         reconfig.finishTransition(""); // Empty DKG result
 
         assertFalse(reconfig.isTransitionInProgress(), "Reconfiguration should end");
-        assertEq(reconfig.currentEpoch(), 1, "Epoch should advance");
+        assertEq(reconfig.currentEpoch(), 2, "Epoch should advance");
     }
 
     /// @notice Test consensus engine behavior with NIL blocks (empty blocks)
@@ -598,7 +598,7 @@ contract ConsensusEngineFlowTest is Test {
         // Expect the NewEpochEvent to be emitted
         // checkTopic1 = true (indexed newEpoch), checkTopic2 = false, checkTopic3 = false, checkData = true
         vm.expectEmit(true, false, false, true, address(reconfig));
-        emit NewEpochEvent(1, expectedValidators, expectedTotalPower, timestamp.nowMicroseconds());
+        emit NewEpochEvent(2, expectedValidators, expectedTotalPower, timestamp.nowMicroseconds());
 
         // Complete reconfiguration
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
@@ -693,7 +693,7 @@ contract ConsensusEngineFlowTest is Test {
         uint256 expectedTotalPower = MIN_BOND * 2; // alice + bob
 
         // Complete 3 epochs and verify event each time
-        for (uint64 epoch = 0; epoch < 3; epoch++) {
+        for (uint64 epoch = 1; epoch < 4; epoch++) {
             _advanceTime(TWO_HOURS + 1);
             _simulateBlockPrologue();
 
@@ -737,7 +737,7 @@ contract ConsensusEngineFlowTest is Test {
         _simulateBlockPrologue();
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
 
-        assertEq(reconfig.currentEpoch(), 1, "Should complete epoch transition");
+        assertEq(reconfig.currentEpoch(), 2, "Should complete epoch transition");
         assertEq(validatorManager.getActiveValidatorCount(), numValidators, "Validator count should be preserved");
     }
 
@@ -770,7 +770,7 @@ contract ConsensusEngineFlowTest is Test {
         }
 
         // Should have completed all epochs without reverting
-        assertEq(reconfig.currentEpoch(), 3, "Should complete 3 epochs");
+        assertEq(reconfig.currentEpoch(), 4, "Should complete 3 epochs");
     }
 }
 

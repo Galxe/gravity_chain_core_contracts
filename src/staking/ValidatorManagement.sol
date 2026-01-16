@@ -710,7 +710,9 @@ contract ValidatorManagement is IValidatorManagement {
                     consensusPubkey: validator.consensusPubkey,
                     consensusPop: validator.consensusPop,
                     votingPower: _getValidatorVotingPower(pool),
-                    validatorIndex: uint64(idx)
+                    validatorIndex: uint64(idx),
+                    networkAddresses: validator.networkAddresses,
+                    fullnodeAddresses: validator.fullnodeAddresses
                 });
                 idx++;
             }
@@ -725,7 +727,9 @@ contract ValidatorManagement is IValidatorManagement {
                 consensusPubkey: validator.consensusPubkey,
                 consensusPop: validator.consensusPop,
                 votingPower: _getValidatorVotingPower(pool),
-                validatorIndex: uint64(idx)
+                validatorIndex: uint64(idx),
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
             });
             idx++;
         }
@@ -761,7 +765,9 @@ contract ValidatorManagement is IValidatorManagement {
                 consensusPubkey: validator.consensusPubkey,
                 consensusPop: validator.consensusPop,
                 votingPower: validator.bond,
-                validatorIndex: validator.validatorIndex
+                validatorIndex: validator.validatorIndex,
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
             });
         }
 
@@ -784,7 +790,9 @@ contract ValidatorManagement is IValidatorManagement {
             consensusPubkey: validator.consensusPubkey,
             consensusPop: validator.consensusPop,
             votingPower: validator.bond,
-            validatorIndex: validator.validatorIndex
+            validatorIndex: validator.validatorIndex,
+            networkAddresses: validator.networkAddresses,
+            fullnodeAddresses: validator.fullnodeAddresses
         });
     }
 
@@ -867,7 +875,9 @@ contract ValidatorManagement is IValidatorManagement {
                 consensusPubkey: validator.consensusPubkey,
                 consensusPop: validator.consensusPop,
                 votingPower: validator.bond,
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
             });
         }
 

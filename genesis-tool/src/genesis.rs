@@ -9,6 +9,18 @@ use crate::{
     utils::{GENESIS_ADDR, VALIDATOR_MANAGER_ADDR, new_system_call_txn, new_system_call_txn_with_value},
 };
 
+/// Derive 32-byte AccountAddress from BLS consensus public key using SHA3-256
+/// This matches the derivation used in gravity-reth for validator identity
+fn derive_account_address_from_consensus_pubkey(consensus_pubkey: &[u8]) -> [u8; 32] {
+    use tiny_keccak::{Hasher, Sha3};
+    
+    let mut hasher = Sha3::v256();
+    hasher.update(consensus_pubkey);
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    output
+}
+
 // ============================================================================
 // JSON CONFIG STRUCTURES - Matching new Genesis.sol GenesisInitParams
 // ============================================================================
@@ -155,10 +167,10 @@ pub struct InitialValidator {
     pub consensus_pop: String,  // hex bytes
     
     #[serde(rename = "networkAddresses")]
-    pub network_addresses: String,  // hex bytes
+    pub network_addresses: String,  // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
     
     #[serde(rename = "fullnodeAddresses")]
-    pub fullnode_addresses: String,  // hex bytes
+    pub fullnode_addresses: String,  // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
     
     #[serde(rename = "votingPower")]
     pub voting_power: String,
@@ -274,6 +286,12 @@ fn parse_hex_bytes(s: &str) -> Vec<u8> {
     hex::decode(s).expect(&format!("Invalid hex string: {}", s))
 }
 
+/// BCS encode a string (for network addresses)
+/// BCS string encoding: length prefix (uleb128) + UTF-8 bytes
+fn bcs_encode_string(s: &str) -> Vec<u8> {
+    bcs::to_bytes(s).expect(&format!("Failed to BCS encode string: {}", s))
+}
+
 pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
     // Convert ValidatorConfig
     let validator_config = SolValidatorConfigParams {
@@ -346,8 +364,9 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
             moniker: v.moniker.clone(),
             consensusPubkey: parse_hex_bytes(&v.consensus_pubkey).into(),
             consensusPop: parse_hex_bytes(&v.consensus_pop).into(),
-            networkAddresses: parse_hex_bytes(&v.network_addresses).into(),
-            fullnodeAddresses: parse_hex_bytes(&v.fullnode_addresses).into(),
+            // BCS encode network addresses from human-readable format
+            networkAddresses: bcs_encode_string(&v.network_addresses).into(),
+            fullnodeAddresses: bcs_encode_string(&v.fullnode_addresses).into(),
             votingPower: parse_u256(&v.voting_power),
         })
         .collect();
@@ -411,6 +430,8 @@ sol! {
             bytes consensusPop;
             uint256 votingPower;
             uint64 validatorIndex;
+            bytes networkAddresses;
+            bytes fullnodeAddresses;
         }
         
         function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
@@ -441,8 +462,13 @@ pub fn print_active_validators_result(result: &ExecutionResult, config: &Genesis
         }
         
         for (i, validator) in validators.iter().enumerate() {
+            // Derive account address from consensus pubkey using SHA3-256
+            let account_address = derive_account_address_from_consensus_pubkey(&validator.consensusPubkey);
+            
             info!("--- Validator {} ---", i + 1);
-            info!("  Address: {:?}", validator.validator);
+            info!("  ETH Address: {:?}", validator.validator);
+            info!("  Account Address (from consensus pubkey): 0x{}", hex::encode(account_address));
+            info!("  Consensus Pubkey: 0x{}", hex::encode(&validator.consensusPubkey));
             info!("  Index: {}", validator.validatorIndex);
             info!("  Voting Power: {}", validator.votingPower);
         }

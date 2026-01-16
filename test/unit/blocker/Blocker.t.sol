@@ -188,7 +188,9 @@ contract BlockerTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
         return validators;
@@ -225,7 +227,7 @@ contract BlockerTest is Test {
     function test_initialize_success() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectEmit(true, true, false, true);
-        emit BlockStarted(0, 0, SystemAddresses.SYSTEM_CALLER, 0);
+        emit BlockStarted(0, 0, SystemAddresses.SYSTEM_CALLER, 0); // Genesis block emits epoch 0
         Blocker(SystemAddresses.BLOCK).initialize();
 
         assertTrue(Blocker(SystemAddresses.BLOCK).isInitialized());
@@ -263,7 +265,7 @@ contract BlockerTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(false, true, false, true);
-        emit BlockStarted(block.number, 0, validator.validator, newTimestamp);
+        emit BlockStarted(block.number, 1, validator.validator, newTimestamp);
 
         uint64[] memory failedProposerIndices = new uint64[](0);
         Blocker(SystemAddresses.BLOCK).onBlockStart(PROPOSER_INDEX, failedProposerIndices, newTimestamp);
@@ -280,7 +282,7 @@ contract BlockerTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(false, true, false, true);
-        emit BlockStarted(block.number, 0, SystemAddresses.SYSTEM_CALLER, currentTime);
+        emit BlockStarted(block.number, 1, SystemAddresses.SYSTEM_CALLER, currentTime);
 
         uint64[] memory failedProposerIndices = new uint64[](0);
         Blocker(SystemAddresses.BLOCK).onBlockStart(NIL_PROPOSER_INDEX, failedProposerIndices, currentTime);
@@ -353,7 +355,7 @@ contract BlockerTest is Test {
         // NIL block (NIL_PROPOSER_INDEX) should resolve to SYSTEM_CALLER
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(false, false, false, true);
-        emit BlockStarted(block.number, 0, SystemAddresses.SYSTEM_CALLER, currentTime);
+        emit BlockStarted(block.number, 1, SystemAddresses.SYSTEM_CALLER, currentTime);
 
         uint64[] memory failedProposerIndices = new uint64[](0);
         Blocker(SystemAddresses.BLOCK).onBlockStart(NIL_PROPOSER_INDEX, failedProposerIndices, currentTime);
@@ -370,7 +372,7 @@ contract BlockerTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(false, false, false, true);
-        emit BlockStarted(block.number, 0, validator.validator, newTimestamp);
+        emit BlockStarted(block.number, 1, validator.validator, newTimestamp);
 
         uint64[] memory failedProposerIndices = new uint64[](0);
         Blocker(SystemAddresses.BLOCK).onBlockStart(PROPOSER_INDEX, failedProposerIndices, newTimestamp);
@@ -388,7 +390,7 @@ contract BlockerTest is Test {
 
             vm.prank(SystemAddresses.SYSTEM_CALLER);
             vm.expectEmit(false, false, false, true);
-            emit BlockStarted(block.number, 0, validator.validator, newTimestamp);
+            emit BlockStarted(block.number, 1, validator.validator, newTimestamp);
 
             uint64[] memory failedProposerIndices = new uint64[](0);
             Blocker(SystemAddresses.BLOCK).onBlockStart(i, failedProposerIndices, newTimestamp);
@@ -408,27 +410,27 @@ contract BlockerTest is Test {
         uint64 timestamp1 = Timestamp(SystemAddresses.TIMESTAMP).nowMicroseconds() + 1_000_000;
         _callOnBlockStart(PROPOSER_INDEX, timestamp1);
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Block 2: After epoch interval, transition starts
         uint64 timestamp2 = timestamp1 + TWO_HOURS;
         _callOnBlockStart(PROPOSER_INDEX, timestamp2);
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Finish transition manually (normally consensus engine does this)
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
 
         // Block 3: After transition, new epoch
         uint64 timestamp3 = timestamp2 + 1_000_000;
         _callOnBlockStart(PROPOSER_INDEX, timestamp3);
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
     }
 
@@ -442,7 +444,7 @@ contract BlockerTest is Test {
             currentTimestamp += 1_000_000; // 1 second each
             _callOnBlockStart(PROPOSER_INDEX, currentTimestamp);
 
-            assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+            assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
             assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
         }
     }
@@ -464,7 +466,7 @@ contract BlockerTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(false, false, false, true);
-        emit BlockStarted(block.number, 0, validator.validator, newTimestamp);
+        emit BlockStarted(block.number, 1, validator.validator, newTimestamp);
 
         uint64[] memory failedProposerIndices = new uint64[](0);
         Blocker(SystemAddresses.BLOCK).onBlockStart(proposerIndex, failedProposerIndices, newTimestamp);

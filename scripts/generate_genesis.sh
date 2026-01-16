@@ -268,7 +268,7 @@ main() {
     
     log_info "Building and running genesis-tool binary..."
     cd "$GENESIS_TOOL_DIR"
-    cargo run --release -- \
+    cargo run --release -- generate \
         --byte-code-dir "$OUT_DIR" \
         --config-file "$CONFIG_FILE" \
         --output "$OUTPUT_DIR" \

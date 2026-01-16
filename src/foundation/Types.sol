@@ -46,6 +46,10 @@ struct ValidatorConsensusInfo {
     uint256 votingPower;
     /// @notice Index in active validator array of an epoch.
     uint64 validatorIndex;
+    /// @notice Network addresses for P2P communication
+    bytes networkAddresses;
+    /// @notice Fullnode addresses for sync
+    bytes fullnodeAddresses;
 }
 
 /// @notice Full validator record
@@ -123,4 +127,3 @@ struct Proposal {
     /// @notice When proposal was resolved (microseconds)
     uint64 resolutionTime;
 }
-

@@ -66,7 +66,9 @@ contract DKGTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
         return validators;

@@ -56,5 +56,8 @@ alloy-rlp = { version = "0.3.10", default-features = false }
 # for BCS serialize and deserialize
 bcs = { git = "https://github.com/aptos-labs/bcs.git", rev = "d31fab9d81748e2594be5cd5cdf845786a30562d" }
 
+# for SHA3-256 hashing of consensus pubkey to derive account address
+tiny-keccak = { version = "2.0", features = ["sha3"] }
+
 [features]
 default = []

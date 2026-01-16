@@ -205,7 +205,9 @@ contract ReconfigurationTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
         return validators;
@@ -243,11 +245,11 @@ contract ReconfigurationTest is Test {
     function test_initialize_success() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectEmit(true, false, false, true);
-        emit EpochTransitioned(0, INITIAL_TIME);
+        emit EpochTransitioned(0, INITIAL_TIME); // Genesis epoch event is 0
         Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
         assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isInitialized());
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1); // But currentEpoch starts at 1
         // Epoch interval is now in EpochConfig, not Reconfiguration
         assertEq(EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros(), TWO_HOURS);
         assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).lastReconfigurationTime(), INITIAL_TIME);
@@ -296,7 +298,7 @@ contract ReconfigurationTest is Test {
 
         vm.prank(SystemAddresses.BLOCK);
         vm.expectEmit(true, false, false, false);
-        emit EpochTransitionStarted(0);
+        emit EpochTransitionStarted(1);
         bool started = Reconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
 
         assertTrue(started);
@@ -352,10 +354,10 @@ contract ReconfigurationTest is Test {
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         vm.expectEmit(true, false, false, true);
-        emit EpochTransitioned(1, expectedTransitionTime);
+        emit EpochTransitioned(2, expectedTransitionTime);
         Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition(SAMPLE_TRANSCRIPT);
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
         assertEq(
             uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
@@ -377,7 +379,7 @@ contract ReconfigurationTest is Test {
         // Finish with empty DKG result (force-end)
         _finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
         assertEq(
             uint8(Reconfiguration(SystemAddresses.RECONFIGURATION).getTransitionState()),
             uint8(IReconfiguration.TransitionState.Idle)
@@ -395,7 +397,7 @@ contract ReconfigurationTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         Reconfiguration(SystemAddresses.RECONFIGURATION).finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
     }
 
     function test_RevertWhen_finishTransition_notInProgress() public {
@@ -495,8 +497,8 @@ contract ReconfigurationTest is Test {
     function test_fullEpochLifecycle() public {
         _initializeReconfiguration();
 
-        // Epoch 0
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        // Epoch 1 (after initialization)
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // Wait for epoch interval to pass
@@ -507,14 +509,14 @@ contract ReconfigurationTest is Test {
         assertTrue(started);
         assertTrue(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
-        // Still epoch 0 during transition
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 0);
+        // Still epoch 1 during transition
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
 
         // Finish transition
         _finishTransition(SAMPLE_TRANSCRIPT);
 
-        // Now epoch 1
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        // Now epoch 2
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
         assertFalse(Reconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress());
 
         // ValidatorManagement epoch incremented
@@ -524,7 +526,7 @@ contract ReconfigurationTest is Test {
     function test_multipleEpochTransitions() public {
         _initializeReconfiguration();
 
-        for (uint64 i = 0; i < 5; i++) {
+        for (uint64 i = 1; i < 6; i++) {
             assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), i);
 
             _advanceTime(TWO_HOURS + 1);
@@ -532,7 +534,7 @@ contract ReconfigurationTest is Test {
             _finishTransition("");
 
             assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), i + 1);
-            assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurrentEpoch(), i + 1);
+            assertEq(MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurrentEpoch(), i);
         }
     }
 
@@ -569,7 +571,7 @@ contract ReconfigurationTest is Test {
         _startTransition();
         _finishTransition("");
 
-        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 1);
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
     }
 
     // ========================================================================
@@ -586,21 +588,27 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         dealers[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)),
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
         dealers[2] = ValidatorConsensusInfo({
             validator: address(uint160(3)), // pending_inactive
             consensusPubkey: abi.encodePacked("pubkey2"),
             consensusPop: abi.encodePacked("pop2"),
             votingPower: 150,
-            validatorIndex: 2
+            validatorIndex: 2,
+            networkAddresses: abi.encodePacked("network2"),
+            fullnodeAddresses: abi.encodePacked("fullnode2")
         });
 
         // Targets: exclude pending_inactive validator (3), include new pending_active (4)
@@ -610,21 +618,27 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         targets[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)),
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
         targets[2] = ValidatorConsensusInfo({
             validator: address(uint160(4)), // new pending_active
             consensusPubkey: abi.encodePacked("pubkey3"),
             consensusPop: abi.encodePacked("pop3"),
             votingPower: 120,
-            validatorIndex: 2
+            validatorIndex: 2,
+            networkAddresses: abi.encodePacked("network3"),
+            fullnodeAddresses: abi.encodePacked("fullnode3")
         });
 
         // Set up mock with different dealers and targets
@@ -650,14 +664,18 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         dealers[1] = ValidatorConsensusInfo({
             validator: address(uint160(2)), // pending_inactive, still in dealers
             consensusPubkey: abi.encodePacked("pubkey1"),
             consensusPop: abi.encodePacked("pop1"),
             votingPower: 200,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network1"),
+            fullnodeAddresses: abi.encodePacked("fullnode1")
         });
 
         // Targets exclude the pending_inactive validator
@@ -667,7 +685,9 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey0"),
             consensusPop: abi.encodePacked("pop0"),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
 
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
@@ -689,7 +709,9 @@ contract ReconfigurationTest is Test {
                 consensusPubkey: abi.encodePacked("pubkey", i),
                 consensusPop: abi.encodePacked("pop", i),
                 votingPower: 100 * (i + 1),
-                validatorIndex: uint64(i)
+                validatorIndex: uint64(i),
+                networkAddresses: abi.encodePacked("network", i),
+                fullnodeAddresses: abi.encodePacked("fullnode", i)
             });
         }
 
@@ -703,14 +725,18 @@ contract ReconfigurationTest is Test {
             consensusPubkey: abi.encodePacked("pubkey", uint256(0)),
             consensusPop: abi.encodePacked("pop", uint256(0)),
             votingPower: 100,
-            validatorIndex: 0
+            validatorIndex: 0,
+            networkAddresses: abi.encodePacked("network0"),
+            fullnodeAddresses: abi.encodePacked("fullnode0")
         });
         targets[1] = ValidatorConsensusInfo({
             validator: address(uint160(3)),
             consensusPubkey: abi.encodePacked("pubkey", uint256(2)),
             consensusPop: abi.encodePacked("pop", uint256(2)),
             votingPower: 300,
-            validatorIndex: 1
+            validatorIndex: 1,
+            networkAddresses: abi.encodePacked("network2"),
+            fullnodeAddresses: abi.encodePacked("fullnode2")
         });
 
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setDkgValidatorSets(dealers, targets);
