@@ -115,7 +115,7 @@ contract GenesisTest is Test {
         issuers[0] = "https://accounts.google.com";
         IJWKManager.RSA_JWK[][] memory jwks = new IJWKManager.RSA_JWK[][](1);
         jwks[0] = new IJWKManager.RSA_JWK[](1);
-        jwks[0][0] = IJWKManager.RSA_JWK("kid1", "RS256", "e", "n");
+        jwks[0][0] = IJWKManager.RSA_JWK("kid1", "RSA", "RS256", "e", "n");
         params.jwkConfig = Genesis.JWKInitParams(issuers, jwks);
 
         // Impersonate SYSTEM_CALLER

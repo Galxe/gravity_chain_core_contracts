@@ -834,13 +834,49 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function getPendingActiveValidators() external view returns (address[] memory) {
-        return _pendingActive;
+    function getPendingActiveValidators() external view returns (ValidatorConsensusInfo[] memory) {
+        uint256 length = _pendingActive.length;
+        ValidatorConsensusInfo[] memory result = new ValidatorConsensusInfo[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _pendingActive[i];
+            ValidatorRecord storage validator = _validators[pool];
+
+            result[i] = ValidatorConsensusInfo({
+                validator: pool,
+                consensusPubkey: validator.consensusPubkey,
+                consensusPop: validator.consensusPop,
+                votingPower: _getValidatorVotingPower(pool),
+                validatorIndex: type(uint64).max, // Not yet assigned
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
+            });
+        }
+
+        return result;
     }
 
     /// @inheritdoc IValidatorManagement
-    function getPendingInactiveValidators() external view returns (address[] memory) {
-        return _pendingInactive;
+    function getPendingInactiveValidators() external view returns (ValidatorConsensusInfo[] memory) {
+        uint256 length = _pendingInactive.length;
+        ValidatorConsensusInfo[] memory result = new ValidatorConsensusInfo[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _pendingInactive[i];
+            ValidatorRecord storage validator = _validators[pool];
+
+            result[i] = ValidatorConsensusInfo({
+                validator: pool,
+                consensusPubkey: validator.consensusPubkey,
+                consensusPop: validator.consensusPop,
+                votingPower: validator.bond,
+                validatorIndex: validator.validatorIndex,
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
+            });
+        }
+
+        return result;
     }
 
     // ========================================================================

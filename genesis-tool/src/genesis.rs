@@ -145,6 +145,7 @@ pub struct JWKInitParams {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RSA_JWK_Json {
     pub kid: String,
+    pub kty: String,
     pub alg: String,
     pub e: String,
     pub n: String,
@@ -221,6 +222,7 @@ sol! {
     
     struct SolRSA_JWK {
         string kid;
+        string kty;
         string alg;
         string e;
         string n;
@@ -346,6 +348,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
                 provider_jwks.iter()
                     .map(|jwk| SolRSA_JWK {
                         kid: jwk.kid.clone(),
+                        kty: jwk.kty.clone(),
                         alg: jwk.alg.clone(),
                         e: jwk.e.clone(),
                         n: jwk.n.clone(),

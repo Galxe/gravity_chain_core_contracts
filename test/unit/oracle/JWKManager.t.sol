@@ -57,7 +57,7 @@ contract JWKManagerTest is Test {
     function _createSampleJWK(
         string memory kid
     ) internal pure returns (IJWKManager.RSA_JWK memory) {
-        return IJWKManager.RSA_JWK({ kid: kid, alg: "RS256", e: "AQAB", n: "sample_modulus_base64url" });
+        return IJWKManager.RSA_JWK({ kid: kid, kty: "RSA", alg: "RS256", e: "AQAB", n: "sample_modulus_base64url" });
     }
 
     function _createPayload(
@@ -202,11 +202,12 @@ contract JWKManagerTest is Test {
 
     function test_GetJWK() public {
         IJWKManager.RSA_JWK[] memory jwks = new IJWKManager.RSA_JWK[](1);
-        jwks[0] = IJWKManager.RSA_JWK({ kid: "test_kid", alg: "RS256", e: "AQAB", n: "test_modulus" });
+        jwks[0] = IJWKManager.RSA_JWK({ kid: "test_kid", kty: "RSA", alg: "RS256", e: "AQAB", n: "test_modulus" });
         _recordJWK(GOOGLE_ISSUER, 1, jwks, 1);
 
         IJWKManager.RSA_JWK memory result = jwkManager.getJWK(GOOGLE_ISSUER, "test_kid");
         assertEq(result.kid, "test_kid");
+        assertEq(result.kty, "RSA");
         assertEq(result.alg, "RS256");
         assertEq(result.e, "AQAB");
         assertEq(result.n, "test_modulus");
@@ -310,7 +311,10 @@ contract JWKManagerTest is Test {
         // Apply RemoveAll patch
         IJWKManager.Patch[] memory patches = new IJWKManager.Patch[](1);
         patches[0] = IJWKManager.Patch({
-            patchType: IJWKManager.PatchType.RemoveAll, issuer: "", kid: "", jwk: IJWKManager.RSA_JWK("", "", "", "")
+            patchType: IJWKManager.PatchType.RemoveAll,
+            issuer: "",
+            kid: "",
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
 
         vm.prank(governance);
@@ -347,7 +351,7 @@ contract JWKManagerTest is Test {
             patchType: IJWKManager.PatchType.RemoveIssuer,
             issuer: GOOGLE_ISSUER,
             kid: "",
-            jwk: IJWKManager.RSA_JWK("", "", "", "")
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
 
         vm.prank(governance);
@@ -375,7 +379,7 @@ contract JWKManagerTest is Test {
             patchType: IJWKManager.PatchType.RemoveJWK,
             issuer: GOOGLE_ISSUER,
             kid: "key1",
-            jwk: IJWKManager.RSA_JWK("", "", "", "")
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
 
         vm.prank(governance);
@@ -392,7 +396,7 @@ contract JWKManagerTest is Test {
 
         // Apply UpsertJWK patch
         IJWKManager.RSA_JWK memory newJwk =
-            IJWKManager.RSA_JWK({ kid: "new_key", alg: "RS256", e: "AQAB", n: "patched_modulus" });
+            IJWKManager.RSA_JWK({ kid: "new_key", kty: "RSA", alg: "RS256", e: "AQAB", n: "patched_modulus" });
 
         IJWKManager.Patch[] memory patches = new IJWKManager.Patch[](1);
         patches[0] = IJWKManager.Patch({
@@ -411,7 +415,7 @@ contract JWKManagerTest is Test {
     function test_SetPatches_UpsertOverridesObserved() public {
         // Add observed JWK
         IJWKManager.RSA_JWK[] memory jwks = new IJWKManager.RSA_JWK[](1);
-        jwks[0] = IJWKManager.RSA_JWK({ kid: "key1", alg: "RS256", e: "AQAB", n: "original_modulus" });
+        jwks[0] = IJWKManager.RSA_JWK({ kid: "key1", kty: "RSA", alg: "RS256", e: "AQAB", n: "original_modulus" });
         _recordJWK(GOOGLE_ISSUER, 1, jwks, 1);
 
         // Verify original value
@@ -420,7 +424,7 @@ contract JWKManagerTest is Test {
 
         // Apply UpsertJWK patch to override
         IJWKManager.RSA_JWK memory patchedJwk =
-            IJWKManager.RSA_JWK({ kid: "key1", alg: "RS256", e: "AQAB", n: "patched_modulus" });
+            IJWKManager.RSA_JWK({ kid: "key1", kty: "RSA", alg: "RS256", e: "AQAB", n: "patched_modulus" });
 
         IJWKManager.Patch[] memory patches = new IJWKManager.Patch[](1);
         patches[0] = IJWKManager.Patch({
@@ -456,7 +460,10 @@ contract JWKManagerTest is Test {
         // Apply RemoveAll patch
         IJWKManager.Patch[] memory patches = new IJWKManager.Patch[](1);
         patches[0] = IJWKManager.Patch({
-            patchType: IJWKManager.PatchType.RemoveAll, issuer: "", kid: "", jwk: IJWKManager.RSA_JWK("", "", "", "")
+            patchType: IJWKManager.PatchType.RemoveAll,
+            issuer: "",
+            kid: "",
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
 
         vm.prank(governance);
@@ -480,7 +487,7 @@ contract JWKManagerTest is Test {
             patchType: IJWKManager.PatchType.RemoveIssuer,
             issuer: GOOGLE_ISSUER,
             kid: "",
-            jwk: IJWKManager.RSA_JWK("", "", "", "")
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
         patches[1] = IJWKManager.Patch({
             patchType: IJWKManager.PatchType.UpsertJWK,
@@ -520,7 +527,10 @@ contract JWKManagerTest is Test {
     function test_Events_PatchesUpdated() public {
         IJWKManager.Patch[] memory patches = new IJWKManager.Patch[](1);
         patches[0] = IJWKManager.Patch({
-            patchType: IJWKManager.PatchType.RemoveAll, issuer: "", kid: "", jwk: IJWKManager.RSA_JWK("", "", "", "")
+            patchType: IJWKManager.PatchType.RemoveAll,
+            issuer: "",
+            kid: "",
+            jwk: IJWKManager.RSA_JWK("", "", "", "", "")
         });
 
         vm.expectEmit(true, false, false, true);

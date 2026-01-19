@@ -255,9 +255,9 @@ contract ValidatorManagementTest is Test {
         ValidatorRecord memory record = validatorManager.getValidator(pool);
         assertEq(uint8(record.status), uint8(ValidatorStatus.PENDING_ACTIVE), "Status should be PENDING_ACTIVE");
 
-        address[] memory pending = validatorManager.getPendingActiveValidators();
+        ValidatorConsensusInfo[] memory pending = validatorManager.getPendingActiveValidators();
         assertEq(pending.length, 1, "Should have one pending validator");
-        assertEq(pending[0], pool, "Pending validator should match");
+        assertEq(pending[0].validator, pool, "Pending validator should match");
     }
 
     function test_joinValidatorSet_emitsEvent() public {
@@ -332,9 +332,9 @@ contract ValidatorManagementTest is Test {
         ValidatorRecord memory after_ = validatorManager.getValidator(pool1);
         assertEq(uint8(after_.status), uint8(ValidatorStatus.PENDING_INACTIVE), "Should be PENDING_INACTIVE");
 
-        address[] memory pending = validatorManager.getPendingInactiveValidators();
+        ValidatorConsensusInfo[] memory pending = validatorManager.getPendingInactiveValidators();
         assertEq(pending.length, 1, "Should have one pending inactive");
-        assertEq(pending[0], pool1, "Pending should match");
+        assertEq(pending[0].validator, pool1, "Pending should match");
     }
 
     function test_leaveValidatorSet_emitsEvent() public {
@@ -1346,9 +1346,9 @@ contract ValidatorManagementTest is Test {
 
         assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
 
-        address[] memory pending = validatorManager.getPendingInactiveValidators();
+        ValidatorConsensusInfo[] memory pending = validatorManager.getPendingInactiveValidators();
         assertEq(pending.length, 1);
-        assertEq(pending[0], pool1);
+        assertEq(pending[0].validator, pool1);
     }
 
     /// @notice Test that governance can force a PENDING_ACTIVE validator to INACTIVE

@@ -17,6 +17,8 @@ interface IJWKManager {
     struct RSA_JWK {
         /// @notice Key ID - unique identifier within an issuer's key set
         string kid;
+        /// @notice Key Type (always "RSA" for RSA keys)
+        string kty;
         /// @notice Algorithm (e.g., "RS256", "RS384", "RS512")
         string alg;
         /// @notice RSA public exponent (Base64url-encoded)

@@ -15,7 +15,7 @@ use std::{collections::HashMap, fs};
 use tracing::{error, info, warn};
 
 use crate::execute::prepare_env;
-use crate::utils::{VALIDATOR_MANAGER_ADDR, SYSTEM_CALLER, execute_revm_sequential, new_system_call_txn};
+use crate::utils::{VALIDATOR_MANAGER_ADDR, EPOCH_CONFIG_ADDR, SYSTEM_CALLER, execute_revm_sequential, new_system_call_txn};
 
 // ============================================================================
 // GENESIS JSON STRUCTURES (matching reth genesis format)
@@ -52,6 +52,9 @@ sol! {
     }
     
     function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
+    
+    // EpochConfig.epochIntervalMicros()
+    function epochIntervalMicros() external view returns (uint64);
 }
 
 /// Result of genesis verification
@@ -60,6 +63,7 @@ pub struct VerifyResult {
     pub success: bool,
     pub validator_count: usize,
     pub validators: Vec<ValidatorInfo>,
+    pub epoch_interval_micros: Option<u64>,
     pub errors: Vec<String>,
 }
 
@@ -143,6 +147,7 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
             success: false,
             validator_count: 0,
             validators: vec![],
+            epoch_interval_micros: None,
             errors: vec![format!(
                 "ValidatorManagement contract not found at expected address: {:?}",
                 vm_addr
@@ -152,7 +157,20 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     
     info!("ValidatorManagement contract found at {:?}", vm_addr);
     
-    // 3. Simulate getActiveValidators() call
+    // 3. First verify epoch interval from EpochConfig
+    info!("Verifying epoch interval from EpochConfig...");
+    let epoch_interval = verify_epoch_interval(&db);
+    match &epoch_interval {
+        Some(micros) => {
+            let hours = *micros as f64 / 3_600_000_000.0;
+            info!("✅ Epoch interval: {} micros ({:.4} hours)", micros, hours);
+        }
+        None => {
+            warn!("⚠️ Could not read epoch interval from EpochConfig");
+        }
+    }
+    
+    // 4. Simulate getActiveValidators() call
     info!("Simulating getActiveValidators() call...");
     
     let call = getActiveValidatorsCall {};
@@ -171,7 +189,7 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     match result {
         Ok((results, _)) => {
             if let Some(exec_result) = results.first() {
-                return process_execution_result(exec_result);
+                return process_execution_result(exec_result, epoch_interval);
             }
             Err(anyhow!("No execution result returned"))
         }
@@ -181,7 +199,40 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     }
 }
 
-fn process_execution_result(result: &ExecutionResult) -> Result<VerifyResult> {
+/// Verify epoch interval by calling EpochConfig.epochIntervalMicros()
+fn verify_epoch_interval(db: &revm::InMemoryDB) -> Option<u64> {
+    let call = epochIntervalMicrosCall {};
+    let input: Bytes = call.abi_encode().into();
+    let tx = new_system_call_txn(EPOCH_CONFIG_ADDR, input);
+    
+    let env = prepare_env();
+    let result = execute_revm_sequential(
+        db.clone(),
+        SpecId::LATEST,
+        env,
+        &[tx],
+        None,
+    );
+    
+    match result {
+        Ok((results, _)) => {
+            if let Some(ExecutionResult::Success { output, .. }) = results.first() {
+                let output_bytes = match output {
+                    revm_primitives::Output::Call(bytes) => bytes,
+                    revm_primitives::Output::Create(bytes, _) => bytes,
+                };
+                
+                if let Ok(decoded) = epochIntervalMicrosCall::abi_decode_returns(output_bytes, false) {
+                    return Some(decoded._0);
+                }
+            }
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+fn process_execution_result(result: &ExecutionResult, epoch_interval_micros: Option<u64>) -> Result<VerifyResult> {
     match result {
         ExecutionResult::Success { output, .. } => {
             let output_bytes = match output {
@@ -222,6 +273,7 @@ fn process_execution_result(result: &ExecutionResult) -> Result<VerifyResult> {
                         success: true,
                         validator_count: validators.len(),
                         validators: validator_infos,
+                        epoch_interval_micros,
                         errors: vec![],
                     })
                 }
@@ -239,6 +291,7 @@ fn process_execution_result(result: &ExecutionResult) -> Result<VerifyResult> {
                         success: false,
                         validator_count: 0,
                         validators: vec![],
+                        epoch_interval_micros,
                         errors: vec![
                             format!("ABI decode failed: {:?}", decode_err),
                             "This likely means the genesis.json was created with old contracts lacking networkAddresses/fullnodeAddresses fields".to_string(),
@@ -255,6 +308,7 @@ fn process_execution_result(result: &ExecutionResult) -> Result<VerifyResult> {
                 success: false,
                 validator_count: 0,
                 validators: vec![],
+                epoch_interval_micros,
                 errors: vec![format!("Call reverted: 0x{}", hex::encode(output))],
             })
         }
@@ -265,6 +319,7 @@ fn process_execution_result(result: &ExecutionResult) -> Result<VerifyResult> {
                 success: false,
                 validator_count: 0,
                 validators: vec![],
+                epoch_interval_micros,
                 errors: vec![format!("Call halted: {:?}", reason)],
             })
         }
@@ -287,6 +342,13 @@ pub fn print_verify_summary(result: &VerifyResult) {
     
     if result.success {
         println!("✅ STATUS: PASSED\n");
+        
+        // Display epoch interval
+        if let Some(micros) = result.epoch_interval_micros {
+            let hours = micros as f64 / 3_600_000_000.0;
+            println!("Epoch Interval: {} micros ({:.4} hours)", micros, hours);
+        }
+        
         println!("Validators: {}", result.validator_count);
         println!("\nValidator Details:");
         for (i, v) in result.validators.iter().enumerate() {
