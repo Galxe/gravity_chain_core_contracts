@@ -266,11 +266,34 @@ main() {
     log_step "Step 3: Generating genesis accounts and contracts..."
     create_directory "$OUTPUT_DIR"
     
+    # Convert epoch interval hours to microseconds and update config
+    # 1 hour = 3600 seconds = 3,600,000,000 microseconds
+    EPOCH_INTERVAL_MICROS=$(echo "$EPOCH_INTERVAL_HOURS * 3600000000" | bc | cut -d'.' -f1)
+    log_info "Epoch interval: ${EPOCH_INTERVAL_HOURS} hours = ${EPOCH_INTERVAL_MICROS} microseconds"
+    
+    # Create a modified config with the updated epoch interval
+    MODIFIED_CONFIG_FILE="$OUTPUT_DIR/genesis_config_modified.json"
+    log_info "Creating modified config with epoch interval..."
+    python3 -c "
+import json
+import sys
+
+with open('$CONFIG_FILE', 'r') as f:
+    config = json.load(f)
+
+config['epochIntervalMicros'] = $EPOCH_INTERVAL_MICROS
+
+with open('$MODIFIED_CONFIG_FILE', 'w') as f:
+    json.dump(config, f, indent=2)
+
+print(f'Updated epoch_interval_micros to {$EPOCH_INTERVAL_MICROS}')
+"
+    
     log_info "Building and running genesis-tool binary..."
     cd "$GENESIS_TOOL_DIR"
     cargo run --release -- generate \
         --byte-code-dir "$OUT_DIR" \
-        --config-file "$CONFIG_FILE" \
+        --config-file "$MODIFIED_CONFIG_FILE" \
         --output "$OUTPUT_DIR" \
         --log-file "$OUTPUT_DIR/genesis_generation.log"
     check_result "genesis generation"

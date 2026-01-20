@@ -243,13 +243,13 @@ interface IValidatorManagement {
     /// @return Current epoch
     function getCurrentEpoch() external view returns (uint64);
 
-    /// @notice Get pending active validators
-    /// @return Array of stake pool addresses pending activation
-    function getPendingActiveValidators() external view returns (address[] memory);
+    /// @notice Get pending active validators with full consensus info
+    /// @return Array of ValidatorConsensusInfo for validators pending activation
+    function getPendingActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
 
-    /// @notice Get pending inactive validators
-    /// @return Array of stake pool addresses pending deactivation
-    function getPendingInactiveValidators() external view returns (address[] memory);
+    /// @notice Get pending inactive validators with full consensus info
+    /// @return Array of ValidatorConsensusInfo for validators pending deactivation
+    function getPendingInactiveValidators() external view returns (ValidatorConsensusInfo[] memory);
 
     // ========================================================================
     // DKG SUPPORT FUNCTIONS
