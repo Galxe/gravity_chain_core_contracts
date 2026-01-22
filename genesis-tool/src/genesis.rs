@@ -1,19 +1,21 @@
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
-use revm_primitives::{Address, Bytes, ExecutionResult, TxEnv, U256, hex};
+use revm_primitives::{hex, Address, Bytes, ExecutionResult, TxEnv, U256};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
     post_genesis::handle_execution_result,
-    utils::{GENESIS_ADDR, VALIDATOR_MANAGER_ADDR, new_system_call_txn, new_system_call_txn_with_value},
+    utils::{
+        new_system_call_txn, new_system_call_txn_with_value, GENESIS_ADDR, VALIDATOR_MANAGER_ADDR,
+    },
 };
 
 /// Derive 32-byte AccountAddress from BLS consensus public key using SHA3-256
 /// This matches the derivation used in gravity-reth for validator identity
 fn derive_account_address_from_consensus_pubkey(consensus_pubkey: &[u8]) -> [u8; 32] {
     use tiny_keccak::{Hasher, Sha3};
-    
+
     let mut hasher = Sha3::v256();
     hasher.update(consensus_pubkey);
     let mut output = [0u8; 32];
@@ -29,34 +31,34 @@ fn derive_account_address_from_consensus_pubkey(consensus_pubkey: &[u8]) -> [u8;
 pub struct GenesisConfig {
     #[serde(rename = "validatorConfig")]
     pub validator_config: ValidatorConfigParams,
-    
+
     #[serde(rename = "stakingConfig")]
     pub staking_config: StakingConfigParams,
-    
+
     #[serde(rename = "governanceConfig")]
     pub governance_config: GovernanceConfigParams,
-    
+
     #[serde(rename = "epochIntervalMicros")]
     pub epoch_interval_micros: u64,
-    
+
     #[serde(rename = "majorVersion")]
     pub major_version: u64,
-    
+
     #[serde(rename = "consensusConfig")]
-    pub consensus_config: String,  // hex bytes
-    
+    pub consensus_config: String, // hex bytes
+
     #[serde(rename = "executionConfig")]
-    pub execution_config: String,  // hex bytes
-    
+    pub execution_config: String, // hex bytes
+
     #[serde(rename = "randomnessConfig")]
     pub randomness_config: RandomnessConfigData,
-    
+
     #[serde(rename = "oracleConfig")]
     pub oracle_config: OracleInitParams,
-    
+
     #[serde(rename = "jwkConfig")]
     pub jwk_config: JWKInitParams,
-    
+
     pub validators: Vec<InitialValidator>,
 }
 
@@ -64,19 +66,19 @@ pub struct GenesisConfig {
 pub struct ValidatorConfigParams {
     #[serde(rename = "minimumBond")]
     pub minimum_bond: String,
-    
+
     #[serde(rename = "maximumBond")]
     pub maximum_bond: String,
-    
+
     #[serde(rename = "unbondingDelayMicros")]
     pub unbonding_delay_micros: u64,
-    
+
     #[serde(rename = "allowValidatorSetChange")]
     pub allow_validator_set_change: bool,
-    
+
     #[serde(rename = "votingPowerIncreaseLimitPct")]
     pub voting_power_increase_limit_pct: u64,
-    
+
     #[serde(rename = "maxValidatorSetSize")]
     pub max_validator_set_size: String,
 }
@@ -85,13 +87,13 @@ pub struct ValidatorConfigParams {
 pub struct StakingConfigParams {
     #[serde(rename = "minimumStake")]
     pub minimum_stake: String,
-    
+
     #[serde(rename = "lockupDurationMicros")]
     pub lockup_duration_micros: u64,
-    
+
     #[serde(rename = "unbondingDelayMicros")]
     pub unbonding_delay_micros: u64,
-    
+
     #[serde(rename = "minimumProposalStake")]
     pub minimum_proposal_stake: String,
 }
@@ -100,18 +102,18 @@ pub struct StakingConfigParams {
 pub struct GovernanceConfigParams {
     #[serde(rename = "minVotingThreshold")]
     pub min_voting_threshold: String,
-    
+
     #[serde(rename = "requiredProposerStake")]
     pub required_proposer_stake: String,
-    
+
     #[serde(rename = "votingDurationMicros")]
     pub voting_duration_micros: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RandomnessConfigData {
-    pub variant: u8,  // 0 = Off, 1 = V2
-    
+    pub variant: u8, // 0 = Off, 1 = V2
+
     #[serde(rename = "configV2")]
     pub config_v2: ConfigV2Data,
 }
@@ -132,13 +134,51 @@ pub struct ConfigV2Data {
 pub struct OracleInitParams {
     #[serde(rename = "sourceTypes")]
     pub source_types: Vec<u32>,
-    
-    pub callbacks: Vec<String>,  // addresses as hex strings
+
+    pub callbacks: Vec<String>, // addresses as hex strings
+
+    #[serde(default)]
+    pub tasks: Vec<OracleTaskParams>,
+
+    #[serde(rename = "bridgeConfig", default)]
+    pub bridge_config: BridgeConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct OracleTaskParams {
+    #[serde(rename = "sourceType")]
+    pub source_type: u32,
+
+    #[serde(rename = "sourceId")]
+    pub source_id: u64,
+
+    #[serde(rename = "taskName")]
+    pub task_name: String, // string, will be hashed or passed as bytes32? User said bytes32.
+    // But JSON config usually has strings.
+    // Genesis.sol expects bytes32.
+    // We should probably accept a string and keccak256 it?
+    // Or string and 0-pad?
+    // User instructions: "OracleTaskConfig.setTask(..., bytes32 taskName, ...)"
+    // jwk_consensus_config used keccak256("events").
+    // Implementation plan said: "URI...".
+    // Let's assume input is string. If it starts with "0x", parse as bytes32.
+    // Otherwise keccak256 it?
+    // Actually, `uri_parser` said `task_type` defaults to "events".
+    // So `keccak256("events")` is likely.
+    pub config: String, // The URI string
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct BridgeConfig {
+    pub deploy: bool,
+
+    #[serde(rename = "trustedBridge")]
+    pub trusted_bridge: String, // address
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JWKInitParams {
-    pub issuers: Vec<String>,  // hex-encoded bytes
+    pub issuers: Vec<String>, // hex-encoded bytes
     pub jwks: Vec<Vec<RSA_JWK_Json>>,
 }
 
@@ -155,24 +195,24 @@ pub struct RSA_JWK_Json {
 pub struct InitialValidator {
     pub operator: String,
     pub owner: String,
-    
+
     #[serde(rename = "stakeAmount")]
     pub stake_amount: String,
-    
+
     pub moniker: String,
-    
+
     #[serde(rename = "consensusPubkey")]
-    pub consensus_pubkey: String,  // hex bytes
-    
+    pub consensus_pubkey: String, // hex bytes
+
     #[serde(rename = "consensusPop")]
-    pub consensus_pop: String,  // hex bytes
-    
+    pub consensus_pop: String, // hex bytes
+
     #[serde(rename = "networkAddresses")]
-    pub network_addresses: String,  // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
-    
+    pub network_addresses: String, // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
+
     #[serde(rename = "fullnodeAddresses")]
-    pub fullnode_addresses: String,  // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
-    
+    pub fullnode_addresses: String, // human-readable format: /ip4/127.0.0.1/tcp/2024/noise-ik/.../handshake/0
+
     #[serde(rename = "votingPower")]
     pub voting_power: String,
 }
@@ -190,36 +230,50 @@ sol! {
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
     }
-    
+
     struct SolStakingConfigParams {
         uint256 minimumStake;
         uint64 lockupDurationMicros;
         uint64 unbondingDelayMicros;
         uint256 minimumProposalStake;
     }
-    
+
     struct SolGovernanceConfigParams {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
     }
-    
+
     struct SolConfigV2Data {
         uint128 secrecyThreshold;
         uint128 reconstructionThreshold;
         uint128 fastPathSecrecyThreshold;
     }
-    
+
     struct SolRandomnessConfigData {
         uint8 variant;
         SolConfigV2Data configV2;
     }
-    
+
+    struct SolOracleTaskParams {
+        uint32 sourceType;
+        uint256 sourceId;
+        bytes32 taskName;
+        bytes config;
+    }
+
+    struct SolBridgeConfig {
+        bool deploy;
+        address trustedBridge;
+    }
+
     struct SolOracleInitParams {
         uint32[] sourceTypes;
         address[] callbacks;
+        SolOracleTaskParams[] tasks;
+        SolBridgeConfig bridgeConfig;
     }
-    
+
     struct SolRSA_JWK {
         string kid;
         string kty;
@@ -227,12 +281,12 @@ sol! {
         string e;
         string n;
     }
-    
+
     struct SolJWKInitParams {
         bytes[] issuers;
         SolRSA_JWK[][] jwks;
     }
-    
+
     struct SolInitialValidator {
         address operator;
         address owner;
@@ -244,7 +298,7 @@ sol! {
         bytes fullnodeAddresses;
         uint256 votingPower;
     }
-    
+
     struct SolGenesisInitParams {
         SolValidatorConfigParams validatorConfig;
         SolStakingConfigParams stakingConfig;
@@ -258,7 +312,7 @@ sol! {
         SolJWKInitParams jwkConfig;
         SolInitialValidator[] validators;
     }
-    
+
     contract Genesis {
         function initialize(SolGenesisInitParams calldata params) external payable;
     }
@@ -269,15 +323,18 @@ sol! {
 // ============================================================================
 
 fn parse_u256(s: &str) -> U256 {
-    s.parse::<U256>().expect(&format!("Invalid U256 string: {}", s))
+    s.parse::<U256>()
+        .expect(&format!("Invalid U256 string: {}", s))
 }
 
 fn parse_u128(s: &str) -> u128 {
-    s.parse::<u128>().expect(&format!("Invalid u128 string: {}", s))
+    s.parse::<u128>()
+        .expect(&format!("Invalid u128 string: {}", s))
 }
 
 fn parse_address(s: &str) -> Address {
-    s.parse::<Address>().expect(&format!("Invalid address: {}", s))
+    s.parse::<Address>()
+        .expect(&format!("Invalid address: {}", s))
 }
 
 fn parse_hex_bytes(s: &str) -> Vec<u8> {
@@ -304,7 +361,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         votingPowerIncreaseLimitPct: config.validator_config.voting_power_increase_limit_pct,
         maxValidatorSetSize: parse_u256(&config.validator_config.max_validator_set_size),
     };
-    
+
     // Convert StakingConfig
     let staking_config = SolStakingConfigParams {
         minimumStake: parse_u256(&config.staking_config.minimum_stake),
@@ -312,40 +369,93 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         unbondingDelayMicros: config.staking_config.unbonding_delay_micros,
         minimumProposalStake: parse_u256(&config.staking_config.minimum_proposal_stake),
     };
-    
+
     // Convert GovernanceConfig
     let governance_config = SolGovernanceConfigParams {
         minVotingThreshold: parse_u128(&config.governance_config.min_voting_threshold),
         requiredProposerStake: parse_u256(&config.governance_config.required_proposer_stake),
         votingDurationMicros: config.governance_config.voting_duration_micros,
     };
-    
+
     // Convert RandomnessConfig
     let randomness_config = SolRandomnessConfigData {
         variant: config.randomness_config.variant,
         configV2: SolConfigV2Data {
             secrecyThreshold: config.randomness_config.config_v2.secrecy_threshold,
             reconstructionThreshold: config.randomness_config.config_v2.reconstruction_threshold,
-            fastPathSecrecyThreshold: config.randomness_config.config_v2.fast_path_secrecy_threshold,
+            fastPathSecrecyThreshold: config
+                .randomness_config
+                .config_v2
+                .fast_path_secrecy_threshold,
         },
     };
-    
+
     // Convert OracleConfig
     let oracle_config = SolOracleInitParams {
         sourceTypes: config.oracle_config.source_types.clone(),
-        callbacks: config.oracle_config.callbacks.iter()
+        callbacks: config
+            .oracle_config
+            .callbacks
+            .iter()
             .map(|s| parse_address(s))
             .collect(),
+        tasks: config
+            .oracle_config
+            .tasks
+            .iter()
+            .map(|t| {
+                // Handle taskName: if it starts with 0x, parse as bytes32, else keccak256 hash of string
+                let task_name_bytes = if t.task_name.starts_with("0x") {
+                    let s = t.task_name.strip_prefix("0x").unwrap();
+                    let bytes = hex::decode(s).expect("Invalid hex for taskName");
+                    let mut b32 = [0u8; 32];
+                    if bytes.len() > 32 {
+                        panic!("taskName hex too long");
+                    }
+                    b32[..bytes.len()].copy_from_slice(&bytes);
+                    b32
+                } else {
+                    use tiny_keccak::{Hasher, Keccak};
+                    let mut hasher = Keccak::v256();
+                    let mut output = [0u8; 32];
+                    hasher.update(t.task_name.as_bytes());
+                    hasher.finalize(&mut output);
+                    output
+                };
+
+                SolOracleTaskParams {
+                    sourceType: t.source_type,
+                    sourceId: U256::from(t.source_id),
+                    taskName: task_name_bytes.into(),
+                    config: t.config.as_bytes().to_vec().into(), // encode string as bytes
+                }
+            })
+            .collect(),
+        bridgeConfig: SolBridgeConfig {
+            deploy: config.oracle_config.bridge_config.deploy,
+            trustedBridge: if config.oracle_config.bridge_config.trusted_bridge.is_empty() {
+                Address::ZERO
+            } else {
+                parse_address(&config.oracle_config.bridge_config.trusted_bridge)
+            },
+        },
     };
-    
+
     // Convert JWKConfig
     let jwk_config = SolJWKInitParams {
-        issuers: config.jwk_config.issuers.iter()
+        issuers: config
+            .jwk_config
+            .issuers
+            .iter()
             .map(|s| parse_hex_bytes(s).into())
             .collect(),
-        jwks: config.jwk_config.jwks.iter()
+        jwks: config
+            .jwk_config
+            .jwks
+            .iter()
             .map(|provider_jwks| {
-                provider_jwks.iter()
+                provider_jwks
+                    .iter()
                     .map(|jwk| SolRSA_JWK {
                         kid: jwk.kid.clone(),
                         kty: jwk.kty.clone(),
@@ -357,9 +467,11 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
             })
             .collect(),
     };
-    
+
     // Convert Validators
-    let validators: Vec<SolInitialValidator> = config.validators.iter()
+    let validators: Vec<SolInitialValidator> = config
+        .validators
+        .iter()
         .map(|v| SolInitialValidator {
             operator: parse_address(&v.operator),
             owner: parse_address(&v.owner),
@@ -373,7 +485,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
             votingPower: parse_u256(&v.voting_power),
         })
         .collect();
-    
+
     SolGenesisInitParams {
         validatorConfig: validator_config,
         stakingConfig: staking_config,
@@ -391,7 +503,9 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
 
 /// Calculate total stake amount needed for Genesis.initialize (payable)
 pub fn calculate_total_stake(config: &GenesisConfig) -> U256 {
-    config.validators.iter()
+    config
+        .validators
+        .iter()
         .map(|v| parse_u256(&v.stake_amount))
         .fold(U256::ZERO, |acc, stake| acc + stake)
 }
@@ -399,7 +513,7 @@ pub fn calculate_total_stake(config: &GenesisConfig) -> U256 {
 pub fn call_genesis_initialize(genesis_address: Address, config: &GenesisConfig) -> TxEnv {
     let sol_params = convert_config_to_sol(config);
     let total_stake = calculate_total_stake(config);
-    
+
     info!("=== Genesis Initialize Parameters ===");
     info!("Genesis address: {:?}", genesis_address);
     info!("Total stake value: {} wei", total_stake);
@@ -407,15 +521,16 @@ pub fn call_genesis_initialize(genesis_address: Address, config: &GenesisConfig)
     info!("Epoch interval: {} micros", config.epoch_interval_micros);
     info!("Major version: {}", config.major_version);
     info!("Randomness variant: {}", config.randomness_config.variant);
-    info!("Oracle source types: {:?}", config.oracle_config.source_types);
+    info!(
+        "Oracle source types: {:?}",
+        config.oracle_config.source_types
+    );
     info!("JWK issuers count: {}", config.jwk_config.issuers.len());
-    
-    let call_data = Genesis::initializeCall {
-        params: sol_params,
-    }.abi_encode();
-    
+
+    let call_data = Genesis::initializeCall { params: sol_params }.abi_encode();
+
     info!("Call data length: {}", call_data.len());
-    
+
     // Genesis.initialize is payable - need to send total stake amount
     new_system_call_txn_with_value(genesis_address, call_data.into(), total_stake)
 }
@@ -436,7 +551,7 @@ sol! {
             bytes networkAddresses;
             bytes fullnodeAddresses;
         }
-        
+
         function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
     }
 }
@@ -448,12 +563,13 @@ pub fn call_get_active_validators() -> TxEnv {
 
 pub fn print_active_validators_result(result: &ExecutionResult, config: &GenesisConfig) {
     handle_execution_result(result, "getActiveValidators", |output_bytes| {
-        let decoded = IValidatorManagement::getActiveValidatorsCall::abi_decode_returns(output_bytes, false)
-            .expect("Failed to decode getActiveValidators result");
-        
+        let decoded =
+            IValidatorManagement::getActiveValidatorsCall::abi_decode_returns(output_bytes, false)
+                .expect("Failed to decode getActiveValidators result");
+
         let validators = &decoded._0;
         info!("Active validators count: {}", validators.len());
-        
+
         // Validate against config
         if validators.len() != config.validators.len() {
             error!(
@@ -463,19 +579,29 @@ pub fn print_active_validators_result(result: &ExecutionResult, config: &Genesis
             );
             return;
         }
-        
+
         for (i, validator) in validators.iter().enumerate() {
             // Derive account address from consensus pubkey using SHA3-256
-            let account_address = derive_account_address_from_consensus_pubkey(&validator.consensusPubkey);
-            
+            let account_address =
+                derive_account_address_from_consensus_pubkey(&validator.consensusPubkey);
+
             info!("--- Validator {} ---", i + 1);
             info!("  ETH Address: {:?}", validator.validator);
-            info!("  Account Address (from consensus pubkey): 0x{}", hex::encode(account_address));
-            info!("  Consensus Pubkey: 0x{}", hex::encode(&validator.consensusPubkey));
+            info!(
+                "  Account Address (from consensus pubkey): 0x{}",
+                hex::encode(account_address)
+            );
+            info!(
+                "  Consensus Pubkey: 0x{}",
+                hex::encode(&validator.consensusPubkey)
+            );
             info!("  Index: {}", validator.validatorIndex);
             info!("  Voting Power: {}", validator.votingPower);
         }
-        
-        info!("🎉 All {} validators initialized successfully!", validators.len());
+
+        info!(
+            "🎉 All {} validators initialized successfully!",
+            validators.len()
+        );
     });
 }

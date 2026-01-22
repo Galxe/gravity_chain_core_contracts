@@ -420,4 +420,167 @@ contract OracleTaskConfigTest is Test {
         assertFalse(taskConfig.hasTask(sourceType1, sourceId1, TASK_EVENTS));
         assertTrue(taskConfig.hasTask(sourceType2, sourceId2, TASK_EVENTS));
     }
+
+    // ========================================================================
+    // SOURCE ENUMERATION TESTS
+    // ========================================================================
+
+    function test_GetSourceTypes_Empty() public view {
+        uint32[] memory sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 0);
+    }
+
+    function test_GetSourceTypes() public {
+        bytes memory config = abi.encode("config");
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, 0, TASK_EVENTS, config);
+        vm.stopPrank();
+
+        uint32[] memory sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 2);
+
+        // Check both source types are present
+        bool hasBlockchain = false;
+        bool hasJwk = false;
+        for (uint256 i = 0; i < sourceTypes.length; i++) {
+            if (sourceTypes[i] == SOURCE_TYPE_BLOCKCHAIN) hasBlockchain = true;
+            if (sourceTypes[i] == SOURCE_TYPE_JWK) hasJwk = true;
+        }
+        assertTrue(hasBlockchain);
+        assertTrue(hasJwk);
+    }
+
+    function test_GetSourceIds() public {
+        bytes memory config = abi.encode("config");
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ARBITRUM_SOURCE_ID, TASK_EVENTS, config);
+        vm.stopPrank();
+
+        uint256[] memory sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(sourceIds.length, 2);
+
+        // Check both source IDs are present
+        bool hasEthereum = false;
+        bool hasArbitrum = false;
+        for (uint256 i = 0; i < sourceIds.length; i++) {
+            if (sourceIds[i] == ETHEREUM_SOURCE_ID) hasEthereum = true;
+            if (sourceIds[i] == ARBITRUM_SOURCE_ID) hasArbitrum = true;
+        }
+        assertTrue(hasEthereum);
+        assertTrue(hasArbitrum);
+    }
+
+    function test_GetSourceIds_Empty() public view {
+        uint256[] memory sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(sourceIds.length, 0);
+    }
+
+    function test_GetAllTasks() public {
+        bytes memory ethConfig = abi.encode("ethereum config");
+        bytes memory arbConfig = abi.encode("arbitrum config");
+        bytes memory jwkConfig = abi.encode("jwk config");
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, ethConfig);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ARBITRUM_SOURCE_ID, TASK_STATE_ROOTS, arbConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, 0, TASK_EVENTS, jwkConfig);
+        vm.stopPrank();
+
+        IOracleTaskConfig.FullTaskInfo[] memory tasks = taskConfig.getAllTasks();
+        assertEq(tasks.length, 3);
+
+        // Verify all tasks are present
+        bool foundEth = false;
+        bool foundArb = false;
+        bool foundJwk = false;
+        for (uint256 i = 0; i < tasks.length; i++) {
+            if (tasks[i].sourceType == SOURCE_TYPE_BLOCKCHAIN && tasks[i].sourceId == ETHEREUM_SOURCE_ID) {
+                foundEth = true;
+                assertEq(tasks[i].taskName, TASK_EVENTS);
+                assertEq(tasks[i].config, ethConfig);
+            }
+            if (tasks[i].sourceType == SOURCE_TYPE_BLOCKCHAIN && tasks[i].sourceId == ARBITRUM_SOURCE_ID) {
+                foundArb = true;
+                assertEq(tasks[i].taskName, TASK_STATE_ROOTS);
+                assertEq(tasks[i].config, arbConfig);
+            }
+            if (tasks[i].sourceType == SOURCE_TYPE_JWK && tasks[i].sourceId == 0) {
+                foundJwk = true;
+                assertEq(tasks[i].taskName, TASK_EVENTS);
+                assertEq(tasks[i].config, jwkConfig);
+            }
+        }
+        assertTrue(foundEth);
+        assertTrue(foundArb);
+        assertTrue(foundJwk);
+    }
+
+    function test_GetAllTasks_Empty() public view {
+        IOracleTaskConfig.FullTaskInfo[] memory tasks = taskConfig.getAllTasks();
+        assertEq(tasks.length, 0);
+    }
+
+    function test_SourceEnumeration_CleanupOnRemove() public {
+        bytes memory config = abi.encode("config");
+
+        // Add two tasks to same source
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
+        vm.stopPrank();
+
+        // Verify source is registered
+        uint32[] memory sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 1);
+        uint256[] memory sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(sourceIds.length, 1);
+
+        // Remove first task - source should still be registered
+        vm.prank(governance);
+        taskConfig.removeTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS);
+
+        sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 1);
+        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(sourceIds.length, 1);
+
+        // Remove second task - source should be cleaned up
+        vm.prank(governance);
+        taskConfig.removeTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS);
+
+        sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 0);
+        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        assertEq(sourceIds.length, 0);
+    }
+
+    function test_SourceEnumeration_MultipleSourceTypes() public {
+        bytes memory config = abi.encode("config");
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, 0, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_DNS, 1, TASK_EVENTS, config);
+        vm.stopPrank();
+
+        uint32[] memory sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 3);
+
+        // Remove JWK task - only JWK sourceType should be removed
+        vm.prank(governance);
+        taskConfig.removeTask(SOURCE_TYPE_JWK, 0, TASK_EVENTS);
+
+        sourceTypes = taskConfig.getSourceTypes();
+        assertEq(sourceTypes.length, 2);
+
+        // Verify JWK is no longer in source types
+        for (uint256 i = 0; i < sourceTypes.length; i++) {
+            assertTrue(sourceTypes[i] != SOURCE_TYPE_JWK);
+        }
+    }
 }
+

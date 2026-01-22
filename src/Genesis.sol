@@ -23,6 +23,8 @@ import { Reconfiguration } from "./blocker/Reconfiguration.sol";
 import { Blocker } from "./blocker/Blocker.sol";
 import { NativeOracle } from "./oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "./oracle/jwk/JWKManager.sol";
+import { OracleTaskConfig } from "./oracle/OracleTaskConfig.sol";
+import { GBridgeReceiver } from "./oracle/evm/native_token_bridge/GBridgeReceiver.sol";
 
 /// @title Genesis
 /// @author Gravity Team
@@ -55,9 +57,23 @@ contract Genesis {
         uint64 votingDurationMicros;
     }
 
+    struct OracleTaskParams {
+        uint32 sourceType;
+        uint256 sourceId;
+        bytes32 taskName;
+        bytes config;
+    }
+
+    struct BridgeConfig {
+        bool deploy;
+        address trustedBridge;
+    }
+
     struct OracleInitParams {
         uint32[] sourceTypes;
         address[] callbacks;
+        OracleTaskParams[] tasks;
+        BridgeConfig bridgeConfig;
     }
 
     struct JWKInitParams {
@@ -195,12 +211,44 @@ contract Genesis {
         OracleInitParams calldata oracleConfig,
         JWKInitParams calldata jwkConfig
     ) internal {
-        if (oracleConfig.sourceTypes.length > 0) {
-            NativeOracle(SystemAddresses.NATIVE_ORACLE).initialize(oracleConfig.sourceTypes, oracleConfig.callbacks);
+        // Collect sourceTypes and callbacks
+        uint256 length = oracleConfig.sourceTypes.length;
+        uint32[] memory sourceTypes;
+        address[] memory callbacks;
+
+        if (oracleConfig.bridgeConfig.deploy) {
+            // Deploy GBridgeReceiver
+            GBridgeReceiver receiver = new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge);
+
+            // Construct new arrays with extra slot for GBridgeReceiver (sourceType=0)
+            sourceTypes = new uint32[](length + 1);
+            callbacks = new address[](length + 1);
+
+            for (uint256 i = 0; i < length; i++) {
+                sourceTypes[i] = oracleConfig.sourceTypes[i];
+                callbacks[i] = oracleConfig.callbacks[i];
+            }
+
+            sourceTypes[length] = 0; // Blockchain Events
+            callbacks[length] = address(receiver);
+        } else {
+            sourceTypes = oracleConfig.sourceTypes;
+            callbacks = oracleConfig.callbacks;
+        }
+
+        if (sourceTypes.length > 0) {
+            NativeOracle(SystemAddresses.NATIVE_ORACLE).initialize(sourceTypes, callbacks);
         }
 
         if (jwkConfig.issuers.length > 0) {
             JWKManager(SystemAddresses.JWK_MANAGER).initialize(jwkConfig.issuers, jwkConfig.jwks);
+        }
+
+        // Set Tasks
+        for (uint256 i = 0; i < oracleConfig.tasks.length; i++) {
+            OracleTaskParams calldata task = oracleConfig.tasks[i];
+            OracleTaskConfig(SystemAddresses.ORACLE_TASK_CONFIG)
+                .setTask(task.sourceType, task.sourceId, task.taskName, task.config);
         }
     }
 

@@ -108,7 +108,9 @@ contract GenesisTest is Test {
         sourceTypes[0] = 1;
         address[] memory callbacks = new address[](1);
         callbacks[0] = SystemAddresses.JWK_MANAGER;
-        params.oracleConfig = Genesis.OracleInitParams(sourceTypes, callbacks);
+        Genesis.OracleTaskParams[] memory tasks = new Genesis.OracleTaskParams[](0);
+        Genesis.BridgeConfig memory bridgeConfig = Genesis.BridgeConfig(false, address(0));
+        params.oracleConfig = Genesis.OracleInitParams(sourceTypes, callbacks, tasks, bridgeConfig);
 
         // JWK Config
         bytes[] memory issuers = new bytes[](1);

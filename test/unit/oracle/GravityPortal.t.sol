@@ -67,7 +67,7 @@ contract GravityPortalTest is Test {
         vm.prank(alice);
         uint128 nonce = portal.send{ value: fee }(message);
 
-        assertEq(nonce, 0);
+        assertEq(nonce, 1);
         assertEq(portal.nonce(), 1);
     }
 
@@ -76,11 +76,11 @@ contract GravityPortalTest is Test {
         uint256 fee = portal.calculateFee(message.length);
 
         // Build expected encoded payload
-        bytes memory expectedPayload = PortalMessage.encode(alice, 0, message);
+        bytes memory expectedPayload = PortalMessage.encode(alice, 1, message);
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IGravityPortal.MessageSent(0, expectedPayload);
+        emit IGravityPortal.MessageSent(1, expectedPayload);
         portal.send{ value: fee }(message);
     }
 
@@ -89,9 +89,9 @@ contract GravityPortalTest is Test {
         uint256 fee = portal.calculateFee(message.length);
 
         vm.startPrank(alice);
-        assertEq(portal.send{ value: fee }(message), 0);
         assertEq(portal.send{ value: fee }(message), 1);
         assertEq(portal.send{ value: fee }(message), 2);
+        assertEq(portal.send{ value: fee }(message), 3);
         vm.stopPrank();
 
         assertEq(portal.nonce(), 3);
@@ -365,7 +365,7 @@ contract GravityPortalTest is Test {
         vm.prank(alice);
         uint128 nonce = portal.send{ value: requiredFee + extraFee }(message);
 
-        assertEq(nonce, 0);
+        assertEq(nonce, 1);
         assertGe(address(portal).balance, requiredFee);
     }
 
@@ -403,7 +403,7 @@ contract GravityPortalTest is Test {
         // Verify event topics
         // topic[0] is the event signature
         // topic[1] is indexed nonce
-        assertEq(entries[0].topics[1], bytes32(uint256(0)), "First message nonce should be 0");
+        assertEq(entries[0].topics[1], bytes32(uint256(1)), "First message nonce should be 1");
 
         // Verify event data (encoded payload)
         bytes memory emittedPayload = abi.decode(entries[0].data, (bytes));
@@ -413,7 +413,7 @@ contract GravityPortalTest is Test {
             PortalMessage.decode(emittedPayload);
 
         assertEq(decodedSender, sender, "Sender should match");
-        assertEq(decodedNonce, 0, "First message nonce should be 0");
+        assertEq(decodedNonce, 1, "First message nonce should be 1");
         assertEq(keccak256(decodedMessage), keccak256(message), "Message should match");
     }
 }

@@ -17,6 +17,7 @@ contract NativeOracle is INativeOracle {
     // STATE
     // ========================================================================
 
+    // TODO: refactor? how to upgrade
     /// @notice Data records: sourceType -> sourceId -> nonce -> DataRecord
     mapping(uint32 => mapping(uint256 => mapping(uint128 => DataRecord))) private _records;
 

@@ -120,4 +120,33 @@ interface IOracleTaskConfig {
         uint256 sourceId,
         uint256 index
     ) external view returns (bytes32 taskName);
+
+    // ========================================================================
+    // SOURCE ENUMERATION
+    // ========================================================================
+
+    /// @notice Full task information for batch queries
+    struct FullTaskInfo {
+        uint32 sourceType;
+        uint256 sourceId;
+        bytes32 taskName;
+        bytes config;
+        uint64 updatedAt;
+    }
+
+    /// @notice Get all registered source types
+    /// @return sourceTypes Array of source types that have at least one task
+    function getSourceTypes() external view returns (uint32[] memory sourceTypes);
+
+    /// @notice Get all registered source IDs for a given source type
+    /// @param sourceType The source type
+    /// @return sourceIds Array of source IDs that have at least one task
+    function getSourceIds(
+        uint32 sourceType
+    ) external view returns (uint256[] memory sourceIds);
+
+    /// @notice Get all tasks across all sources
+    /// @dev Use with caution - may be expensive for large task sets
+    /// @return tasks Array of all task information
+    function getAllTasks() external view returns (FullTaskInfo[] memory tasks);
 }
