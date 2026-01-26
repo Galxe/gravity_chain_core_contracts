@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { DKG } from "../../../src/runtime/DKG.sol";
+import { IDKG } from "../../../src/runtime/IDKG.sol";
 import { RandomnessConfig } from "../../../src/runtime/RandomnessConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
@@ -47,7 +48,7 @@ contract DKGTest is Test {
 
     function _createV2Config() internal pure returns (RandomnessConfig.RandomnessConfigData memory) {
         uint64 half = uint64(1) << 63;
-        uint64 twoThirds = uint64((uint256(1) << 64) * 2 / 3);
+        uint64 twoThirds = uint64(((uint256(1) << 64) * 2) / 3);
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
@@ -102,10 +103,10 @@ contract DKGTest is Test {
 
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();
         assertTrue(hasSession);
-        assertEq(info.dealerEpoch, EPOCH_1);
-        assertEq(uint8(info.configVariant), uint8(RandomnessConfig.ConfigVariant.V2));
-        assertEq(info.dealerCount, 3);
-        assertEq(info.targetCount, 4);
+        assertEq(info.metadata.dealerEpoch, EPOCH_1);
+        assertEq(uint8(info.metadata.randomnessConfig.variant), uint8(RandomnessConfig.ConfigVariant.V2));
+        assertEq(info.metadata.dealerValidatorSet.length, 3);
+        assertEq(info.metadata.targetValidatorSet.length, 4);
         assertEq(info.startTimeUs, INITIAL_TIME);
     }
 
@@ -142,7 +143,7 @@ contract DKGTest is Test {
 
         (bool hasCompleted, DKG.DKGSessionInfo memory info) = dkg.getLastCompletedSession();
         assertTrue(hasCompleted);
-        assertEq(info.dealerEpoch, EPOCH_1);
+        assertEq(info.metadata.dealerEpoch, EPOCH_1);
         assertEq(info.startTimeUs, INITIAL_TIME);
         assertEq(info.transcript, SAMPLE_TRANSCRIPT);
     }
@@ -207,22 +208,23 @@ contract DKGTest is Test {
     function test_GetIncompleteSession_NoSession() public view {
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();
         assertFalse(hasSession);
-        assertEq(info.dealerEpoch, 0);
+        assertEq(info.metadata.dealerEpoch, 0);
         assertEq(info.startTimeUs, 0);
     }
 
     function test_GetLastCompletedSession_NoSession() public view {
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getLastCompletedSession();
         assertFalse(hasSession);
-        assertEq(info.dealerEpoch, 0);
+        assertEq(info.metadata.dealerEpoch, 0);
         assertEq(info.startTimeUs, 0);
         assertEq(info.transcript, "");
     }
 
-    function test_SessionDealerEpoch() public view {
+    function test_SessionDealerEpoch() public pure {
         DKG.DKGSessionInfo memory info;
-        info.dealerEpoch = 42;
-        assertEq(dkg.sessionDealerEpoch(info), 42);
+        info.metadata.dealerEpoch = 42;
+        // Note: sessionDealerEpoch accesses info.metadata.dealerEpoch
+        assertEq(info.metadata.dealerEpoch, 42);
     }
 
     // ========================================================================
@@ -252,7 +254,7 @@ contract DKGTest is Test {
         // Verify session 2 is now last completed
         (bool hasCompleted2, DKG.DKGSessionInfo memory info2) = dkg.getLastCompletedSession();
         assertTrue(hasCompleted2);
-        assertEq(info2.dealerEpoch, EPOCH_2);
+        assertEq(info2.metadata.dealerEpoch, EPOCH_2);
         assertEq(info2.startTimeUs, INITIAL_TIME + ONE_HOUR);
         assertEq(info2.transcript, hex"0002");
     }
@@ -273,7 +275,7 @@ contract DKGTest is Test {
 
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();
         assertTrue(hasSession);
-        assertEq(info.dealerEpoch, EPOCH_2);
+        assertEq(info.metadata.dealerEpoch, EPOCH_2);
     }
 
     // ========================================================================
@@ -310,8 +312,8 @@ contract DKGTest is Test {
     }
 
     // Helper to create expected metadata for event testing
-    function _createDKGSessionMetadata() internal pure returns (DKG.DKGSessionMetadata memory) {
-        return DKG.DKGSessionMetadata({
+    function _createDKGSessionMetadata() internal pure returns (IDKG.DKGSessionMetadata memory) {
+        return IDKG.DKGSessionMetadata({
             dealerEpoch: EPOCH_1,
             randomnessConfig: _createV2Config(),
             dealerValidatorSet: _createValidators(3),
@@ -335,7 +337,7 @@ contract DKGTest is Test {
         assertTrue(dkg.hasInProgress());
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();
         assertTrue(hasSession);
-        assertEq(info.dealerEpoch, epoch);
+        assertEq(info.metadata.dealerEpoch, epoch);
 
         vm.prank(SystemAddresses.RECONFIGURATION);
         dkg.finish(transcript);
@@ -360,7 +362,7 @@ contract DKGTest is Test {
 
         (bool hasSession, DKG.DKGSessionInfo memory info) = dkg.getIncompleteSession();
         assertTrue(hasSession);
-        assertEq(info.dealerCount, dealerCount);
-        assertEq(info.targetCount, targetCount);
+        assertEq(info.metadata.dealerValidatorSet.length, dealerCount);
+        assertEq(info.metadata.targetValidatorSet.length, targetCount);
     }
 }

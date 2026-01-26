@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
-import {ValidatorConsensusInfo} from "../foundation/Types.sol";
-import {RandomnessConfig} from "./RandomnessConfig.sol";
-import {IDKG} from "./IDKG.sol";
-import {ITimestamp} from "./ITimestamp.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
+import { ValidatorConsensusInfo } from "../foundation/Types.sol";
+import { RandomnessConfig } from "./RandomnessConfig.sol";
+import { IDKG } from "./IDKG.sol";
+import { ITimestamp } from "./ITimestamp.sol";
 
 /// @title DKG
 /// @author Gravity Team
@@ -44,11 +44,7 @@ contract DKG is IDKG {
     /// @param dealerEpoch Epoch of the dealer validators
     /// @param startTimeUs When the session started (microseconds)
     /// @param metadata Full session metadata for consensus engine
-    event DKGStartEvent(
-        uint64 indexed dealerEpoch,
-        uint64 startTimeUs,
-        IDKG.DKGSessionMetadata metadata
-    );
+    event DKGStartEvent(uint64 indexed dealerEpoch, uint64 startTimeUs, IDKG.DKGSessionMetadata metadata);
 
     /// @notice Emitted when a DKG session completes
     /// @param dealerEpoch Epoch of the dealer validators
@@ -109,7 +105,9 @@ contract DKG is IDKG {
     /// @notice Complete a DKG session with the generated transcript
     /// @dev Called by RECONFIGURATION after DKG completes off-chain
     /// @param transcript The DKG transcript from consensus engine
-    function finish(bytes calldata transcript) external override {
+    function finish(
+        bytes calldata transcript
+    ) external override {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
         if (!hasInProgress) {
@@ -159,12 +157,7 @@ contract DKG is IDKG {
     /// @notice Get the incomplete session info if any
     /// @return hasSession Whether an in-progress session exists
     /// @return info Session info (only valid if hasSession is true)
-    function getIncompleteSession()
-        external
-        view
-        override
-        returns (bool hasSession, IDKG.DKGSessionInfo memory info)
-    {
+    function getIncompleteSession() external view override returns (bool hasSession, IDKG.DKGSessionInfo memory info) {
         if (hasInProgress) {
             return (true, _inProgress);
         }

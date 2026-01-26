@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {SystemAddresses} from "../foundation/SystemAddresses.sol";
-import {requireAllowed} from "../foundation/SystemAccessControl.sol";
-import {Errors} from "../foundation/Errors.sol";
+import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 
 /// @title RandomnessConfig
 /// @author Gravity Team
@@ -69,10 +69,7 @@ contract RandomnessConfig {
     /// @notice Emitted when configuration is applied at epoch boundary
     /// @param oldVariant Previous configuration variant
     /// @param newVariant New configuration variant
-    event RandomnessConfigUpdated(
-        ConfigVariant indexed oldVariant,
-        ConfigVariant indexed newVariant
-    );
+    event RandomnessConfigUpdated(ConfigVariant indexed oldVariant, ConfigVariant indexed newVariant);
 
     /// @notice Emitted when pending configuration is set by governance
     /// @param variant The pending configuration variant
@@ -88,7 +85,9 @@ contract RandomnessConfig {
     /// @notice Initialize the randomness configuration
     /// @dev Can only be called once by GENESIS
     /// @param config Initial configuration
-    function initialize(RandomnessConfigData calldata config) external {
+    function initialize(
+        RandomnessConfigData calldata config
+    ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
         if (_initialized) {
@@ -116,11 +115,7 @@ contract RandomnessConfig {
 
     /// @notice Get current active configuration
     /// @return Current configuration data
-    function getCurrentConfig()
-        external
-        view
-        returns (RandomnessConfigData memory)
-    {
+    function getCurrentConfig() external view returns (RandomnessConfigData memory) {
         _requireInitialized();
         return _currentConfig;
     }
@@ -128,11 +123,7 @@ contract RandomnessConfig {
     /// @notice Get pending configuration if any
     /// @return hasPending Whether a pending config exists
     /// @return config The pending configuration (only valid if hasPending is true)
-    function getPendingConfig()
-        external
-        view
-        returns (bool hasPending, RandomnessConfigData memory config)
-    {
+    function getPendingConfig() external view returns (bool hasPending, RandomnessConfigData memory config) {
         _requireInitialized();
         return (hasPendingConfig, _pendingConfig);
     }
@@ -150,7 +141,9 @@ contract RandomnessConfig {
     /// @notice Set configuration for next epoch
     /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
     /// @param newConfig New configuration to apply at next epoch
-    function setForNextEpoch(RandomnessConfigData calldata newConfig) external {
+    function setForNextEpoch(
+        RandomnessConfigData calldata newConfig
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
@@ -196,11 +189,7 @@ contract RandomnessConfig {
     /// @notice Create an Off configuration (randomness disabled)
     /// @return Configuration with Off variant
     function newOff() external pure returns (RandomnessConfigData memory) {
-        return
-            RandomnessConfigData({
-                variant: ConfigVariant.Off,
-                configV2: ConfigV2Data(0, 0, 0)
-            });
+        return RandomnessConfigData({ variant: ConfigVariant.Off, configV2: ConfigV2Data(0, 0, 0) });
     }
 
     /// @notice Create a V2 configuration with thresholds
@@ -213,15 +202,14 @@ contract RandomnessConfig {
         uint128 reconstructionThreshold,
         uint128 fastPathSecrecyThreshold
     ) external pure returns (RandomnessConfigData memory) {
-        return
-            RandomnessConfigData({
-                variant: ConfigVariant.V2,
-                configV2: ConfigV2Data({
-                    secrecyThreshold: secrecyThreshold,
-                    reconstructionThreshold: reconstructionThreshold,
-                    fastPathSecrecyThreshold: fastPathSecrecyThreshold
-                })
-            });
+        return RandomnessConfigData({
+            variant: ConfigVariant.V2,
+            configV2: ConfigV2Data({
+                secrecyThreshold: secrecyThreshold,
+                reconstructionThreshold: reconstructionThreshold,
+                fastPathSecrecyThreshold: fastPathSecrecyThreshold
+            })
+        });
     }
 
     // ========================================================================
@@ -235,13 +223,8 @@ contract RandomnessConfig {
     ) internal pure {
         if (config.variant == ConfigVariant.V2) {
             // For V2, reconstruction threshold must be >= secrecy threshold
-            if (
-                config.configV2.reconstructionThreshold <
-                config.configV2.secrecyThreshold
-            ) {
-                revert Errors.InvalidRandomnessConfig(
-                    "reconstruction must be >= secrecy"
-                );
+            if (config.configV2.reconstructionThreshold < config.configV2.secrecyThreshold) {
+                revert Errors.InvalidRandomnessConfig("reconstruction must be >= secrecy");
             }
         }
         // ConfigVariant.Off requires no validation

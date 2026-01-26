@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {RandomnessConfig} from "./RandomnessConfig.sol";
-import {ValidatorConsensusInfo} from "../foundation/Types.sol";
+import { RandomnessConfig } from "./RandomnessConfig.sol";
+import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 
 /// @title IDKG
 /// @author Gravity Team
@@ -42,7 +42,9 @@ interface IDKG {
     ) external;
 
     /// @notice Complete DKG session with transcript
-    function finish(bytes calldata transcript) external;
+    function finish(
+        bytes calldata transcript
+    ) external;
 
     /// @notice Clear incomplete session (no-op if none)
     function tryClearIncompleteSession() external;
@@ -53,16 +55,10 @@ interface IDKG {
     function isInProgress() external view returns (bool);
 
     /// @notice Get incomplete session info if any
-    function getIncompleteSession()
-        external
-        view
-        returns (bool hasSession, DKGSessionInfo memory info);
+    function getIncompleteSession() external view returns (bool hasSession, DKGSessionInfo memory info);
 
     /// @notice Get last completed session info if any
-    function getLastCompletedSession()
-        external
-        view
-        returns (bool hasSession, DKGSessionInfo memory info);
+    function getLastCompletedSession() external view returns (bool hasSession, DKGSessionInfo memory info);
 
     /// @notice Get dealer epoch from session info
     function sessionDealerEpoch(
