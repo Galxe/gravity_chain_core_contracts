@@ -8,7 +8,7 @@ This script processes account_alloc.json and ensures all hex strings
 import json
 import sys
 import argparse
-from typing import Any
+from typing import Any, Optional
 
 
 def fix_hex_length(value: str) -> str:
@@ -66,7 +66,7 @@ def process_value(value: Any) -> Any:
         return value
 
 
-def process_file(input_file: str, output_file: str | None = None) -> None:
+def process_file(input_file: str, output_file: Optional[str] = None) -> None:
     """
     Process a JSON file to fix hex string lengths.
     
