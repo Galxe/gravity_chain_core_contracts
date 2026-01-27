@@ -94,6 +94,14 @@ pub fn prepare_env() -> Env {
     let mut env = Env::default();
     env.cfg.chain_id = NamedChain::Mainnet.into();
     env.tx.gas_limit = 30_000_000;
+    // Set block.timestamp to current time so Genesis.sol's lockedUntil calculation works correctly
+    // Genesis.sol calculates: lockedUntil = block.timestamp * 1_000_000 + lockupDuration
+    env.block.timestamp = U256::from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs(),
+    );
     env
 }
 

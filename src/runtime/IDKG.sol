@@ -8,16 +8,22 @@ import { ValidatorConsensusInfo } from "../foundation/Types.sol";
 /// @author Gravity Team
 /// @notice Interface for the DKG contract
 interface IDKG {
-    /// @notice Essential DKG session info stored on-chain
-    struct DKGSessionInfo {
+    /// @notice DKG session metadata (shared with genesis contract)
+    struct DKGSessionMetadata {
         /// @notice Epoch number of the dealers (current validators)
         uint64 dealerEpoch;
-        /// @notice Randomness configuration variant
-        RandomnessConfig.ConfigVariant configVariant;
-        /// @notice Number of dealers
-        uint64 dealerCount;
-        /// @notice Number of targets
-        uint64 targetCount;
+        /// @notice Randomness configuration for this session
+        RandomnessConfig.RandomnessConfigData randomnessConfig;
+        /// @notice Current validators who will run DKG (dealers)
+        ValidatorConsensusInfo[] dealerValidatorSet;
+        /// @notice Next epoch validators who will receive keys (targets)
+        ValidatorConsensusInfo[] targetValidatorSet;
+    }
+
+    /// @notice Essential DKG session info stored on-chain
+    struct DKGSessionInfo {
+        /// @notice Session metadata
+        DKGSessionMetadata metadata;
         /// @notice When the session started (microseconds)
         uint64 startTimeUs;
         /// @notice DKG transcript (output, set on completion)
@@ -58,4 +64,15 @@ interface IDKG {
     function sessionDealerEpoch(
         DKGSessionInfo calldata info
     ) external pure returns (uint64);
+
+    /// @notice Get complete DKG state for debugging
+    function getDKGState()
+        external
+        view
+        returns (
+            DKGSessionInfo memory lastCompleted,
+            bool hasLastCompleted,
+            DKGSessionInfo memory inProgress,
+            bool hasInProgress
+        );
 }

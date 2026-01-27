@@ -119,13 +119,13 @@ pub struct RandomnessConfigData {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConfigV2Data {
     #[serde(rename = "secrecyThreshold")]
-    pub secrecy_threshold: u64,
+    pub secrecy_threshold: u128,
     
     #[serde(rename = "reconstructionThreshold")]
-    pub reconstruction_threshold: u64,
+    pub reconstruction_threshold: u128,
     
     #[serde(rename = "fastPathSecrecyThreshold")]
-    pub fast_path_secrecy_threshold: u64,
+    pub fast_path_secrecy_threshold: u128,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -205,9 +205,9 @@ sol! {
     }
     
     struct SolConfigV2Data {
-        uint64 secrecyThreshold;
-        uint64 reconstructionThreshold;
-        uint64 fastPathSecrecyThreshold;
+        uint128 secrecyThreshold;
+        uint128 reconstructionThreshold;
+        uint128 fastPathSecrecyThreshold;
     }
     
     struct SolRandomnessConfigData {

@@ -180,7 +180,7 @@ contract ConsensusEngineFlowTest is Test {
 
     function _createV2Config() internal pure returns (RandomnessConfig.RandomnessConfigData memory) {
         uint64 half = uint64(1) << 63;
-        uint64 twoThirds = uint64((uint256(1) << 64) * 2 / 3);
+        uint64 twoThirds = uint64(((uint256(1) << 64) * 2) / 3);
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
@@ -283,9 +283,9 @@ contract ConsensusEngineFlowTest is Test {
         // Verify DKG session was started
         (bool hasSession, IDKG.DKGSessionInfo memory sessionInfo) = dkg.getIncompleteSession();
         assertTrue(hasSession, "Should have in-progress DKG session");
-        assertEq(sessionInfo.dealerEpoch, 1, "DKG session epoch should match");
-        assertEq(sessionInfo.dealerCount, 2, "Should have 2 dealers");
-        assertEq(sessionInfo.targetCount, 2, "Should have 2 targets");
+        assertEq(sessionInfo.metadata.dealerEpoch, 1, "DKG session epoch should match");
+        assertEq(sessionInfo.metadata.dealerValidatorSet.length, 2, "Should have 2 dealers");
+        assertEq(sessionInfo.metadata.targetValidatorSet.length, 2, "Should have 2 targets");
 
         // Simulate consensus engine completing DKG
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
@@ -450,8 +450,8 @@ contract ConsensusEngineFlowTest is Test {
 
         (bool hasSession, IDKG.DKGSessionInfo memory sessionInfo) = dkg.getIncompleteSession();
         assertTrue(hasSession, "Should have in-progress DKG session");
-        assertEq(sessionInfo.dealerCount, 3, "DKG dealers should be 3");
-        assertEq(sessionInfo.targetCount, 3, "DKG targets should be 3");
+        assertEq(sessionInfo.metadata.dealerValidatorSet.length, 3, "DKG dealers should be 3");
+        assertEq(sessionInfo.metadata.targetValidatorSet.length, 3, "DKG targets should be 3");
     }
 
     /// @notice Test that target validators get fresh indices (0, 1, 2, ...)
@@ -773,4 +773,3 @@ contract ConsensusEngineFlowTest is Test {
         assertEq(reconfig.currentEpoch(), 4, "Should complete 3 epochs");
     }
 }
-

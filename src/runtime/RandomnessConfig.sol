@@ -29,12 +29,13 @@ contract RandomnessConfig {
     struct ConfigV2Data {
         /// @notice Minimum stake ratio to keep randomness secret
         /// @dev Any subset with power/total <= this cannot reconstruct
-        uint64 secrecyThreshold;
+        /// @dev Uses fixed-point representation (value / 2^64), stored as uint128
+        uint128 secrecyThreshold;
         /// @notice Minimum stake ratio to reveal randomness
         /// @dev Any subset with power/total > this can reconstruct
-        uint64 reconstructionThreshold;
+        uint128 reconstructionThreshold;
         /// @notice Threshold for optimistic fast path execution
-        uint64 fastPathSecrecyThreshold;
+        uint128 fastPathSecrecyThreshold;
     }
 
     /// @notice Complete randomness configuration
@@ -197,9 +198,9 @@ contract RandomnessConfig {
     /// @param fastPathSecrecyThreshold Threshold for fast path (fixed-point)
     /// @return Configuration with V2 variant
     function newV2(
-        uint64 secrecyThreshold,
-        uint64 reconstructionThreshold,
-        uint64 fastPathSecrecyThreshold
+        uint128 secrecyThreshold,
+        uint128 reconstructionThreshold,
+        uint128 fastPathSecrecyThreshold
     ) external pure returns (RandomnessConfigData memory) {
         return RandomnessConfigData({
             variant: ConfigVariant.V2,
@@ -236,4 +237,3 @@ contract RandomnessConfig {
         }
     }
 }
-

@@ -91,11 +91,11 @@ enum ConfigVariant {
 }
 
 /// @notice V2 configuration data with DKG thresholds
-/// @dev All thresholds are fixed-point values (value / 2^64)
+/// @dev All thresholds are fixed-point values (value / 2^64), stored as uint128
 struct ConfigV2Data {
-    uint64 secrecyThreshold;           // Min stake ratio to keep secret
-    uint64 reconstructionThreshold;     // Min stake ratio to reveal
-    uint64 fastPathSecrecyThreshold;   // Threshold for fast path
+    uint128 secrecyThreshold;           // Min stake ratio to keep secret
+    uint128 reconstructionThreshold;     // Min stake ratio to reveal
+    uint128 fastPathSecrecyThreshold;   // Threshold for fast path
 }
 
 /// @notice Complete randomness configuration
@@ -168,7 +168,7 @@ interface IRandomnessConfig {
     function newOff() external pure returns (RandomnessConfigData memory);
     
     /// @notice Create V2 config
-    function newV2(uint64 secrecy, uint64 reconstruction, uint64 fastPath) 
+    function newV2(uint128 secrecy, uint128 reconstruction, uint128 fastPath) 
         external pure returns (RandomnessConfigData memory);
 }
 ```
@@ -217,28 +217,23 @@ event PendingRandomnessConfigCleared();
 ### Types
 
 ```solidity
-/// @notice Essential DKG session info stored on-chain
-/// @dev Full metadata including validator sets is emitted in events only
-struct DKGSessionInfo {
-    uint64 dealerEpoch;                    // Epoch of dealers
-    ConfigVariant configVariant;           // Config variant used
-    uint64 dealerCount;                    // Number of dealers
-    uint64 targetCount;                    // Number of targets
-    uint64 startTimeUs;                    // Start timestamp (microseconds)
-    bytes transcript;                      // DKG output (set on completion)
-}
-
-/// @notice Full DKG session metadata (for events only)
-/// @dev Not stored on-chain to avoid dynamic array storage issues
+/// @notice DKG session metadata (shared with genesis contract)
 struct DKGSessionMetadata {
     uint64 dealerEpoch;                               // Epoch of dealers
     RandomnessConfigData randomnessConfig;            // Config for session
     ValidatorConsensusInfo[] dealerValidatorSet;      // Current validators
     ValidatorConsensusInfo[] targetValidatorSet;      // Next epoch validators
 }
+
+/// @notice Essential DKG session info stored on-chain
+struct DKGSessionInfo {
+    DKGSessionMetadata metadata;   // Session metadata
+    uint64 startTimeUs;            // Start timestamp (microseconds)
+    bytes transcript;              // DKG output (set on completion)
+}
 ```
 
-**Design Note**: Full validator arrays are emitted in events only (via `DKGSessionMetadata`) and not stored in contract state. This avoids Solidity storage limitations with dynamic arrays containing nested structs. The consensus engine receives full metadata from events, while the contract tracks essential info (`DKGSessionInfo`).
+**Design Note**: `DKGSessionInfo` contains a nested `DKGSessionMetadata` to keep the structure consistent with the genesis contract. The full validator arrays are stored on-chain within `metadata`.
 
 ### State Variables
 
@@ -254,20 +249,12 @@ bool public hasInProgress;
 
 /// @notice Whether a last completed session exists
 bool public hasLastCompleted;
-
-/// @notice Whether the contract has been initialized
-bool private _initialized;
 ```
 
 ### Interface
 
 ```solidity
 interface IDKG {
-    // ========== Initialization ==========
-    
-    /// @notice Initialize the DKG contract (genesis only)
-    function initialize() external;
-    
     // ========== Session Management (RECONFIGURATION only) ==========
     
     /// @notice Start a new DKG session
@@ -305,8 +292,13 @@ interface IDKG {
     /// @notice Get dealer epoch from session info
     function sessionDealerEpoch(DKGSessionInfo calldata info) external pure returns (uint64);
     
-    /// @notice Check if initialized
-    function isInitialized() external view returns (bool);
+    /// @notice Get complete DKG state for debugging
+    function getDKGState() external view returns (
+        DKGSessionInfo memory lastCompleted,
+        bool hasLastCompleted,
+        DKGSessionInfo memory inProgress,
+        bool hasInProgress
+    );
 }
 ```
 
@@ -333,7 +325,6 @@ event DKGSessionCleared(uint64 indexed dealerEpoch);
 
 | Function | Caller | Rationale |
 |----------|--------|-----------|
-| `initialize()` | GENESIS | One-time initialization |
 | `start()` | RECONFIGURATION | Start transition |
 | `finish()` | RECONFIGURATION | Complete transition |
 | `tryClearIncompleteSession()` | RECONFIGURATION | Cleanup stale sessions |
@@ -413,9 +404,6 @@ error DKGInProgress();
 
 /// @notice No DKG session is in progress
 error DKGNotInProgress();
-
-/// @notice DKG contract has not been initialized
-error DKGNotInitialized();
 ```
 
 ---
