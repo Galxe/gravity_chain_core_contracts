@@ -98,6 +98,13 @@ The `genesis-tool` generates a complete genesis configuration for the Gravity Ch
 - `output/genesis_accounts.json` — Account states
 - `output/genesis_contracts.json` — Contract bytecodes
 
+> [!IMPORTANT]
+> **Re-generate genesis.json before each test run**
+> 
+> The `lockedUntil` value in StakePool is calculated as `block.timestamp * 1_000_000 + lockupDuration`, meaning the lockup period is relative to the actual block timestamp at genesis execution time. If you reuse an old `genesis.json`, the `lockedUntil` timestamp may already be in the past (or very close to expiring), causing test failures related to stake locking, voting power, or epoch transitions.
+> 
+> Always run `./scripts/generate_genesis.sh` (or `./scripts/generate_genesis_single.sh`) before starting a new test to ensure a fresh timestamp.
+
 ## Documentation
 
 | Specification                                                | Description                                        |
