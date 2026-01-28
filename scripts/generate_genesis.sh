@@ -159,6 +159,10 @@ parse_arguments() {
                 CONFIG_FILE="$2"
                 shift 2
                 ;;
+            -t|--template)
+                GENESIS_TEMPLATE="$2"
+                shift 2
+                ;;
             -h|--help)
                 show_help
                 exit 0
@@ -334,9 +338,13 @@ print(f'Updated epoch_interval_micros to {$EPOCH_INTERVAL_MICROS}')
     check_file "$CONFIG_DIR/genesis_template.json"
     check_file "$PROJECT_ROOT/account_alloc.json"
     
-    log_info "Running final genesis generation..."
+    # Determine which template to use
+    TEMPLATE_FILE="${GENESIS_TEMPLATE:-$CONFIG_DIR/genesis_template.json}"
+    check_file "$TEMPLATE_FILE"
+    
+    log_info "Running final genesis generation using template: $TEMPLATE_FILE"
     python3 "$SCRIPTS_HELPER_DIR/genesis_generate.py" \
-        --template "$CONFIG_DIR/genesis_template.json" \
+        --template "$TEMPLATE_FILE" \
         --account-alloc "$PROJECT_ROOT/account_alloc.json" \
         --output "$PROJECT_ROOT/genesis.json"
     check_result "final genesis generation"
