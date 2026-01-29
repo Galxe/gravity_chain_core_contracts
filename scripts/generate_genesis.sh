@@ -115,10 +115,6 @@ check_result() {
     fi
 }
 
-# Default values
-DEFAULT_EPOCH_INTERVAL_HOURS=2
-EPOCH_INTERVAL_HOURS=$DEFAULT_EPOCH_INTERVAL_HOURS
-
 # Function to show help
 show_help() {
     echo "Gravity Chain Genesis Generation Script"
@@ -126,17 +122,17 @@ show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -i, --interval HOURS    Set epoch interval in hours (default: $DEFAULT_EPOCH_INTERVAL_HOURS)"
     echo "  -c, --config FILE       Genesis config file (default: genesis-tool/config/genesis_config.json)"
+    echo "  -t, --template FILE     Genesis template file (default: genesis-tool/config/genesis_template.json)"
     echo "  -h, --help              Show this help message"
     echo ""
     echo "Description:"
     echo "  This script generates a complete genesis configuration for the Gravity Chain."
     echo "  It compiles smart contracts, extracts bytecode, and creates genesis files."
+    echo "  The epoch interval is read from the config file's 'epochIntervalMicros' field."
     echo ""
     echo "Examples:"
     echo "  $0                      # Use default settings"
-    echo "  $0 -i 4                 # Use 4-hour epoch interval"
     echo "  $0 -c custom.json       # Use custom config file"
     echo ""
 }
@@ -147,14 +143,6 @@ parse_arguments() {
     
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -i|--interval)
-                EPOCH_INTERVAL_HOURS="$2"
-                if ! [[ "$EPOCH_INTERVAL_HOURS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || (( $(echo "$EPOCH_INTERVAL_HOURS <= 0" | bc -l) )); then
-                    log_error "Invalid epoch interval: $EPOCH_INTERVAL_HOURS. Must be a positive number."
-                    exit 1
-                fi
-                shift 2
-                ;;
             -c|--config)
                 CONFIG_FILE="$2"
                 shift 2
@@ -187,7 +175,6 @@ main() {
     log_info "Project root: $PROJECT_ROOT"
     
     log_step "Starting Gravity Genesis generation process..."
-    log_info "Epoch interval: ${EPOCH_INTERVAL_HOURS} hours"
     log_info "Config file: $CONFIG_FILE"
     
     # Check required commands
@@ -270,34 +257,15 @@ main() {
     log_step "Step 3: Generating genesis accounts and contracts..."
     create_directory "$OUTPUT_DIR"
     
-    # Convert epoch interval hours to microseconds and update config
-    # 1 hour = 3600 seconds = 3,600,000,000 microseconds
-    EPOCH_INTERVAL_MICROS=$(echo "$EPOCH_INTERVAL_HOURS * 3600000000" | bc | cut -d'.' -f1)
-    log_info "Epoch interval: ${EPOCH_INTERVAL_HOURS} hours = ${EPOCH_INTERVAL_MICROS} microseconds"
-    
-    # Create a modified config with the updated epoch interval
-    MODIFIED_CONFIG_FILE="$OUTPUT_DIR/genesis_config_modified.json"
-    log_info "Creating modified config with epoch interval..."
-    python3 -c "
-import json
-import sys
-
-with open('$CONFIG_FILE', 'r') as f:
-    config = json.load(f)
-
-config['epochIntervalMicros'] = $EPOCH_INTERVAL_MICROS
-
-with open('$MODIFIED_CONFIG_FILE', 'w') as f:
-    json.dump(config, f, indent=2)
-
-print(f'Updated epoch_interval_micros to {$EPOCH_INTERVAL_MICROS}')
-"
+    # Read epochIntervalMicros from config file
+    EPOCH_INTERVAL_MICROS=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['epochIntervalMicros'])")
+    log_info "Epoch interval from config: ${EPOCH_INTERVAL_MICROS} microseconds"
     
     log_info "Building and running genesis-tool binary..."
     cd "$GENESIS_TOOL_DIR"
     cargo run --release -- generate \
         --byte-code-dir "$OUT_DIR" \
-        --config-file "$MODIFIED_CONFIG_FILE" \
+        --config-file "$CONFIG_FILE" \
         --output "$OUTPUT_DIR" \
         --log-file "$OUTPUT_DIR/genesis_generation.log"
     check_result "genesis generation"
