@@ -210,7 +210,7 @@ contract GBridgeSenderTest is Test {
         vm.stopPrank();
 
         // Verify
-        assertEq(nonce, 0);
+        assertEq(nonce, 1);
         assertEq(gToken.balanceOf(alice), INITIAL_BALANCE - amount);
         assertEq(gToken.balanceOf(address(bridge)), amount);
         assertEq(portal.nonce(), 1);
@@ -224,7 +224,7 @@ contract GBridgeSenderTest is Test {
         gToken.approve(address(bridge), amount);
 
         vm.expectEmit(true, true, true, true);
-        emit IGBridgeSender.TokensLocked(alice, bob, amount, 0);
+        emit IGBridgeSender.TokensLocked(alice, bob, amount, 1);
         bridge.bridgeToGravity{ value: fee }(amount, bob);
         vm.stopPrank();
     }
@@ -291,9 +291,9 @@ contract GBridgeSenderTest is Test {
         vm.startPrank(alice);
         gToken.approve(address(bridge), amount * 3);
 
-        assertEq(bridge.bridgeToGravity{ value: fee }(amount, bob), 0);
         assertEq(bridge.bridgeToGravity{ value: fee }(amount, bob), 1);
         assertEq(bridge.bridgeToGravity{ value: fee }(amount, bob), 2);
+        assertEq(bridge.bridgeToGravity{ value: fee }(amount, bob), 3);
         vm.stopPrank();
 
         assertEq(gToken.balanceOf(address(bridge)), amount * 3);
@@ -322,7 +322,7 @@ contract GBridgeSenderTest is Test {
         uint128 nonce = bridge.bridgeToGravityWithPermit{ value: fee }(amount, bob, deadline, v, r, s);
 
         // Verify
-        assertEq(nonce, 0);
+        assertEq(nonce, 1);
         assertEq(gToken.balanceOf(alice), INITIAL_BALANCE - amount);
         assertEq(gToken.balanceOf(address(bridge)), amount);
     }
@@ -342,7 +342,7 @@ contract GBridgeSenderTest is Test {
         vm.prank(alice);
 
         vm.expectEmit(true, true, true, true);
-        emit IGBridgeSender.TokensLocked(alice, bob, amount, 0);
+        emit IGBridgeSender.TokensLocked(alice, bob, amount, 1);
         bridge.bridgeToGravityWithPermit{ value: fee }(amount, bob, deadline, v, r, s);
     }
 
@@ -410,7 +410,7 @@ contract GBridgeSenderTest is Test {
         uint128 nonce = bridge.bridgeToGravity{ value: fee }(amount, recipient);
         vm.stopPrank();
 
-        assertEq(nonce, 0);
+        assertEq(nonce, 1);
         assertEq(gToken.balanceOf(alice), INITIAL_BALANCE - amount);
         assertEq(gToken.balanceOf(address(bridge)), amount);
     }

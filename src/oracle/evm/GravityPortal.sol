@@ -61,7 +61,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
         bytes calldata message
     ) external payable returns (uint128 messageNonce) {
         // Assign nonce and increment
-        messageNonce = nonce++;
+        messageNonce = ++nonce;
 
         // Encode payload: sender (20B) || nonce (16B) || message
         bytes memory payload = PortalMessage.encodeCalldata(msg.sender, messageNonce, message);
