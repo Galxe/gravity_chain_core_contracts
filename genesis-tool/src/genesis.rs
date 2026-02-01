@@ -526,6 +526,24 @@ pub fn call_genesis_initialize(genesis_address: Address, config: &GenesisConfig)
         config.oracle_config.source_types
     );
     info!("JWK issuers count: {}", config.jwk_config.issuers.len());
+    info!(
+        "Bridge config: deploy={}, trustedBridge={}",
+        config.oracle_config.bridge_config.deploy,
+        if config.oracle_config.bridge_config.trusted_bridge.is_empty() {
+            "(not set)".to_string()
+        } else {
+            config.oracle_config.bridge_config.trusted_bridge.clone()
+        }
+    );
+    if !config.oracle_config.tasks.is_empty() {
+        info!("Oracle tasks count: {}", config.oracle_config.tasks.len());
+        for (i, task) in config.oracle_config.tasks.iter().enumerate() {
+            info!(
+                "  Task {}: sourceType={}, sourceId={}, taskName={}",
+                i, task.source_type, task.source_id, task.task_name
+            );
+        }
+    }
 
     let call_data = Genesis::initializeCall { params: sol_params }.abi_encode();
 
