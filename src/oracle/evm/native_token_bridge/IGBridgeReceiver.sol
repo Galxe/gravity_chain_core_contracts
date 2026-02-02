@@ -31,6 +31,11 @@ interface IGBridgeReceiver {
     /// @param nonce The duplicate nonce
     error AlreadyProcessed(uint128 nonce);
 
+    /// @notice Native token mint via precompile failed
+    /// @param recipient The intended recipient
+    /// @param amount The amount that failed to mint
+    error MintFailed(address recipient, uint256 amount);
+
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
