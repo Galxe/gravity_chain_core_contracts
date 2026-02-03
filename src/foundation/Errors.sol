@@ -163,6 +163,10 @@ library Errors {
     /// @notice Cannot remove the last active validator (would halt consensus)
     error CannotRemoveLastValidator();
 
+    /// @notice Consensus public key is already in use by another validator
+    /// @param pubkey The duplicate consensus public key
+    error DuplicateConsensusPubkey(bytes pubkey);
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================

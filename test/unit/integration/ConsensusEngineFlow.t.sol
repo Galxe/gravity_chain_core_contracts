@@ -204,9 +204,11 @@ contract ConsensusEngineFlowTest is Test {
         string memory moniker
     ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
+        // Generate unique pubkey based on pool address to
+        bytes memory uniquePubkey = abi.encodePacked(pool);
         vm.prank(owner);
         validatorManager.registerValidator(
-            pool, moniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
     }
 
