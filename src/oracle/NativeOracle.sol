@@ -75,6 +75,7 @@ contract NativeOracle is INativeOracle {
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
+        uint256 blockNumber,
         bytes calldata payload,
         uint256 callbackGasLimit
     ) external {
@@ -92,7 +93,11 @@ contract NativeOracle is INativeOracle {
 
         // Conditionally store record based on callback result
         if (shouldStore) {
-            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            _records[sourceType][sourceId][nonce] = DataRecord({
+                recordedAt: uint64(block.timestamp),
+                blockNumber: blockNumber,
+                data: payload
+            });
             emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }
@@ -102,6 +107,7 @@ contract NativeOracle is INativeOracle {
         uint32 sourceType,
         uint256 sourceId,
         uint128[] calldata nonces,
+        uint256[] calldata blockNumbers,
         bytes[] calldata payloads,
         uint256[] calldata callbackGasLimits
     ) external {
@@ -117,7 +123,7 @@ contract NativeOracle is INativeOracle {
 
         // Record all data entries with individual nonce validation
         for (uint256 i; i < length;) {
-            _recordSingle(sourceType, sourceId, nonces[i], payloads[i], callbackGasLimits[i]);
+            _recordSingle(sourceType, sourceId, nonces[i], blockNumbers[i], payloads[i], callbackGasLimits[i]);
 
             unchecked {
                 ++i;
@@ -135,6 +141,7 @@ contract NativeOracle is INativeOracle {
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
+        uint256 blockNumber,
         bytes calldata payload,
         uint256 callbackGasLimit
     ) private {
@@ -150,7 +157,7 @@ contract NativeOracle is INativeOracle {
 
         // Conditionally store record based on callback result
         if (shouldStore) {
-            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), data: payload });
+            _records[sourceType][sourceId][nonce] = DataRecord({ recordedAt: uint64(block.timestamp), blockNumber: blockNumber, data: payload });
             emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }

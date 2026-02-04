@@ -80,7 +80,7 @@ contract GravityPortalTest is Test {
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
-        emit IGravityPortal.MessageSent(1, expectedPayload);
+        emit IGravityPortal.MessageSent(1, block.number, expectedPayload);
         portal.send{ value: fee }(message);
     }
 

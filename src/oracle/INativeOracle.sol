@@ -17,6 +17,8 @@ interface INativeOracle {
     struct DataRecord {
         /// @notice Timestamp when this was recorded (0 = not exists)
         uint64 recordedAt;
+        /// @notice Block number when this was created (0 = not exists)
+        uint256 blockNumber;
         /// @notice Stored payload data
         bytes data;
     }
@@ -97,6 +99,7 @@ interface INativeOracle {
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
+        uint256 blockNumber,
         bytes calldata payload,
         uint256 callbackGasLimit
     ) external;
@@ -113,6 +116,7 @@ interface INativeOracle {
         uint32 sourceType,
         uint256 sourceId,
         uint128[] calldata nonces,
+        uint256[] calldata blockNumbers,
         bytes[] calldata payloads,
         uint256[] calldata callbackGasLimits
     ) external;

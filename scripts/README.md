@@ -55,7 +55,7 @@ The test will output the parsed event content, including fields such as sender, 
 The `GravityPortal` contract emits a `MessageSent` event:
 
 ```solidity
-event MessageSent(uint128 indexed nonce, bytes payload);
+event MessageSent(uint128 indexed nonce, uint256 indexed block_number, bytes payload);
 ```
 
 The payload uses `PortalMessage` format:

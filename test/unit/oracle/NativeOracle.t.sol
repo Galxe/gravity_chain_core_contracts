@@ -103,7 +103,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Verify record exists (recordedAt > 0 means exists)
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
@@ -119,7 +119,7 @@ contract NativeOracleTest is Test {
 
         vm.expectRevert();
         vm.prank(alice);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Record_RevertWhenNonceIsZero() public {
@@ -130,7 +130,7 @@ contract NativeOracleTest is Test {
             abi.encodeWithSelector(Errors.NonceNotIncreasing.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, 0)
         );
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Record_RevertWhenNonceNotIncreasing() public {
@@ -138,7 +138,7 @@ contract NativeOracleTest is Test {
 
         // Record first
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload1, CALLBACK_GAS_LIMIT);
 
         // Try to record with same nonce
         bytes memory payload2 = abi.encode("second");
@@ -149,7 +149,7 @@ contract NativeOracleTest is Test {
             )
         );
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload2, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload2, CALLBACK_GAS_LIMIT);
 
         // Try to record with lower nonce
         vm.expectRevert(
@@ -158,7 +158,7 @@ contract NativeOracleTest is Test {
             )
         );
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500, payload2, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500, 0, payload2, CALLBACK_GAS_LIMIT);
     }
 
     function test_Record_MultipleSourcesIndependent() public {
@@ -167,11 +167,11 @@ contract NativeOracleTest is Test {
 
         // Record to ethereum source
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload1, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload1, CALLBACK_GAS_LIMIT);
 
         // Record to google source with lower nonce (allowed because different source)
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 500, payload2, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 500, 0, payload2, CALLBACK_GAS_LIMIT);
 
         // Verify both sources
         assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1000);
@@ -184,17 +184,19 @@ contract NativeOracleTest is Test {
 
     function test_RecordBatch() public {
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             nonces[i] = 2000 + uint128(i);
+            blockNumbers[i] = 0;
             payloads[i] = abi.encode("event", i);
             gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // Verify all records exist (recordedAt > 0 means exists)
         for (uint256 i = 0; i < 3; i++) {
@@ -210,11 +212,12 @@ contract NativeOracleTest is Test {
 
     function test_RecordBatch_EmptyArrays() public {
         uint128[] memory nonces = new uint128[](0);
+        uint256[] memory blockNumbers = new uint256[](0);
         bytes[] memory payloads = new bytes[](0);
         uint256[] memory gasLimits = new uint256[](0);
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // Nothing should be recorded
         assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
@@ -222,11 +225,13 @@ contract NativeOracleTest is Test {
 
     function test_RecordBatch_RevertWhenArrayLengthMismatch() public {
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](2); // Mismatched length
         uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             nonces[i] = 1000 + uint128(i);
+            blockNumbers[i] = 0;
             gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
         payloads[0] = abi.encode("event0");
@@ -234,22 +239,25 @@ contract NativeOracleTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 2, 3));
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
     }
 
     function test_RecordBatch_RevertWhenNonceNotIncreasing() public {
         // First, record at nonce 1000
         bytes memory payload = abi.encode("first");
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Now try batch starting at nonce 1000 (should fail - not increasing)
         uint128[] memory nonces = new uint128[](2);
+        uint256[] memory blockNumbers = new uint256[](2);
         bytes[] memory payloads = new bytes[](2);
         uint256[] memory gasLimits = new uint256[](2);
 
         nonces[0] = 1000; // Invalid: same as existing
         nonces[1] = 1001;
+        blockNumbers[0] = 0;
+        blockNumbers[1] = 0;
         payloads[0] = abi.encode("batch0");
         payloads[1] = abi.encode("batch1");
         gasLimits[0] = CALLBACK_GAS_LIMIT;
@@ -261,18 +269,22 @@ contract NativeOracleTest is Test {
             )
         );
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
     }
 
     function test_RecordBatch_RevertWhenBatchNoncesNotIncreasing() public {
         // Try batch with non-increasing nonces within the batch
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         nonces[0] = 1000;
         nonces[1] = 1001;
         nonces[2] = 1001; // Invalid: not increasing from previous
+        blockNumbers[0] = 0;
+        blockNumbers[1] = 0;
+        blockNumbers[2] = 0;
         payloads[0] = abi.encode("batch0");
         payloads[1] = abi.encode("batch1");
         payloads[2] = abi.encode("batch2");
@@ -286,7 +298,7 @@ contract NativeOracleTest is Test {
             )
         );
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
     }
 
     // ========================================================================
@@ -381,7 +393,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Verify callback was invoked
         assertEq(mockCallback.callCount(), 1);
@@ -401,7 +413,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, 0);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, 0);
 
         // Verify callback was NOT invoked
         assertEq(mockCallback.callCount(), 0);
@@ -417,7 +429,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Verify default callback was invoked
         assertEq(mockCallback.callCount(), 1);
@@ -443,7 +455,7 @@ contract NativeOracleTest is Test {
         bytes memory payload = abi.encode(alice, uint256(100));
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Specialized callback should be invoked, not default
         assertEq(specializedCallback.callCount(), 1);
@@ -466,12 +478,12 @@ contract NativeOracleTest is Test {
         // Record for Arbitrum (should use default)
         bytes memory payload1 = abi.encode("arbitrum event");
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId, 1000, payload1, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, arbitrumSourceId, 1000, 0, payload1, CALLBACK_GAS_LIMIT);
 
         // Record for Ethereum (should use specialized)
         bytes memory payload2 = abi.encode("ethereum event");
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, payload2, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2000, 0, payload2, CALLBACK_GAS_LIMIT);
 
         // Verify correct callbacks were invoked
         assertEq(defaultCallback.callCount(), 1);
@@ -492,7 +504,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Record should still exist (recordedAt > 0 means exists)
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
@@ -513,7 +525,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Record should still exist (recordedAt > 0 means exists)
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
@@ -527,17 +539,19 @@ contract NativeOracleTest is Test {
 
         // Record batch
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             nonces[i] = 2000 + uint128(i);
+            blockNumbers[i] = 0;
             payloads[i] = abi.encode("event", i);
             gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // Callback should be invoked 3 times
         assertEq(mockCallback.callCount(), 3);
@@ -550,17 +564,19 @@ contract NativeOracleTest is Test {
 
         // Record batch with zero gas limits
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             nonces[i] = 2000 + uint128(i);
+            blockNumbers[i] = 0;
             payloads[i] = abi.encode("event", i);
             gasLimits[i] = 0; // Zero gas limit
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // Callback should NOT be invoked
         assertEq(mockCallback.callCount(), 0);
@@ -573,12 +589,16 @@ contract NativeOracleTest is Test {
 
         // Record batch with mixed gas limits (some zero, some non-zero)
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         nonces[0] = 2000;
         nonces[1] = 2001;
         nonces[2] = 2002;
+        blockNumbers[0] = 0;
+        blockNumbers[1] = 0;
+        blockNumbers[2] = 0;
         payloads[0] = abi.encode("event0");
         payloads[1] = abi.encode("event1");
         payloads[2] = abi.encode("event2");
@@ -587,7 +607,7 @@ contract NativeOracleTest is Test {
         gasLimits[2] = CALLBACK_GAS_LIMIT; // Will invoke callback
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // Callback should be invoked only 2 times
         assertEq(mockCallback.callCount(), 2);
@@ -602,7 +622,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Get record
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
@@ -623,7 +643,7 @@ contract NativeOracleTest is Test {
 
         // Record at nonce 1000
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Now synced past 500 and 1000
         assertTrue(oracle.isSyncedPast(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 500));
@@ -644,7 +664,7 @@ contract NativeOracleTest is Test {
         vm.assume(nonce > 0);
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
         assertTrue(record.recordedAt > 0);
@@ -662,7 +682,7 @@ contract NativeOracleTest is Test {
 
         // First record succeeds
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce1, payload1, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce1, 0, payload1, CALLBACK_GAS_LIMIT);
 
         // Second record with non-increasing nonce fails
         bytes memory payload2 = abi.encode("second");
@@ -673,7 +693,7 @@ contract NativeOracleTest is Test {
             )
         );
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce2, payload2, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce2, 0, payload2, CALLBACK_GAS_LIMIT);
     }
 
     function testFuzz_SourceTypeAndId(
@@ -686,7 +706,7 @@ contract NativeOracleTest is Test {
         bytes memory payload = abi.encode("test", sourceType, sourceId);
 
         vm.prank(systemCaller);
-        oracle.record(sourceType, sourceId, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(sourceType, sourceId, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         assertEq(oracle.getLatestNonce(sourceType, sourceId), nonce);
     }
@@ -703,7 +723,7 @@ contract NativeOracleTest is Test {
         emit INativeOracle.DataRecorded(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload.length);
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_DefaultCallbackSet() public {
@@ -733,7 +753,7 @@ contract NativeOracleTest is Test {
         emit INativeOracle.CallbackSuccess(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, address(mockCallback));
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_CallbackFailed() public {
@@ -746,7 +766,7 @@ contract NativeOracleTest is Test {
 
         // CallbackFailed event should be emitted
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
         // Can't easily test the exact event due to dynamic reason bytes,
         // but we verified the record exists and callback count is 0 in earlier test
     }
@@ -760,7 +780,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
         assertTrue(record.recordedAt > 0);
@@ -775,7 +795,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce);
         assertEq(record.data, payload);
@@ -786,7 +806,7 @@ contract NativeOracleTest is Test {
 
         // Nonce = 1 should work
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 0, payload, CALLBACK_GAS_LIMIT);
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1);
         assertTrue(record.recordedAt > 0);
@@ -806,7 +826,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Callback was invoked
         assertEq(mockCallback.callCount(), 1);
@@ -828,7 +848,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Callback was invoked
         assertEq(mockCallback.callCount(), 1);
@@ -845,7 +865,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Record WAS stored
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonce);
@@ -863,7 +883,7 @@ contract NativeOracleTest is Test {
         uint128 nonce = 1000;
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Callback failed (callCount not incremented)
         assertEq(mockCallback.callCount(), 0);
@@ -888,17 +908,19 @@ contract NativeOracleTest is Test {
 
         // Record batch
         uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](3);
         bytes[] memory payloads = new bytes[](3);
         uint256[] memory gasLimits = new uint256[](3);
 
         for (uint256 i = 0; i < 3; i++) {
             nonces[i] = 2000 + uint128(i);
+            blockNumbers[i] = 0;
             payloads[i] = abi.encode("event", i);
             gasLimits[i] = CALLBACK_GAS_LIMIT;
         }
 
         vm.prank(systemCaller);
-        oracle.recordBatch(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonces, payloads, gasLimits);
+        oracle.recordBatch(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
 
         // All callbacks were invoked
         assertEq(skipCallback.callCount(), 3);
@@ -929,7 +951,7 @@ contract NativeOracleTest is Test {
         emit INativeOracle.StorageSkipped(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, address(mockCallback));
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_NoDataRecordedWhenSkipped() public {
@@ -944,7 +966,7 @@ contract NativeOracleTest is Test {
         vm.recordLogs();
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Check logs - should have CallbackSuccess and StorageSkipped, but NOT DataRecorded
         Vm.Log[] memory logs = vm.getRecordedLogs();

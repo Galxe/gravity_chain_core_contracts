@@ -80,8 +80,8 @@ echo ""
 EVENTS=$(cast logs --from-block 0 --address $PORTAL_ADDRESS --rpc-url $RPC_URL --json 2>/dev/null)
 
 if [ -n "$EVENTS" ] && [ "$EVENTS" != "[]" ]; then
-    # Find MessageSent event (signature: 0x3495d2da67b82080fd7085af57770617e0f3a846a8fe985877b0468cab7bfd2b)
-    MESSAGE_SENT_SIG="0x3495d2da67b82080fd7085af57770617e0f3a846a8fe985877b0468cab7bfd2b"
+    # Find MessageSent event (signature: 0x5646e682c7d994bf11f5a2c8addb60d03c83cda3b65025a826346589df43406e)
+    MESSAGE_SENT_SIG="0x5646e682c7d994bf11f5a2c8addb60d03c83cda3b65025a826346589df43406e"
     
     echo "$EVENTS" | jq -r --arg sig "$MESSAGE_SENT_SIG" '.[] | select(.topics[0] == $sig) | 
         "┌─────────────────────────────────────────────────────────────────┐\n" +
