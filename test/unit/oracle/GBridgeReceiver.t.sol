@@ -43,9 +43,13 @@ contract GBridgeReceiverTest is Test {
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
-        // Deploy mock precompile at the expected address
-        mockPrecompile = new MockNativeMintPrecompile();
-        vm.etch(SystemAddresses.NATIVE_MINT_PRECOMPILE, address(mockPrecompile).code);
+        // Mock the precompile call to always succeed
+        // GBridgeReceiver uses low-level call:
+        // NATIVE_MINT_PRECOMPILE.call(abi.encodePacked(uint8(0x01), recipient, amount))
+        // We mock any call to this address to return (true, "")
+        bytes memory emptyData = "";
+        bytes memory successReturn = "";
+        vm.mockCall(SystemAddresses.NATIVE_MINT_PRECOMPILE, emptyData, successReturn);
 
         // Deploy receiver with trusted bridge
         receiver = new GBridgeReceiver(trustedBridge);

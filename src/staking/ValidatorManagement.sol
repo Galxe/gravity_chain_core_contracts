@@ -99,6 +99,10 @@ contract ValidatorManagement is IValidatorManagement {
     /// @notice Whether the contract has been initialized
     bool private _initialized;
 
+    /// @notice Tracks which validator is using each consensus pubkey
+    /// @dev keccak256(pubkey) => stakePool address (address(0) if unused)
+    mapping(bytes32 => address) internal _pubkeyToValidator;
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -133,6 +137,9 @@ contract ValidatorManagement is IValidatorManagement {
             record.bond = v.votingPower;
             record.consensusPubkey = v.consensusPubkey;
             record.consensusPop = v.consensusPop;
+
+            // Register pubkey in the mapping
+            _pubkeyToValidator[keccak256(v.consensusPubkey)] = v.stakePool;
             record.networkAddresses = v.networkAddresses;
             record.fullnodeAddresses = v.fullnodeAddresses;
             record.feeRecipient = v.feeRecipient;
@@ -275,9 +282,16 @@ contract ValidatorManagement is IValidatorManagement {
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         record.bond = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
 
-        // Set consensus keys
+        // Check consensus pubkey is unique
+        bytes32 keyHash = keccak256(consensusPubkey);
+        if (_pubkeyToValidator[keyHash] != address(0)) {
+            revert Errors.DuplicateConsensusPubkey(consensusPubkey);
+        }
+
+        // Set consensus keys and register in mapping
         record.consensusPubkey = consensusPubkey;
         record.consensusPop = consensusPop;
+        _pubkeyToValidator[keyHash] = stakePool;
         record.networkAddresses = networkAddresses;
         record.fullnodeAddresses = fullnodeAddresses;
     }
@@ -401,6 +415,17 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata newPop
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         ValidatorRecord storage validator = _validators[stakePool];
+
+        // Check new pubkey is unique
+        bytes32 newKeyHash = keccak256(newPubkey);
+        if (_pubkeyToValidator[newKeyHash] != address(0)) {
+            revert Errors.DuplicateConsensusPubkey(newPubkey);
+        }
+
+        // Clear old pubkey from mapping and register new one
+        bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
+        delete _pubkeyToValidator[oldKeyHash];
+        _pubkeyToValidator[newKeyHash] = stakePool;
 
         // TODO(yxia): it wont take effect immediately i think, it has to wait until the next epoch.
         // check if aptos has some fancy way to make it take effect immediately.

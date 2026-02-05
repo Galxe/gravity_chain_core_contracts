@@ -80,7 +80,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
 
         // Mint native tokens via precompile (precompile never reverts)
         bytes memory callData = abi.encodePacked(uint8(0x01), recipient, amount);
-        (bool transferSuccess, ) = SystemAddresses.NATIVE_MINT_PRECOMPILE.call(callData);
+        (bool transferSuccess,) = SystemAddresses.NATIVE_MINT_PRECOMPILE.call(callData);
         if (!transferSuccess) {
             revert MintFailed(recipient, amount);
         }

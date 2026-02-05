@@ -127,15 +127,18 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Create a stake pool and register as validator
+    /// @dev Generates unique consensusPubkey to avoid DuplicateConsensusPubkey
     function _createAndRegisterValidator(
         address owner,
         uint256 stakeAmount,
         string memory moniker
     ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
+        // Generate unique pubkey based on pool address
+        bytes memory uniquePubkey = abi.encodePacked(pool);
         vm.prank(owner); // owner is also operator by default
         validatorManager.registerValidator(
-            pool, moniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
     }
 
@@ -535,6 +538,107 @@ contract ValidatorManagementTest is Test {
         vm.expectEmit(true, false, false, true);
         emit IValidatorManagement.ConsensusKeyRotated(pool, newPubkey);
         validatorManager.rotateConsensusKey(pool, newPubkey, hex"");
+    }
+
+    // ========================================================================
+    // CONSENSUS PUBKEY UNIQUENESS TESTS
+    // ========================================================================
+
+    /// @notice Test that registering with a duplicate pubkey fails
+    function test_RevertWhen_registerValidator_duplicatePubkey() public {
+        // Alice registers with a specific pubkey
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory alicePubkey = hex"a1cecafe00000001";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Bob tries to register with the same pubkey - should fail
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, alicePubkey));
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
+    /// @notice Test that rotating to a pubkey already in use fails
+    function test_RevertWhen_rotateConsensusKey_duplicatePubkey() public {
+        // Alice and Bob register with different pubkeys
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory alicePubkey = hex"a1cecafe00000001";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        bytes memory bobPubkey = hex"b0b0b0b0b01234aa";
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice tries to rotate to Bob's pubkey - should fail
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, bobPubkey));
+        validatorManager.rotateConsensusKey(alicePool, bobPubkey, hex"abcd1234");
+    }
+
+    /// @notice Test that after rotation, old pubkey can be reused by another validator
+    function test_rotateConsensusKey_clearsOldPubkey() public {
+        // Alice registers with a specific pubkey
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory aliceOldPubkey = hex"a1cecafe00000001";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice rotates to a new key
+        bytes memory aliceNewPubkey = hex"a1ecafe000000002";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
+
+        // Bob should now be able to register with Alice's old pubkey
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Verify both validators have their expected pubkeys
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(bobPool);
+        assertEq(aliceRecord.consensusPubkey, aliceNewPubkey, "Alice should have new pubkey");
+        assertEq(bobRecord.consensusPubkey, aliceOldPubkey, "Bob should have Alice's old pubkey");
+    }
+
+    /// @notice Test that a validator can rotate to a new key while other validators have different keys
+    function test_rotateConsensusKey_uniqueKeySuccess() public {
+        // Alice and Bob both register with different pubkeys
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory alicePubkey = hex"a1cecafe00000001";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        bytes memory bobPubkey = hex"b0b0b0b0b01234aa";
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice rotates to a completely new key (not Bob's)
+        bytes memory aliceNewPubkey = hex"a1ecafe000000003";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
+
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
+        assertEq(aliceRecord.consensusPubkey, aliceNewPubkey, "Alice should have new pubkey");
     }
 
     function test_setFeeRecipient_success() public {
