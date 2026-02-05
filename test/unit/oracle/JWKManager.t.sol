@@ -78,7 +78,7 @@ contract JWKManagerTest is Test {
         uint256 sourceId = uint256(keccak256(issuer));
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, nonce, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, nonce, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     // ========================================================================
@@ -108,7 +108,7 @@ contract JWKManagerTest is Test {
         uint256 sourceId = uint256(keccak256(GOOGLE_ISSUER));
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, 0, payload, CALLBACK_GAS_LIMIT);
 
         // Verify JWKs are stored in JWKManager
         assertTrue(jwkManager.hasJWK(GOOGLE_ISSUER, "key1"));
@@ -145,7 +145,7 @@ contract JWKManagerTest is Test {
         bytes memory payload = _createPayload(GOOGLE_ISSUER, 1, jwks); // Same version
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, 2, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
         // JWKManager still has the original version (callback failed, state unchanged)
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);
@@ -188,7 +188,7 @@ contract JWKManagerTest is Test {
         uint256 appleSourceId = uint256(keccak256(APPLE_ISSUER));
         bytes memory applePayload = _createPayload(APPLE_ISSUER, 1, appleJwks);
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, applePayload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, 0, applePayload, CALLBACK_GAS_LIMIT);
 
         // Verify both providers
         assertEq(jwkManager.getProviderCount(), 2);
@@ -276,7 +276,7 @@ contract JWKManagerTest is Test {
         uint256 appleSourceId = uint256(keccak256(APPLE_ISSUER));
         bytes memory applePayload = _createPayload(APPLE_ISSUER, 1, appleJwks);
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, applePayload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, 0, applePayload, CALLBACK_GAS_LIMIT);
 
         // Get issuers (should be sorted)
         bytes memory issuer0 = jwkManager.getProviderIssuerAt(0);
@@ -340,7 +340,7 @@ contract JWKManagerTest is Test {
         uint256 appleSourceId = uint256(keccak256(APPLE_ISSUER));
         bytes memory applePayload = _createPayload(APPLE_ISSUER, 1, appleJwks);
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, applePayload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, appleSourceId, 1, 0, applePayload, CALLBACK_GAS_LIMIT);
 
         // Verify both exist
         assertEq(jwkManager.getProviderCount(), 2);
@@ -521,7 +521,7 @@ contract JWKManagerTest is Test {
         emit IJWKManager.ObservedJWKsUpdated(GOOGLE_ISSUER, 1, 2);
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     function test_Events_PatchesUpdated() public {
@@ -551,7 +551,7 @@ contract JWKManagerTest is Test {
         emit IJWKManager.PatchedJWKsRegenerated(1);
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, 1, 0, payload, CALLBACK_GAS_LIMIT);
     }
 
     // ========================================================================
@@ -592,7 +592,7 @@ contract JWKManagerTest is Test {
         bytes memory payload = _createPayload(GOOGLE_ISSUER, version2, jwks);
 
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, sourceId, 2, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
         // JWKManager still has the original version (callback failed)
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);

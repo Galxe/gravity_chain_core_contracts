@@ -15,7 +15,7 @@ interface IGravityPortal {
     /// @notice Emitted when a message is sent to Gravity
     /// @param nonce The unique nonce for this message (extracted for consensus engine)
     /// @param payload The encoded payload: sender (20B) || nonce (16B) || message
-    event MessageSent(uint128 indexed nonce, bytes payload);
+    event MessageSent(uint128 indexed nonce, uint256 indexed block_number, bytes payload);
 
     /// @notice Emitted when fee configuration is updated
     /// @param baseFee The new base fee

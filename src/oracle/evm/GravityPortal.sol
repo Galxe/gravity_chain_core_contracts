@@ -74,7 +74,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
 
         // Emit event for consensus engine to monitor
         // Nonce is extracted as indexed param for efficient consensus filtering
-        emit MessageSent(messageNonce, payload);
+        emit MessageSent(messageNonce, block.number, payload);
     }
 
     // ========================================================================
