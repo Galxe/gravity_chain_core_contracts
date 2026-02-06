@@ -29,6 +29,10 @@ fn derive_account_address_from_consensus_pubkey(consensus_pubkey: &[u8]) -> [u8;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GenesisConfig {
+    /// Chain ID for the network (default: 1 = Mainnet)
+    #[serde(rename = "chainId", default = "default_chain_id")]
+    pub chain_id: u64,
+
     #[serde(rename = "validatorConfig")]
     pub validator_config: ValidatorConfigParams,
 
@@ -60,6 +64,10 @@ pub struct GenesisConfig {
     pub jwk_config: JWKInitParams,
 
     pub validators: Vec<InitialValidator>,
+}
+
+fn default_chain_id() -> u64 {
+    1337
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -122,10 +130,10 @@ pub struct RandomnessConfigData {
 pub struct ConfigV2Data {
     #[serde(rename = "secrecyThreshold")]
     pub secrecy_threshold: u128,
-    
+
     #[serde(rename = "reconstructionThreshold")]
     pub reconstruction_threshold: u128,
-    
+
     #[serde(rename = "fastPathSecrecyThreshold")]
     pub fast_path_secrecy_threshold: u128,
 }

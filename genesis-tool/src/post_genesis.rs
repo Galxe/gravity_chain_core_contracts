@@ -51,11 +51,12 @@ fn execute_verification<F>(
     bundle_state: BundleState,
     transaction: TxEnv,
     verification_name: &str,
+    chain_id: u64,
     result_handler: F,
 ) where
     F: FnOnce(&ExecutionResult),
 {
-    let env = prepare_env();
+    let env = prepare_env(chain_id);
     let r = execute_revm_sequential(db, SpecId::LATEST, env, &[transaction], Some(bundle_state));
     
     match r {
@@ -81,6 +82,7 @@ fn verify_active_validators(db: impl DatabaseRef, bundle_state: BundleState, con
         bundle_state,
         get_validators_txn,
         "active validators",
+        config.chain_id,
         |result| print_active_validators_result(result, config),
     );
 }

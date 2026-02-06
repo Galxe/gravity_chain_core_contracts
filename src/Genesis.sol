@@ -273,8 +273,8 @@ contract Genesis {
         // Or better, query Timestamp? Timestamp is not initialized yet (Blocker init comes last).
         // So we assume genesis time is 0.
         // lockedUntil must be in the future relative to block.timestamp
-        // Convert block.timestamp (seconds) to microseconds and add lockup duration
-        uint64 initialLockedUntil = uint64(block.timestamp * 1_000_000) + lockupDuration;
+        // 2027-01-01 00:00:00 UTC = 1798761600 seconds
+        uint64 initialLockedUntil = uint64(1798761600 * 1_000_000) + lockupDuration;
 
         for (uint256 i; i < len;) {
             InitialValidator calldata v = validators[i];
