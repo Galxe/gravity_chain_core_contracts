@@ -6,8 +6,6 @@ use crate::{
     },
 };
 
-use alloy_chains::NamedChain;
-
 use revm::{
     InMemoryDB,
     db::{BundleState, PlainAccount},
@@ -90,9 +88,9 @@ fn extract_runtime_bytecode(constructor_bytecode: &str) -> Vec<u8> {
     }
 }
 
-pub fn prepare_env() -> Env {
+pub fn prepare_env(chain_id: u64) -> Env {
     let mut env = Env::default();
-    env.cfg.chain_id = NamedChain::Mainnet.into();
+    env.cfg.chain_id = chain_id;
     env.tx.gas_limit = 30_000_000;
     // Set block.timestamp to current time so Genesis.sol's lockedUntil calculation works correctly
     // Genesis.sol calculates: lockedUntil = block.timestamp * 1_000_000 + lockupDuration
@@ -145,7 +143,7 @@ pub fn genesis_generate(
 
     let db = deploy_bsc_style(byte_code_dir, total_stake);
 
-    let env = prepare_env();
+    let env = prepare_env(config.chain_id);
 
     let txs = build_genesis_transactions(config);
 
