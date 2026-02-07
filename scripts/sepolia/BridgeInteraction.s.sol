@@ -132,19 +132,11 @@ contract BridgeInteraction is Script {
                 console.log("Event: TokensLocked");
                 console.log("Contract:", logs[i].emitter);
                 console.log("From:", address(uint160(uint256(logs[i].topics[1]))));
-                console.log("Recipient:", address(uint160(uint256(logs[i].topics[2])));
-
-                // Decode amount and nonce from data and topics
-                // topics[1]: from (indexed)
-                // topics[2]: recipient (indexed)
-                // (indexed) is not explicitly marked in topics array position, but the function signature shows:
-                // event TokensLocked(address indexed from, address indexed recipient, uint256 amount, uint128 indexed nonce);
-                // So topics: [signature, from, recipient, nonce]
-                // data: amount
+                console.log("Recipient:", address(uint160(uint256(logs[i].topics[2]))));
 
                 // Extract amount from data (first 32 bytes)
                 uint256 lockedAmount = abi.decode(logs[i].data, (uint256));
-                // Extract nonce from topics[3]
+                // Extract nonce from topics[3] (indexed)
                 uint128 lockedNonce = uint128(uint256(logs[i].topics[3]));
 
                 console.log("Amount Locked:", lockedAmount / 1e18, "tokens");
