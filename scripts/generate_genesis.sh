@@ -314,6 +314,7 @@ main() {
     python3 "$SCRIPTS_HELPER_DIR/genesis_generate.py" \
         --template "$TEMPLATE_FILE" \
         --account-alloc "$PROJECT_ROOT/account_alloc.json" \
+        --config-file "$CONFIG_FILE" \
         --output "$PROJECT_ROOT/genesis.json"
     check_result "final genesis generation"
     
