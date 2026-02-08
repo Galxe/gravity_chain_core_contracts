@@ -27,7 +27,8 @@ def load_json_file(file_path: str) -> Dict[str, Any]:
 def create_genesis_json(
     template_file: str = "generate/genesis_template.json",
     account_alloc_file: str = "account_alloc.json",
-    output_file: str = "genesis.json"
+    output_file: str = "genesis.json",
+    config_file: str = None
 ) -> None:
     """
     Create the final genesis.json file by combining template with account allocation.
@@ -36,6 +37,7 @@ def create_genesis_json(
         template_file: Path to genesis_template.json
         account_alloc_file: Path to account_alloc.json (output from combine_account_alloc.py)
         output_file: Output genesis.json file path
+        config_file: Optional path to genesis config JSON (to read chainId)
     """
     print("🔄 Starting genesis.json generation...")
     
@@ -46,6 +48,16 @@ def create_genesis_json(
     # Load account allocation data
     print(f"📖 Loading account allocation from {account_alloc_file}")
     account_alloc = load_json_file(account_alloc_file)
+    
+    # Override chainId from config if provided
+    if config_file:
+        print(f"📖 Loading genesis config from {config_file}")
+        config = load_json_file(config_file)
+        if "chainId" in config:
+            old_chain_id = genesis.get("config", {}).get("chainId", "unknown")
+            new_chain_id = config["chainId"]
+            genesis["config"]["chainId"] = new_chain_id
+            print(f"🔧 Overriding chainId: {old_chain_id} -> {new_chain_id}")
     
     # Merge account allocation into genesis alloc field
     print("🔧 Merging account allocation into genesis...")
@@ -124,6 +136,8 @@ def main():
                        help="Path to account_alloc.json (output from combine_account_alloc.py)")
     parser.add_argument("--output", default="genesis.json",
                        help="Output genesis.json file path")
+    parser.add_argument("--config-file", default=None,
+                       help="Path to genesis config JSON (to read chainId)")
     
     args = parser.parse_args()
     
@@ -136,7 +150,8 @@ def main():
     create_genesis_json(
         template_file=args.template,
         account_alloc_file=args.account_alloc,
-        output_file=args.output
+        output_file=args.output,
+        config_file=args.config_file
     )
 
 
