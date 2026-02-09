@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { IReconfiguration } from "./IReconfiguration.sol";
+import { IValidatorPerformanceTracker } from "./IValidatorPerformanceTracker.sol";
 import { IValidatorManagement } from "../staking/IValidatorManagement.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
@@ -271,20 +272,28 @@ contract Reconfiguration is IReconfiguration {
         //    changes are processed in the context of the current epoch.
         IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
 
-        // 3. Increment epoch and update timestamp
+        // 3. Reset performance tracker for the new epoch
+        //    Must happen AFTER ValidatorManagement.onNewEpoch() so that perf data
+        //    is available for future rewards distribution.
+        //    Following Aptos pattern: validator_perf.validators is reset and
+        //    re-populated with zeros after on_new_epoch() processes rewards.
+        uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();
+        IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);
+
+        // 4. Increment epoch and update timestamp
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
-        // 4. Reset state
+        // 5. Reset state
         _transitionState = TransitionState.Idle;
 
-        // 5. Get finalized validator set for NewEpochEvent
+        // 6. Get finalized validator set for NewEpochEvent
         ValidatorConsensusInfo[] memory validatorSet =
             IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
         uint256 totalVotingPower = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower();
 
-        // 6. Emit events
+        // 7. Emit events
         //    - EpochTransitioned: simple event for internal tracking
         //    - NewEpochEvent: full validator set for consensus engine
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
