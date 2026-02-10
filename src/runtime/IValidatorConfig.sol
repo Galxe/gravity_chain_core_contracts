@@ -24,6 +24,13 @@ interface IValidatorConfig {
     /// @notice Maximum number of validators in the set
     function maxValidatorSetSize() external view returns (uint256);
 
+    /// @notice Whether auto-eviction of underperforming validators is enabled
+    function autoEvictEnabled() external view returns (bool);
+
+    /// @notice Minimum successful proposals required to avoid auto-eviction
+    /// @dev Validators with successfulProposals <= this threshold are evicted at epoch boundary
+    function autoEvictThreshold() external view returns (uint256);
+
     /// @notice Maximum allowed voting power increase limit (50%)
     function MAX_VOTING_POWER_INCREASE_LIMIT() external view returns (uint64);
 

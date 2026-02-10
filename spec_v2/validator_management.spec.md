@@ -218,6 +218,7 @@ graph TD
     │    ┌──────────────────┐                    ┌──────────────┐
     │    │ PENDING_INACTIVE │ ◀───────────────── │    ACTIVE    │
     │    │  (keeps index)   │   leaveValidatorSet() │  (has index) │
+    │    │                  │   OR auto-eviction    │              │
     │    └──────────────────┘                    └──────────────┘
     │           │
     │           │ onNewEpoch()
@@ -226,6 +227,8 @@ graph TD
     └───── [INACTIVE]
               (no index)
 ```
+
+> **Auto-Eviction Path**: When `autoEvictEnabled` is true, underperforming validators are automatically moved from ACTIVE → PENDING_INACTIVE → INACTIVE within a single epoch transition (no buffer epoch). This contrasts with voluntary `leaveValidatorSet()` which transitions at the next epoch boundary.
 
 ### Status Definitions
 
@@ -320,6 +323,7 @@ interface IValidatorManagement {
     event ValidatorActivated(address indexed stakePool, uint64 validatorIndex, uint256 votingPower);
     event ValidatorLeaveRequested(address indexed stakePool);
     event ValidatorDeactivated(address indexed stakePool);
+    event ValidatorAutoEvicted(address indexed stakePool, uint64 successfulProposals);
     event ConsensusKeyRotated(address indexed stakePool, bytes newPubkey);
     event FeeRecipientUpdated(address indexed stakePool, address newRecipient);
     event EpochProcessed(uint64 epoch, uint256 activeCount, uint256 totalVotingPower);
@@ -344,6 +348,7 @@ interface IValidatorManagement {
     
     // === Epoch Processing ===
     function onNewEpoch() external;
+    function evictUnderperformingValidators() external;
     
     // === View Functions ===
     function getValidator(address stakePool) external view returns (ValidatorRecord memory);
@@ -486,6 +491,33 @@ Process epoch transition.
 
 > **Note**: The epoch is not passed as a parameter; instead, `ValidatorManagement` reads it from `Reconfiguration.currentEpoch()`. This aligns with Aptos's pattern where `stake::on_new_epoch()` is called before the epoch is incremented in `reconfiguration.move`.
 
+---
+
+### `evictUnderperformingValidators()`
+
+Auto-evict validators whose successful proposals fall below the configured threshold.
+
+**Access Control**: RECONFIGURATION only
+
+**Behavior**:
+1. Check if `autoEvictEnabled` is true in `ValidatorConfig`; return immediately if disabled
+2. Read `autoEvictThreshold` from `ValidatorConfig`
+3. Read performance data from `ValidatorPerformanceTracker.getAllPerformances()`
+4. For each active validator:
+   - Skip if status is not ACTIVE (e.g., already PENDING_INACTIVE from manual leave)
+   - If `successfulProposals <= threshold`:
+     - Count remaining ACTIVE validators
+     - If this is the last ACTIVE validator, **break** (liveness protection)
+     - Change status to PENDING_INACTIVE
+     - Add to `_pendingInactive` array
+     - Emit `ValidatorAutoEvicted(pool, successfulProposals)` event
+
+> **Important**: Auto-evicted validators transition ACTIVE → PENDING_INACTIVE → INACTIVE within a **single epoch transition**. This is different from voluntary `leaveValidatorSet()` where validators have a one-epoch buffer. The eviction marks them as PENDING_INACTIVE, and the subsequent `onNewEpoch()` call (in the same `_applyReconfiguration()`) processes them to INACTIVE.
+
+**Liveness Protection**: The last active validator is never evicted to prevent consensus halt.
+
+---
+
 **Voting Power Limit**:
 - New validators can only add up to `votingPowerIncreaseLimitPct`% of current total
 - If limit is 20% and total is 100, max new power per epoch is 20
@@ -560,6 +592,7 @@ Set a new fee recipient address.
 | `rotateConsensusKey` | Validator's operator (verified via Staking) |
 | `setFeeRecipient` | Validator's operator (verified via Staking) |
 | `onNewEpoch` | RECONFIGURATION only |
+| `evictUnderperformingValidators` | RECONFIGURATION only |
 | All view functions | Anyone |
 
 ---
@@ -762,10 +795,11 @@ validatorManager.leaveValidatorSet(pool);
 7. **No Direct StakePool Calls**: All pool queries go through Staking factory
 8. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
 9. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
-10. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
-11. **Unstake Protection**: Active validators cannot reduce `activeStake` below `minimumBond` (simple direct check)
-12. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style), ensuring voting power = activeStake
-13. **Excessive Stake Protection**: Even stake exceeding maximumBond cannot cause voting power to exceed cap, but the full amount is still subject to unstake restrictions
+10. **Auto-Eviction Safety**: Underperforming validators are evicted based on governance-configured on-chain parameters (`autoEvictEnabled`, `autoEvictThreshold`). The last active validator is never evicted.
+11. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
+12. **Unstake Protection**: Active validators cannot reduce `activeStake` below `minimumBond` (simple direct check)
+13. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style), ensuring voting power = activeStake
+14. **Excessive Stake Protection**: Even stake exceeding maximumBond cannot cause voting power to exceed cap, but the full amount is still subject to unstake restrictions
 
 ---
 
@@ -878,3 +912,28 @@ Added security checks to match Aptos's `stake.move` validator management:
 **allowValidatorSetChange for Leave**
 - Added `allowValidatorSetChange` check to `leaveValidatorSet()` (was only on join)
 - Matches Aptos behavior where both join and leave are gated by this config
+
+### 2026-02-10: Auto-Eviction of Underperforming Validators
+
+**New Feature: Automatic validator eviction based on proposal performance**
+
+**Interface Changes**:
+- Added `evictUnderperformingValidators()` function (called by `Reconfiguration` during epoch transition)
+- Added `ValidatorAutoEvicted(address stakePool, uint64 successfulProposals)` event
+
+**Behavior**:
+- Reads `autoEvictEnabled` and `autoEvictThreshold` from `ValidatorConfig`
+- Reads performance data from `ValidatorPerformanceTracker.getAllPerformances()`
+- Validators with `successfulProposals <= autoEvictThreshold` are marked PENDING_INACTIVE
+- Evicted validators transition ACTIVE → PENDING_INACTIVE → INACTIVE within a single epoch (no buffer)
+- Last active validator is never evicted (liveness protection)
+
+**Configuration** (in `ValidatorConfig`):
+- `autoEvictEnabled` (bool): governance-controlled on/off switch (default: false)
+- `autoEvictThreshold` (uint256): minimum successful proposals to avoid eviction (default: 0)
+- Both follow the pending config pattern (applied at epoch boundary via `setForNextEpoch`/`applyPendingConfig`)
+
+**Ordering in `_applyReconfiguration()`**:
+1. Config applied first (so `autoEvictEnabled` reflects latest governance decision)
+2. `evictUnderperformingValidators()` called after config apply, before `onNewEpoch()`
+3. `onNewEpoch()` processes evicted validators (PENDING_INACTIVE → INACTIVE)

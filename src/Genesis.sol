@@ -43,6 +43,8 @@ contract Genesis {
         bool allowValidatorSetChange;
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
+        bool autoEvictEnabled;
+        uint256 autoEvictThreshold;
     }
 
     struct StakingConfigParams {
@@ -181,7 +183,9 @@ contract Genesis {
                 params.validatorConfig.unbondingDelayMicros,
                 params.validatorConfig.allowValidatorSetChange,
                 params.validatorConfig.votingPowerIncreaseLimitPct,
-                params.validatorConfig.maxValidatorSetSize
+                params.validatorConfig.maxValidatorSetSize,
+                params.validatorConfig.autoEvictEnabled,
+                params.validatorConfig.autoEvictThreshold
             );
 
         StakingConfig(SystemAddresses.STAKE_CONFIG)

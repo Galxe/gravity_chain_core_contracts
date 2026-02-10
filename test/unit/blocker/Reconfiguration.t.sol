@@ -90,6 +90,10 @@ contract MockValidatorManagement {
     function getActiveValidatorCount() external view returns (uint256) {
         return _validators.length;
     }
+
+    function evictUnderperformingValidators() external {
+        // no-op for testing
+    }
 }
 
 /// @title ReconfigurationTest
@@ -168,7 +172,9 @@ contract ReconfigurationTest is Test {
                 7 days * 1_000_000, // unbondingDelayMicros
                 true, // allowValidatorSetChange
                 20, // votingPowerIncreaseLimitPct
-                100 // maxValidatorSetSize
+                100, // maxValidatorSetSize
+                false, // autoEvictEnabled
+                0 // autoEvictThreshold
             );
 
         // Initialize VersionConfig

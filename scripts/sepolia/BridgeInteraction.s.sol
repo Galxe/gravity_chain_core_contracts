@@ -87,8 +87,8 @@ contract BridgeInteraction is Script {
 
         console.log("=== Event Details ===");
         for (uint256 i = 0; i < logs.length; i++) {
-            // MessageSent event signature: keccak256("MessageSent(uint128,bytes)")
-            bytes32 messageSentSig = keccak256("MessageSent(uint128,bytes)");
+            // event MessageSent(uint128 indexed nonce, uint256 indexed block_number, bytes payload);
+            bytes32 messageSentSig = keccak256("MessageSent(uint128,uint256,bytes)");
             if (logs[i].topics[0] == messageSentSig) {
                 console.log("Event: MessageSent");
                 console.log("Contract:", logs[i].emitter);
@@ -96,6 +96,10 @@ contract BridgeInteraction is Script {
                 // topics[1] is the indexed nonce
                 uint128 eventNonce = uint128(uint256(logs[i].topics[1]));
                 console.log("Indexed Nonce:", uint256(eventNonce));
+
+                // topics[2] is the indexed block_number
+                uint256 eventBlockNumber = uint256(logs[i].topics[2]);
+                console.log("Indexed Block Number:", eventBlockNumber);
 
                 // Decode payload from event data
                 bytes memory payload = abi.decode(logs[i].data, (bytes));
@@ -114,6 +118,7 @@ contract BridgeInteraction is Script {
                 console.log("");
                 console.log("=== Decoded Bridge Message ===");
                 console.log("Bridge Amount:", bridgeAmount / 1e18, "G tokens");
+                console.log("Bridge Amount (wei):", bridgeAmount);
                 console.log("Recipient:", bridgeRecipient);
 
                 // Display raw payload in hex

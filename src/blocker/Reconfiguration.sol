@@ -266,13 +266,20 @@ contract Reconfiguration is IReconfiguration {
         GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
         EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
-        // 2. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
+        // 2. Auto-evict underperforming validators based on completed epoch's performance data
+        //    Must happen AFTER config apply (so autoEvictEnabled reflects latest governance decision)
+        //    and BEFORE onNewEpoch() (so evicted validators are processed in this same transition).
+        //    Evicted validators go ACTIVE → PENDING_INACTIVE here, then PENDING_INACTIVE → INACTIVE
+        //    in onNewEpoch() below — all within one epoch transition (no buffer epoch).
+        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
+
+        // 3. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
         //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
         //    before config_ref.epoch is incremented. This ensures validator set
         //    changes are processed in the context of the current epoch.
         IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
 
-        // 3. Reset performance tracker for the new epoch
+        // 4. Reset performance tracker for the new epoch
         //    Must happen AFTER ValidatorManagement.onNewEpoch() so that perf data
         //    is available for future rewards distribution.
         //    Following Aptos pattern: validator_perf.validators is reset and
@@ -280,20 +287,20 @@ contract Reconfiguration is IReconfiguration {
         uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();
         IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);
 
-        // 4. Increment epoch and update timestamp
+        // 5. Increment epoch and update timestamp
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
-        // 5. Reset state
+        // 6. Reset state
         _transitionState = TransitionState.Idle;
 
-        // 6. Get finalized validator set for NewEpochEvent
+        // 7. Get finalized validator set for NewEpochEvent
         ValidatorConsensusInfo[] memory validatorSet =
             IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
         uint256 totalVotingPower = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower();
 
-        // 7. Emit events
+        // 8. Emit events
         //    - EpochTransitioned: simple event for internal tracking
         //    - NewEpochEvent: full validator set for consensus engine
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);

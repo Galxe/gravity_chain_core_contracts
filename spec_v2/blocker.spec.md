@@ -8,10 +8,11 @@ layer: blocker
 
 ## Overview
 
-The Blocker layer provides epoch lifecycle management and block prologue functionality for Gravity's consensus. It consists of two contracts:
+The Blocker layer provides epoch lifecycle management and block prologue functionality for Gravity's consensus. It consists of three contracts:
 
 - **Reconfiguration.sol** - Central orchestrator for epoch transitions with DKG coordination
 - **Blocker.sol** - Block prologue entry point called by VM at each block start
+- **ValidatorPerformanceTracker.sol** - Tracks per-validator proposal statistics within each epoch
 
 Key design principles:
 
@@ -24,9 +25,11 @@ Key design principles:
 
 ```
 src/blocker/
-├── IReconfiguration.sol  # Interface for Reconfiguration
-├── Reconfiguration.sol   # Epoch lifecycle management
-└── Blocker.sol           # Block prologue entry point
+├── IReconfiguration.sol              # Interface for Reconfiguration
+├── Reconfiguration.sol               # Epoch lifecycle management
+├── Blocker.sol                       # Block prologue entry point
+├── IValidatorPerformanceTracker.sol   # Interface for performance tracker
+└── ValidatorPerformanceTracker.sol    # Per-epoch validator performance tracking
 ```
 
 ### Dependency Graph
@@ -37,6 +40,7 @@ flowchart TD
         B[Blocker]
         R[Reconfiguration]
         IR[IReconfiguration]
+        VPT[ValidatorPerformanceTracker]
     end
     
     subgraph Foundation[Foundation Layer]
@@ -51,6 +55,7 @@ flowchart TD
         DKG[DKG]
         RC[RandomnessConfig]
         EC[EpochConfig]
+        VC[ValidatorConfig]
     end
     
     subgraph Staking[Staking Layer]
@@ -62,6 +67,7 @@ flowchart TD
     B --> R
     B --> TS
     B --> VM
+    B --> VPT
     
     R --> IR
     R --> SA
@@ -73,6 +79,10 @@ flowchart TD
     R --> RC
     R --> EC
     R --> VM
+    R --> VPT
+    
+    VM --> VC
+    VM --> VPT
     
     subgraph Callers[External Callers]
         RUNTIME[VM Runtime]
@@ -91,6 +101,7 @@ flowchart TD
 |----------|---------|-------------|
 | `BLOCK` | `0x0000000000000000000000000001625F2016` | Blocker contract |
 | `RECONFIGURATION` | `0x0000000000000000000000000001625F2010` | Reconfiguration contract |
+| `PERFORMANCE_TRACKER` | `0x0000000000000000000000000001625F2005` | Validator performance tracker |
 
 ---
 
@@ -224,13 +235,19 @@ Finish epoch transition after DKG completes.
 2. If `dkgResult` is non-empty, finish DKG session
 3. Clear any incomplete DKG session
 4. Apply pending RandomnessConfig
-5. **Call `ValidatorManagement.onNewEpoch()` BEFORE incrementing epoch** (Aptos pattern)
-6. Increment epoch: `currentEpoch++`
-7. Update `lastReconfigurationTime`
-8. Set `transitionState = Idle`
-9. Emit `EpochTransitioned(newEpoch, timestamp)`
+5. **Auto-evict underperforming validators** via `ValidatorManagement.evictUnderperformingValidators()`
+6. **Call `ValidatorManagement.onNewEpoch()` BEFORE incrementing epoch** (Aptos pattern)
+7. Reset `ValidatorPerformanceTracker.onNewEpoch(activeValidatorCount)`
+8. Increment epoch: `currentEpoch++`
+9. Update `lastReconfigurationTime`
+10. Set `transitionState = Idle`
+11. Emit `EpochTransitioned(newEpoch, timestamp)`
 
-> **Important**: The ordering matters. `ValidatorManagement.onNewEpoch()` is called before the epoch is incremented, matching Aptos's `reconfiguration.move` where `stake::on_new_epoch()` is called before `config_ref.epoch += 1`. ValidatorManagement reads the current epoch directly from the Reconfiguration contract.
+> **Important**: The ordering matters:
+> - Config is applied first so that `autoEvictEnabled` reflects the latest governance decision
+> - Auto-eviction runs after config apply and before `onNewEpoch()` so evicted validators go ACTIVE → PENDING_INACTIVE here, then PENDING_INACTIVE → INACTIVE in `onNewEpoch()` — all within one epoch transition
+> - `ValidatorManagement.onNewEpoch()` is called before the epoch is incremented, matching Aptos's `reconfiguration.move`
+> - Performance tracker is reset after `onNewEpoch()` so perf data is available during epoch processing
 
 **Reverts**:
 - `ReconfigurationNotInProgress` - No transition in progress
@@ -292,9 +309,10 @@ Called by VM runtime at the start of each block.
    - If `proposerIndex == type(uint64).max` (NIL block): use `SYSTEM_CALLER`
    - Otherwise: query `ValidatorManagement.getActiveValidatorByIndex(proposerIndex).validator`
 2. Update global timestamp via `Timestamp.updateGlobalTime(validatorAddr, timestampMicros)`
-3. Call `Reconfiguration.checkAndStartTransition()`
-4. Get current epoch from Reconfiguration
-5. Emit `BlockStarted(block.number, epoch, validatorAddr, timestampMicros)`
+3. Update `ValidatorPerformanceTracker.updateStatistics(proposerIndex, failedProposerIndices)`
+4. Call `Reconfiguration.checkAndStartTransition()`
+5. Get current epoch from Reconfiguration
+6. Emit `BlockStarted(block.number, epoch, validatorAddr, timestampMicros)`
 
 > **Note**: Using validator indices (instead of consensus public keys) aligns with Aptos's `block_prologue` approach where the consensus layer passes proposer indices.
 
@@ -311,6 +329,10 @@ Called by VM runtime at the start of each block.
 | `Blocker.initialize()` | GENESIS only |
 | `Blocker.onBlockStart()` | SYSTEM_CALLER only |
 | `Blocker.isInitialized()` | Anyone |
+| `ValidatorPerformanceTracker.initialize()` | GENESIS only |
+| `ValidatorPerformanceTracker.updateStatistics()` | BLOCK only |
+| `ValidatorPerformanceTracker.onNewEpoch()` | RECONFIGURATION only |
+| `ValidatorPerformanceTracker` view functions | Anyone |
 
 > **Note**: `setEpochIntervalMicros()` is now in `EpochConfig`, not `Reconfiguration`.
 
@@ -366,11 +388,15 @@ Called by VM runtime at the start of each block.
 │       ├── DKG.finish(dkgResult) (if result provided)                         │
 │       ├── DKG.tryClearIncompleteSession()                                    │
 │       ├── RandomnessConfig.applyPendingConfig()                              │
+│       ├── GovernanceConfig.applyPendingConfig()                              │
+│       ├── EpochConfig.applyPendingConfig()                                   │
+│       ├── ValidatorManagement.evictUnderperformingValidators()  ◄── NEW      │
 │       ├── ValidatorManagement.onNewEpoch() (BEFORE incrementing epoch)       │
+│       ├── ValidatorPerformanceTracker.onNewEpoch(activeCount)                │
 │       ├── currentEpoch++                                                     │
 │       ├── lastReconfigurationTime = now                                      │
 │       ├── transitionState = Idle                                             │
-│       └── Emit EpochTransitioned                                             │
+│       └── Emit EpochTransitioned + NewEpochEvent                             │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -524,4 +550,25 @@ This is acceptable behavior since the chain was down anyway.
 - Using validator indices instead of consensus public keys matches Aptos's consensus layer design
 - Moving epoch interval to `EpochConfig` follows the pattern of centralizing runtime configuration
 - The epoch transition ordering fix ensures validator set changes are processed in the context of the current epoch before advancing
+
+### 2026-02-10: ValidatorPerformanceTracker and Auto-Eviction Integration
+
+**New Contract: `ValidatorPerformanceTracker.sol`**:
+- Tracks per-validator successful and failed proposal counts within each epoch
+- Called by `Blocker.onBlockStart()` every block to record proposer outcomes
+- Reset by `Reconfiguration._applyReconfiguration()` at epoch boundaries
+- Performance data consumed by `ValidatorManagement.evictUnderperformingValidators()`
+- Follows Aptos `stake::ValidatorPerformance` pattern
+
+**Reconfiguration Changes**:
+- Added `evictUnderperformingValidators()` call between config apply and `onNewEpoch()`
+- Added `ValidatorPerformanceTracker.onNewEpoch()` call after `onNewEpoch()` to reset perf counters
+- Updated step numbering in `_applyReconfiguration()` to reflect new steps
+
+**Blocker Changes**:
+- Added `ValidatorPerformanceTracker.updateStatistics()` call in `onBlockStart()`
+
+**Rationale**:
+- Auto-eviction provides a mechanism to remove validators that fail to produce blocks
+- The eviction step is placed after config apply (so `autoEvictEnabled` reflects latest governance) and before `onNewEpoch()` (so evicted validators transition to INACTIVE in the same epoch)
 

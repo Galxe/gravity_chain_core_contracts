@@ -34,6 +34,8 @@ contract ValidatorConfig {
         bool allowValidatorSetChange;
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
+        bool autoEvictEnabled;
+        uint256 autoEvictThreshold;
     }
 
     // ========================================================================
@@ -57,6 +59,14 @@ contract ValidatorConfig {
 
     /// @notice Maximum number of validators in the set
     uint256 public maxValidatorSetSize;
+
+    /// @notice Whether auto-eviction of underperforming validators is enabled
+    bool public autoEvictEnabled;
+
+    /// @notice Minimum successful proposals required to avoid auto-eviction
+    /// @dev Validators with successfulProposals <= this threshold are evicted at epoch boundary.
+    ///      Default 0 means only validators with zero successful proposals are evicted.
+    uint256 public autoEvictThreshold;
 
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
@@ -92,13 +102,17 @@ contract ValidatorConfig {
     /// @param _allowValidatorSetChange Whether validators can join/leave post-genesis
     /// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)
     /// @param _maxValidatorSetSize Max validators in set (1-65536)
+    /// @param _autoEvictEnabled Whether auto-eviction is enabled at genesis
+    /// @param _autoEvictThreshold Minimum successful proposals to avoid eviction
     function initialize(
         uint256 _minimumBond,
         uint256 _maximumBond,
         uint64 _unbondingDelayMicros,
         bool _allowValidatorSetChange,
         uint64 _votingPowerIncreaseLimitPct,
-        uint256 _maxValidatorSetSize
+        uint256 _maxValidatorSetSize,
+        bool _autoEvictEnabled,
+        uint256 _autoEvictThreshold
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
@@ -117,6 +131,8 @@ contract ValidatorConfig {
         allowValidatorSetChange = _allowValidatorSetChange;
         votingPowerIncreaseLimitPct = _votingPowerIncreaseLimitPct;
         maxValidatorSetSize = _maxValidatorSetSize;
+        autoEvictEnabled = _autoEvictEnabled;
+        autoEvictThreshold = _autoEvictThreshold;
 
         _initialized = true;
 
@@ -153,13 +169,17 @@ contract ValidatorConfig {
     /// @param _allowValidatorSetChange Whether validators can join/leave post-genesis
     /// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)
     /// @param _maxValidatorSetSize Max validators in set (1-65536)
+    /// @param _autoEvictEnabled Whether auto-eviction is enabled
+    /// @param _autoEvictThreshold Minimum successful proposals to avoid eviction
     function setForNextEpoch(
         uint256 _minimumBond,
         uint256 _maximumBond,
         uint64 _unbondingDelayMicros,
         bool _allowValidatorSetChange,
         uint64 _votingPowerIncreaseLimitPct,
-        uint256 _maxValidatorSetSize
+        uint256 _maxValidatorSetSize,
+        bool _autoEvictEnabled,
+        uint256 _autoEvictThreshold
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
@@ -175,7 +195,9 @@ contract ValidatorConfig {
             unbondingDelayMicros: _unbondingDelayMicros,
             allowValidatorSetChange: _allowValidatorSetChange,
             votingPowerIncreaseLimitPct: _votingPowerIncreaseLimitPct,
-            maxValidatorSetSize: _maxValidatorSetSize
+            maxValidatorSetSize: _maxValidatorSetSize,
+            autoEvictEnabled: _autoEvictEnabled,
+            autoEvictThreshold: _autoEvictThreshold
         });
         hasPendingConfig = true;
 
@@ -204,6 +226,8 @@ contract ValidatorConfig {
         allowValidatorSetChange = _pendingConfig.allowValidatorSetChange;
         votingPowerIncreaseLimitPct = _pendingConfig.votingPowerIncreaseLimitPct;
         maxValidatorSetSize = _pendingConfig.maxValidatorSetSize;
+        autoEvictEnabled = _pendingConfig.autoEvictEnabled;
+        autoEvictThreshold = _pendingConfig.autoEvictThreshold;
 
         hasPendingConfig = false;
 

@@ -141,7 +141,7 @@ contract ConsensusEngineFlowTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         validatorConfig.initialize(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
 
         vm.prank(SystemAddresses.GENESIS);

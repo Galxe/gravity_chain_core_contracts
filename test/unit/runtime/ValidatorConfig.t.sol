@@ -53,7 +53,9 @@ contract ValidatorConfigTest is Test {
 
     function test_Initialize() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
 
         assertEq(config.minimumBond(), MIN_BOND);
         assertEq(config.maximumBond(), MAX_BOND);
@@ -66,7 +68,9 @@ contract ValidatorConfigTest is Test {
 
     function test_Initialize_MinEqualsMax() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MIN_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MIN_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
 
         assertEq(config.minimumBond(), MIN_BOND);
         assertEq(config.maximumBond(), MIN_BOND);
@@ -75,59 +79,67 @@ contract ValidatorConfigTest is Test {
     function test_RevertWhen_Initialize_ZeroMinimumBond() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidMinimumBond.selector);
-        config.initialize(0, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(0, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0);
     }
 
     function test_RevertWhen_Initialize_MaxLessThanMin() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.MinimumBondExceedsMaximum.selector, MIN_BOND, MIN_BOND - 1));
-        config.initialize(MIN_BOND, MIN_BOND - 1, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MIN_BOND - 1, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     function test_RevertWhen_Initialize_ZeroUnbondingDelay() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
-        config.initialize(MIN_BOND, MAX_BOND, 0, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(MIN_BOND, MAX_BOND, 0, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0);
     }
 
     function test_RevertWhen_Initialize_ZeroVotingPowerLimit() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidVotingPowerIncreaseLimit.selector, 0));
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, 0, MAX_VALIDATORS);
+        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, 0, MAX_VALIDATORS, false, 0);
     }
 
     function test_RevertWhen_Initialize_VotingPowerLimitTooHigh() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidVotingPowerIncreaseLimit.selector, 51));
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, 51, MAX_VALIDATORS);
+        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, 51, MAX_VALIDATORS, false, 0);
     }
 
     function test_RevertWhen_Initialize_ZeroMaxValidatorSetSize() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidValidatorSetSize.selector, 0));
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, 0);
+        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, 0, false, 0);
     }
 
     function test_RevertWhen_Initialize_MaxValidatorSetSizeTooHigh() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidValidatorSetSize.selector, 65537));
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, 65537);
+        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, 65537, false, 0);
     }
 
     function test_RevertWhen_Initialize_AlreadyInitialized() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.AlreadyInitialized.selector);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     function test_RevertWhen_Initialize_NotGenesis() public {
         address notGenesis = address(0x1234);
         vm.prank(notGenesis);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGenesis, SystemAddresses.GENESIS));
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     // ========================================================================
@@ -146,7 +158,7 @@ contract ValidatorConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(
-            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators
+            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators, false, 0
         );
 
         // Should not change current values, only set pending
@@ -169,7 +181,9 @@ contract ValidatorConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidMinimumBond.selector);
-        config.setForNextEpoch(0, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.setForNextEpoch(
+            0, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     function test_RevertWhen_SetForNextEpoch_MaxLessThanMin() public {
@@ -178,14 +192,16 @@ contract ValidatorConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(abi.encodeWithSelector(Errors.MinimumBondExceedsMaximum.selector, MIN_BOND, MIN_BOND - 1));
         config.setForNextEpoch(
-            MIN_BOND, MIN_BOND - 1, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND, MIN_BOND - 1, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
     function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.ValidatorConfigNotInitialized.selector);
-        config.setForNextEpoch(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     function test_RevertWhen_SetForNextEpoch_NotGovernance() public {
@@ -195,7 +211,7 @@ contract ValidatorConfigTest is Test {
         vm.prank(notGovernance);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGovernance, SystemAddresses.GOVERNANCE));
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
@@ -206,7 +222,7 @@ contract ValidatorConfigTest is Test {
         vm.expectEmit(false, false, false, true);
         emit ValidatorConfig.PendingValidatorConfigSet();
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
@@ -226,7 +242,7 @@ contract ValidatorConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(
-            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators
+            newMinBond, newMaxBond, newUnbondingDelay, newAllowChanges, newVotingPowerLimit, newMaxValidators, false, 0
         );
 
         vm.prank(SystemAddresses.RECONFIGURATION);
@@ -257,7 +273,7 @@ contract ValidatorConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
 
         address notReconfiguration = address(0x1234);
@@ -273,7 +289,7 @@ contract ValidatorConfigTest is Test {
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
 
         vm.prank(SystemAddresses.RECONFIGURATION);
@@ -294,7 +310,7 @@ contract ValidatorConfigTest is Test {
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.GENESIS, SystemAddresses.GOVERNANCE)
         );
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
@@ -306,7 +322,7 @@ contract ValidatorConfigTest is Test {
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.SYSTEM_CALLER, SystemAddresses.GOVERNANCE)
         );
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
@@ -318,7 +334,7 @@ contract ValidatorConfigTest is Test {
             abi.encodeWithSelector(NotAllowed.selector, SystemAddresses.RECONFIGURATION, SystemAddresses.GOVERNANCE)
         );
         config.setForNextEpoch(
-            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS
+            MIN_BOND * 2, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
         );
     }
 
@@ -342,7 +358,7 @@ contract ValidatorConfigTest is Test {
         maxValidators = bound(maxValidators, 1, 65536);
 
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(minBond, maxBond, unbondingDelay, allowChanges, votingPowerLimit, maxValidators);
+        config.initialize(minBond, maxBond, unbondingDelay, allowChanges, votingPowerLimit, maxValidators, false, 0);
 
         assertEq(config.minimumBond(), minBond);
         assertEq(config.maximumBond(), maxBond);
@@ -370,7 +386,9 @@ contract ValidatorConfigTest is Test {
         maxValidators = bound(maxValidators, 1, 65536);
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        config.setForNextEpoch(minBond, maxBond, unbondingDelay, allowChanges, votingPowerLimit, maxValidators);
+        config.setForNextEpoch(
+            minBond, maxBond, unbondingDelay, allowChanges, votingPowerLimit, maxValidators, false, 0
+        );
 
         assertTrue(config.hasPendingConfig());
 
@@ -392,6 +410,8 @@ contract ValidatorConfigTest is Test {
 
     function _initializeConfig() internal {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS);
+        config.initialize(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 }

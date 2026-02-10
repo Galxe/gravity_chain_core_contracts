@@ -10,6 +10,7 @@ import { Errors } from "../foundation/Errors.sol";
 import { IValidatorConfig } from "../runtime/IValidatorConfig.sol";
 import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
+import { IValidatorPerformanceTracker } from "../blocker/IValidatorPerformanceTracker.sol";
 
 /// @title ValidatorManagement
 /// @author Gravity Team
@@ -499,6 +500,80 @@ contract ValidatorManagement is IValidatorManagement {
         // Get next epoch from Reconfiguration (will be incremented after this call)
         uint64 nextEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch() + 1;
         emit EpochProcessed(nextEpoch, _activeValidators.length, totalVotingPower);
+    }
+
+    /// @inheritdoc IValidatorManagement
+    /// @dev Called by Reconfiguration BEFORE onNewEpoch() during epoch transition.
+    ///      Reads the completed epoch's performance data and marks validators
+    ///      with successfulProposals <= autoEvictThreshold as PENDING_INACTIVE.
+    ///
+    ///      ## Timing Difference from leaveValidatorSet
+    ///
+    ///      Voluntary leave (leaveValidatorSet):
+    ///        Epoch N: operator calls leaveValidatorSet() → PENDING_INACTIVE
+    ///                 validator stays in active set, continues consensus for remainder of epoch N
+    ///        Epoch N+1 boundary: onNewEpoch() → INACTIVE
+    ///
+    ///      Auto-eviction (this function):
+    ///        Epoch N→N+1 boundary: evictUnderperformingValidators() → PENDING_INACTIVE
+    ///                              onNewEpoch() (same call) → INACTIVE
+    ///        Result: ACTIVE → PENDING_INACTIVE → INACTIVE in ONE epoch transition
+    ///
+    ///      This is intentional: a validator with 0 proposals in epoch N is non-functional,
+    ///      so there's no benefit to keeping it active for another epoch as a buffer.
+    function evictUnderperformingValidators() external {
+        requireAllowed(SystemAddresses.RECONFIGURATION);
+
+        // Check if auto-eviction is enabled
+        bool enabled = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictEnabled();
+        if (!enabled) {
+            return;
+        }
+
+        uint256 threshold = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictThreshold();
+
+        // Read performance data from the completed epoch
+        IValidatorPerformanceTracker.IndividualPerformance[] memory perfs =
+            IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).getAllPerformances();
+
+        uint256 activeLen = _activeValidators.length;
+        uint256 perfLen = perfs.length;
+
+        // Safety: perf array length should match active validator count.
+        // Use min to avoid out-of-bounds if there's a mismatch.
+        uint256 checkLen = activeLen < perfLen ? activeLen : perfLen;
+
+        for (uint256 i = 0; i < checkLen; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+
+            // Only evict ACTIVE validators (skip if already PENDING_INACTIVE from manual leave)
+            if (validator.status != ValidatorStatus.ACTIVE) {
+                continue;
+            }
+
+            // Check if validator meets eviction criteria
+            if (perfs[i].successfulProposals <= threshold) {
+                // Preserve liveness: never evict the last active validator
+                // Count remaining active validators (those not already pending inactive)
+                uint256 remainingActive = 0;
+                for (uint256 j = 0; j < activeLen; j++) {
+                    if (_validators[_activeValidators[j]].status == ValidatorStatus.ACTIVE) {
+                        remainingActive++;
+                    }
+                }
+                if (remainingActive <= 1) {
+                    // Cannot evict the last active validator — would halt consensus
+                    break;
+                }
+
+                // Mark as PENDING_INACTIVE for processing by onNewEpoch()
+                validator.status = ValidatorStatus.PENDING_INACTIVE;
+                _pendingInactive.push(pool);
+
+                emit ValidatorAutoEvicted(pool, perfs[i].successfulProposals);
+            }
+        }
     }
 
     /// @notice Apply deactivations for validators leaving the active set
