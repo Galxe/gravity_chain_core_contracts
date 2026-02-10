@@ -167,6 +167,11 @@ library Errors {
     /// @param pubkey The duplicate consensus public key
     error DuplicateConsensusPubkey(bytes pubkey);
 
+    /// @notice Consensus public key has invalid length (expected 48 bytes for BLS12-381 G1 compressed point)
+    /// @param expected Expected length in bytes
+    /// @param actual Actual length in bytes
+    error InvalidConsensusPubkeyLength(uint256 expected, uint256 actual);
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================
