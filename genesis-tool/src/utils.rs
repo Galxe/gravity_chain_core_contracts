@@ -81,6 +81,9 @@ pub const RECONFIGURATION_ADDR: Address = address!("0000000000000000000000000000
 /// Block prologue/epilogue handler
 pub const BLOCK_ADDR: Address = address!("00000000000000000000000000000001625F2004");
 
+/// Validator performance tracker contract
+pub const PERFORMANCE_TRACKER_ADDR: Address = address!("00000000000000000000000000000001625F2005");
+
 // Governance (0x1625F3xxx)
 /// Governance contract
 pub const GOVERNANCE_ADDR: Address = address!("00000000000000000000000000000001625F3000");
@@ -104,7 +107,7 @@ pub const NATIVE_MINT_PRECOMPILE_ADDR: Address = address!("000000000000000000000
 // Note: StakePool is created dynamically during Genesis.initialize, not pre-deployed
 // ============================================================================
 
-pub const CONTRACTS: [(&str, Address); 20] = [
+pub const CONTRACTS: [(&str, Address); 21] = [
     ("Genesis", GENESIS_ADDR),
     ("Reconfiguration", RECONFIGURATION_ADDR),
     ("StakingConfig", STAKE_CONFIG_ADDR),
@@ -113,6 +116,7 @@ pub const CONTRACTS: [(&str, Address); 20] = [
     ("Governance", GOVERNANCE_ADDR),
     ("ValidatorConfig", VALIDATOR_CONFIG_ADDR),
     ("Blocker", BLOCK_ADDR),
+    ("ValidatorPerformanceTracker", PERFORMANCE_TRACKER_ADDR),
     ("Timestamp", TIMESTAMP_ADDR),
     ("JWKManager", JWK_MANAGER_ADDR),
     ("NativeOracle", NATIVE_ORACLE_ADDR),
