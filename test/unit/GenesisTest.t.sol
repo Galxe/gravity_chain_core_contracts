@@ -95,7 +95,7 @@ contract GenesisTest is Test {
             owner: makeAddr("owner1"),
             stakeAmount: 200 ether,
             moniker: "Validator 1",
-            consensusPubkey: hex"1234",
+            consensusPubkey: hex"9112af1a4ef4038dfe24c5371e40b5bcfce16146bfc4ab819244ce57f5d002c4c3f06eca7273e733c0f78aada8c13deb",
             consensusPop: hex"5678",
             networkAddresses: bytes("/ip4/127.0.0.1/tcp/8000"),
             fullnodeAddresses: bytes("/ip4/127.0.0.1/tcp/9000"),

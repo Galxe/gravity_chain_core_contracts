@@ -65,7 +65,8 @@ contract ValidatorManagementTest is Test {
     uint256 constant MAX_VALIDATOR_SET_SIZE = 100;
 
     // Sample consensus key data
-    bytes constant CONSENSUS_PUBKEY = hex"1234567890abcdef";
+    bytes constant CONSENSUS_PUBKEY =
+        hex"9112af1a4ef4038dfe24c5371e40b5bcfce16146bfc4ab819244ce57f5d002c4c3f06eca7273e733c0f78aada8c13deb";
     bytes constant CONSENSUS_POP = hex"abcdef1234567890";
     bytes constant NETWORK_ADDRESSES = hex"0102030405060708";
     bytes constant FULLNODE_ADDRESSES = hex"0807060504030201";
@@ -134,8 +135,8 @@ contract ValidatorManagementTest is Test {
         string memory moniker
     ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
-        // Generate unique pubkey based on pool address
-        bytes memory uniquePubkey = abi.encodePacked(pool);
+        // Generate unique 48-byte pubkey based on pool address (BLS12-381 G1 compressed size)
+        bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
         vm.prank(owner); // owner is also operator by default
         validatorManager.registerValidator(
             pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -519,7 +520,8 @@ contract ValidatorManagementTest is Test {
 
     function test_rotateConsensusKey_success() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
-        bytes memory newPubkey = hex"deadbeef";
+        bytes memory newPubkey =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
         bytes memory newPop = hex"cafebabe";
 
         vm.prank(alice);
@@ -532,7 +534,8 @@ contract ValidatorManagementTest is Test {
 
     function test_rotateConsensusKey_emitsEvent() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
-        bytes memory newPubkey = hex"deadbeef";
+        bytes memory newPubkey =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
 
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
@@ -548,7 +551,8 @@ contract ValidatorManagementTest is Test {
     function test_RevertWhen_registerValidator_duplicatePubkey() public {
         // Alice registers with a specific pubkey
         address alicePool = _createStakePool(alice, MIN_BOND);
-        bytes memory alicePubkey = hex"a1cecafe00000001";
+        bytes memory alicePubkey =
+            hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -567,14 +571,16 @@ contract ValidatorManagementTest is Test {
     function test_RevertWhen_rotateConsensusKey_duplicatePubkey() public {
         // Alice and Bob register with different pubkeys
         address alicePool = _createStakePool(alice, MIN_BOND);
-        bytes memory alicePubkey = hex"a1cecafe00000001";
+        bytes memory alicePubkey =
+            hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
         address bobPool = _createStakePool(bob, MIN_BOND);
-        bytes memory bobPubkey = hex"b0b0b0b0b01234aa";
+        bytes memory bobPubkey =
+            hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -590,14 +596,16 @@ contract ValidatorManagementTest is Test {
     function test_rotateConsensusKey_clearsOldPubkey() public {
         // Alice registers with a specific pubkey
         address alicePool = _createStakePool(alice, MIN_BOND);
-        bytes memory aliceOldPubkey = hex"a1cecafe00000001";
+        bytes memory aliceOldPubkey =
+            hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
         // Alice rotates to a new key
-        bytes memory aliceNewPubkey = hex"a1ecafe000000002";
+        bytes memory aliceNewPubkey =
+            hex"a1ecafe00000000200000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
@@ -619,21 +627,24 @@ contract ValidatorManagementTest is Test {
     function test_rotateConsensusKey_uniqueKeySuccess() public {
         // Alice and Bob both register with different pubkeys
         address alicePool = _createStakePool(alice, MIN_BOND);
-        bytes memory alicePubkey = hex"a1cecafe00000001";
+        bytes memory alicePubkey =
+            hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
         address bobPool = _createStakePool(bob, MIN_BOND);
-        bytes memory bobPubkey = hex"b0b0b0b0b01234aa";
+        bytes memory bobPubkey =
+            hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
         // Alice rotates to a completely new key (not Bob's)
-        bytes memory aliceNewPubkey = hex"a1ecafe000000003";
+        bytes memory aliceNewPubkey =
+            hex"a1ecafe00000000300000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
@@ -1846,7 +1857,7 @@ contract ValidatorManagementTest is Test {
         genesisValidators[0] = GenesisValidator({
             stakePool: alice,
             moniker: "alice",
-            consensusPubkey: hex"1111",
+            consensusPubkey: hex"111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
             consensusPop: hex"2222",
             networkAddresses: NETWORK_ADDRESSES,
             fullnodeAddresses: FULLNODE_ADDRESSES,
@@ -1856,7 +1867,7 @@ contract ValidatorManagementTest is Test {
         genesisValidators[1] = GenesisValidator({
             stakePool: bob,
             moniker: "bob",
-            consensusPubkey: hex"3333",
+            consensusPubkey: hex"333300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
             consensusPop: hex"4444",
             networkAddresses: NETWORK_ADDRESSES,
             fullnodeAddresses: FULLNODE_ADDRESSES,
@@ -1875,13 +1886,19 @@ contract ValidatorManagementTest is Test {
         assertEq(activeValidators[0].validator, alice);
         assertEq(activeValidators[0].votingPower, 100 ether);
         assertEq(activeValidators[0].validatorIndex, 0);
-        assertEq(activeValidators[0].consensusPubkey, hex"1111");
+        assertEq(
+            activeValidators[0].consensusPubkey,
+            hex"111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        );
 
         // Verify bob's consensus info
         assertEq(activeValidators[1].validator, bob);
         assertEq(activeValidators[1].votingPower, 200 ether);
         assertEq(activeValidators[1].validatorIndex, 1);
-        assertEq(activeValidators[1].consensusPubkey, hex"3333");
+        assertEq(
+            activeValidators[1].consensusPubkey,
+            hex"333300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        );
     }
 
     /// @notice Fuzz test for initialization with varying validator counts

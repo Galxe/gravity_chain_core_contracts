@@ -43,6 +43,9 @@ contract ValidatorManagement is IValidatorManagement {
     /// @notice Maximum moniker length in bytes
     uint256 public constant MAX_MONIKER_LENGTH = 31;
 
+    /// @notice Expected BLS12-381 G1 compressed public key length in bytes
+    uint256 public constant BLS12381_PUBKEY_LENGTH = 48;
+
     /// @notice Precision factor for percentage calculations
     uint256 internal constant PRECISION_FACTOR = 1e4;
 
@@ -127,6 +130,9 @@ contract ValidatorManagement is IValidatorManagement {
             if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
                 revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
             }
+
+            // Validate consensus pubkey length
+            _validateConsensusPubkey(v.consensusPubkey);
 
             // Create validator record
             ValidatorRecord storage record = _validators[v.stakePool];
@@ -258,6 +264,22 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
+    /// @notice Validate consensus public key format
+    /// @dev BLS12-381 G1 compressed public key must be exactly 48 bytes.
+    ///      This prevents obviously invalid keys from entering on-chain storage.
+    ///      Note: Full validation (compression flags, x < field modulus, point-on-curve)
+    ///      is performed by blst::min_pk::PublicKey::from_bytes() in the Rust consensus node.
+    ///      Replicating those checks in Solidity is impractical since the most critical one
+    ///      (point-on-curve: checking x^3+4 is a quadratic residue mod p) requires 381-bit
+    ///      modular arithmetic that EVM does not natively support.
+    function _validateConsensusPubkey(
+        bytes calldata consensusPubkey
+    ) internal pure {
+        if (consensusPubkey.length != BLS12381_PUBKEY_LENGTH) {
+            revert Errors.InvalidConsensusPubkeyLength(BLS12381_PUBKEY_LENGTH, consensusPubkey.length);
+        }
+    }
+
     /// @notice Create the validator record
     function _createValidatorRecord(
         address stakePool,
@@ -267,6 +289,9 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) internal {
+        // Validate consensus pubkey length
+        _validateConsensusPubkey(consensusPubkey);
+
         ValidatorRecord storage record = _validators[stakePool];
 
         // Set identity and metadata
@@ -414,6 +439,9 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata newPubkey,
         bytes calldata newPop
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
+        // Validate consensus pubkey length
+        _validateConsensusPubkey(newPubkey);
+
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Check new pubkey is unique

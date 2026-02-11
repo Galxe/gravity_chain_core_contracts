@@ -69,7 +69,8 @@ contract ConsensusEngineFlowTest is Test {
     uint256 constant MAX_VALIDATOR_SET_SIZE = 100;
 
     // Sample consensus key data
-    bytes constant CONSENSUS_PUBKEY = hex"1234567890abcdef";
+    bytes constant CONSENSUS_PUBKEY =
+        hex"9112af1a4ef4038dfe24c5371e40b5bcfce16146bfc4ab819244ce57f5d002c4c3f06eca7273e733c0f78aada8c13deb";
     bytes constant CONSENSUS_POP = hex"abcdef1234567890";
     bytes constant NETWORK_ADDRESSES = hex"0102030405060708";
     bytes constant FULLNODE_ADDRESSES = hex"0807060504030201";
@@ -204,8 +205,8 @@ contract ConsensusEngineFlowTest is Test {
         string memory moniker
     ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
-        // Generate unique pubkey based on pool address to
-        bytes memory uniquePubkey = abi.encodePacked(pool);
+        // Generate unique 48-byte pubkey based on pool address (BLS12-381 G1 compressed size)
+        bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
         vm.prank(owner);
         validatorManager.registerValidator(
             pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
