@@ -21,6 +21,7 @@ import { ValidatorManagement } from "./staking/ValidatorManagement.sol";
 import { IValidatorManagement, GenesisValidator } from "./staking/IValidatorManagement.sol";
 import { Reconfiguration } from "./blocker/Reconfiguration.sol";
 import { Blocker } from "./blocker/Blocker.sol";
+import { ValidatorPerformanceTracker } from "./blocker/ValidatorPerformanceTracker.sol";
 import { NativeOracle } from "./oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "./oracle/jwk/JWKManager.sol";
 import { OracleTaskConfig } from "./oracle/OracleTaskConfig.sol";
@@ -42,6 +43,8 @@ contract Genesis {
         bool allowValidatorSetChange;
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
+        bool autoEvictEnabled;
+        uint256 autoEvictThreshold;
     }
 
     struct StakingConfigParams {
@@ -154,10 +157,12 @@ contract Genesis {
         // 4. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);
 
-        // 5. Initialize Reconfiguration
+        // 5. Initialize Performance Tracker (before Reconfiguration, since first epoch needs tracking)
+        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(params.validators.length);
+        // 6. Initialize Reconfiguration
         Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
-        // 6. Initialize Blocker
+        // 7. Initialize Blocker
         Blocker(SystemAddresses.BLOCK).initialize();
 
         _isInitialized = true;
@@ -178,7 +183,9 @@ contract Genesis {
                 params.validatorConfig.unbondingDelayMicros,
                 params.validatorConfig.allowValidatorSetChange,
                 params.validatorConfig.votingPowerIncreaseLimitPct,
-                params.validatorConfig.maxValidatorSetSize
+                params.validatorConfig.maxValidatorSetSize,
+                params.validatorConfig.autoEvictEnabled,
+                params.validatorConfig.autoEvictThreshold
             );
 
         StakingConfig(SystemAddresses.STAKE_CONFIG)

@@ -62,6 +62,11 @@ interface IValidatorManagement {
     /// @param stakePool Address of the validator's stake pool
     event ValidatorDeactivated(address indexed stakePool);
 
+    /// @notice Emitted when a validator is auto-evicted for underperformance
+    /// @param stakePool Address of the validator's stake pool
+    /// @param successfulProposals Number of successful proposals the validator had
+    event ValidatorAutoEvicted(address indexed stakePool, uint256 successfulProposals);
+
     /// @notice Emitted when a validator's consensus key is rotated
     /// @param stakePool Address of the validator's stake pool
     /// @param newPubkey New BLS public key
@@ -193,6 +198,17 @@ interface IValidatorManagement {
     ///      - Updates total voting power
     ///      - Increments internal epoch counter
     function onNewEpoch() external;
+
+    /// @notice Auto-evict underperforming validators at epoch boundary
+    /// @dev Only callable by RECONFIGURATION during epoch transition.
+    ///      Reads performance data from ValidatorPerformanceTracker and marks validators
+    ///      with successfulProposals <= autoEvictThreshold as PENDING_INACTIVE.
+    ///      Note: Unlike leaveValidatorSet, this happens DURING reconfiguration (not between epochs),
+    ///      so evicted validators are immediately processed by onNewEpoch() in the same call,
+    ///      going directly from ACTIVE → PENDING_INACTIVE → INACTIVE in one epoch transition.
+    ///      This is intentionally different from voluntary leave (which has a 1-epoch buffer)
+    ///      because the validator already demonstrated zero productivity in the completed epoch.
+    function evictUnderperformingValidators() external;
 
     // ========================================================================
     // VIEW FUNCTIONS

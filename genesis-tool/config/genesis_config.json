@@ -8,7 +8,9 @@
     "unbondingDelayMicros": 604800000000,
     "allowValidatorSetChange": true,
     "votingPowerIncreaseLimitPct": 20,
-    "maxValidatorSetSize": "100"
+    "maxValidatorSetSize": "100",
+    "autoEvictEnabled": false,
+    "autoEvictThreshold": "0"
   },
 
   "stakingConfig": {

@@ -24,6 +24,7 @@ import { Blocker } from "../../src/blocker/Blocker.sol";
 import { NativeOracle } from "../../src/oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "../../src/oracle/jwk/JWKManager.sol";
 import { Timestamp } from "../../src/runtime/Timestamp.sol";
+import { ValidatorPerformanceTracker } from "../../src/blocker/ValidatorPerformanceTracker.sol";
 
 contract GenesisTest is Test {
     Genesis genesis;
@@ -46,6 +47,7 @@ contract GenesisTest is Test {
         vm.etch(SystemAddresses.NATIVE_ORACLE, address(new NativeOracle()).code);
         vm.etch(SystemAddresses.JWK_MANAGER, address(new JWKManager()).code);
         vm.etch(SystemAddresses.TIMESTAMP, address(new Timestamp()).code);
+        vm.etch(SystemAddresses.PERFORMANCE_TRACKER, address(new ValidatorPerformanceTracker()).code);
 
         // Etch Genesis
         vm.etch(SystemAddresses.GENESIS, address(new Genesis()).code);

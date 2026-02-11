@@ -92,6 +92,10 @@ library SystemAddresses {
     /// @dev Called by VM at start/end of each block
     address internal constant BLOCK = address(0x0000000000000000000000000001625F2004);
 
+    /// @notice Validator performance tracker
+    /// @dev Tracks successful/failed proposals per validator per epoch (Aptos: ValidatorPerformance)
+    address internal constant PERFORMANCE_TRACKER = address(0x0000000000000000000000000001625F2005);
+
     // ==================== Governance (0x1625F3xxx) ====================
 
     /// @notice Governance contract

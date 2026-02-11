@@ -5,6 +5,7 @@ import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { ITimestampWriter } from "../runtime/ITimestampWriter.sol";
 import { IReconfiguration } from "./IReconfiguration.sol";
+import { IValidatorPerformanceTracker } from "./IValidatorPerformanceTracker.sol";
 import { IValidatorManagement } from "../staking/IValidatorManagement.sol";
 
 /// @title Blocker
@@ -87,9 +88,11 @@ contract Blocker {
     ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
 
-        // Silence unused variable warning - failedProposerIndices will be used when ValidatorPerformanceTracker is implemented
-        // TODO(yxia): track failed proposers for performance statistics (Aptos: stake::update_performance_statistics)
-        failedProposerIndices;
+        // Track proposal performance statistics (Aptos: stake::update_performance_statistics)
+        // Performance scores must be updated before the epoch transition check,
+        // as the transaction that triggers the transition is the last block in the previous epoch.
+        IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER)
+            .updateStatistics(proposerIndex, failedProposerIndices);
 
         // 1. Resolve proposer address from index
         //    NIL blocks have proposerIndex == NIL_PROPOSER_INDEX (type(uint64).max)

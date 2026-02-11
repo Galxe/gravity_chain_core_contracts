@@ -99,7 +99,7 @@ contract ValidatorManagementTest is Test {
         // Initialize ValidatorConfig
         vm.prank(SystemAddresses.GENESIS);
         validatorConfig.initialize(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
 
         // Set initial timestamp
@@ -307,7 +307,7 @@ contract ValidatorManagementTest is Test {
         // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
         validatorConfig.setForNextEpoch(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
         vm.prank(SystemAddresses.RECONFIGURATION);
         validatorConfig.applyPendingConfig();
@@ -957,7 +957,7 @@ contract ValidatorManagementTest is Test {
         // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
         validatorConfig.setForNextEpoch(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
         vm.prank(SystemAddresses.RECONFIGURATION);
         validatorConfig.applyPendingConfig();

@@ -23,6 +23,7 @@ import { GovernanceConfig } from "../../../src/runtime/GovernanceConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo, ValidatorStatus } from "../../../src/foundation/Types.sol";
+import { ValidatorPerformanceTracker } from "../../../src/blocker/ValidatorPerformanceTracker.sol";
 
 /// @title ConsensusEngineFlowTest
 /// @notice Integration tests simulating consensus engine interaction with reconfiguration
@@ -133,13 +134,15 @@ contract ConsensusEngineFlowTest is Test {
         vm.etch(SystemAddresses.BLOCK, address(new Blocker()).code);
         blocker = Blocker(SystemAddresses.BLOCK);
 
+        vm.etch(SystemAddresses.PERFORMANCE_TRACKER, address(new ValidatorPerformanceTracker()).code);
+
         // Initialize configs
         vm.prank(SystemAddresses.GENESIS);
         stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, 10 ether);
 
         vm.prank(SystemAddresses.GENESIS);
         validatorConfig.initialize(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
 
         vm.prank(SystemAddresses.GENESIS);
@@ -167,6 +170,10 @@ contract ConsensusEngineFlowTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         reconfig.initialize();
+
+        // Initialize ValidatorPerformanceTracker (0 validators initially, will be set by _processEpoch)
+        vm.prank(SystemAddresses.GENESIS);
+        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(0);
 
         // Fund test accounts
         vm.deal(alice, 10000 ether);

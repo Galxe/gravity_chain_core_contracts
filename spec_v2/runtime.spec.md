@@ -274,6 +274,8 @@ interface IValidatorConfig {
     function allowValidatorSetChange() external view returns (bool);
     function votingPowerIncreaseLimitPct() external view returns (uint64);
     function maxValidatorSetSize() external view returns (uint256);
+    function autoEvictEnabled() external view returns (bool);
+    function autoEvictThreshold() external view returns (uint256);
     function MAX_VOTING_POWER_INCREASE_LIMIT() external view returns (uint64);
     function MAX_VALIDATOR_SET_SIZE() external view returns (uint256);
 }
@@ -289,6 +291,8 @@ interface IValidatorConfig {
 | `allowValidatorSetChange` | `bool` | Whether validators can join/leave post-genesis | - |
 | `votingPowerIncreaseLimitPct` | `uint64` | Max % of voting power that can join per epoch | 1-50 |
 | `maxValidatorSetSize` | `uint256` | Maximum number of validators in the set | 1-65536 |
+| `autoEvictEnabled` | `bool` | Whether automatic eviction of underperforming validators is active | - |
+| `autoEvictThreshold` | `uint256` | Minimum successful proposals required to avoid eviction | >= 0 |
 
 ### Constants
 
@@ -659,7 +663,7 @@ This approach ensures:
 
 ### Simple Config Pattern
 
-Used by: `StakingConfig`, `ValidatorConfig`, `EpochConfig`, `VersionConfig`
+Used by: `StakingConfig`, `EpochConfig`, `VersionConfig`
 
 ```solidity
 // Initialize at genesis
@@ -680,7 +684,7 @@ function setParameter(value) external {
 
 ### Pending Config Pattern
 
-Used by: `RandomnessConfig`, `ConsensusConfig`, `ExecutionConfig`
+Used by: `RandomnessConfig`, `ConsensusConfig`, `ExecutionConfig`, `ValidatorConfig`
 
 ```solidity
 // Stage change for next epoch

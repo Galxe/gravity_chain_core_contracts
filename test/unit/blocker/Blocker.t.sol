@@ -17,6 +17,7 @@ import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
+import { ValidatorPerformanceTracker } from "../../../src/blocker/ValidatorPerformanceTracker.sol";
 
 /// @notice Mock ValidatorManagement for testing
 contract MockValidatorManagementBlocker {
@@ -69,6 +70,14 @@ contract MockValidatorManagementBlocker {
     function getCurrentEpoch() external view returns (uint64) {
         return currentEpoch;
     }
+
+    function getActiveValidatorCount() external view returns (uint256) {
+        return _validators.length;
+    }
+
+    function evictUnderperformingValidators() external {
+        // no-op for testing
+    }
 }
 
 /// @title BlockerTest
@@ -111,6 +120,9 @@ contract BlockerTest is Test {
         vm.etch(SystemAddresses.EPOCH_CONFIG, address(epochConfig).code);
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(validatorManagement).code);
 
+        // Deploy ValidatorPerformanceTracker
+        vm.etch(SystemAddresses.PERFORMANCE_TRACKER, address(new ValidatorPerformanceTracker()).code);
+
         // Initialize EpochConfig
         vm.prank(SystemAddresses.GENESIS);
         EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(TWO_HOURS);
@@ -143,7 +155,9 @@ contract BlockerTest is Test {
                 7 days * 1_000_000, // unbondingDelayMicros
                 true, // allowValidatorSetChange
                 20, // votingPowerIncreaseLimitPct
-                100 // maxValidatorSetSize
+                100, // maxValidatorSetSize
+                false, // autoEvictEnabled
+                0 // autoEvictThreshold
             );
 
         // Initialize VersionConfig
@@ -161,6 +175,10 @@ contract BlockerTest is Test {
 
         // Setup mock validators
         MockValidatorManagementBlocker(SystemAddresses.VALIDATOR_MANAGER).setValidators(_createValidators(3));
+
+        // Initialize ValidatorPerformanceTracker
+        vm.prank(SystemAddresses.GENESIS);
+        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(3);
     }
 
     // ========================================================================
