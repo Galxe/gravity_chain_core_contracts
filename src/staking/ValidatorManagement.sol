@@ -132,9 +132,6 @@ contract ValidatorManagement is IValidatorManagement {
                 revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
             }
 
-            // Validate consensus pubkey length
-            _validateConsensusPubkey(v.consensusPubkey);
-
             // Create validator record
             ValidatorRecord storage record = _validators[v.stakePool];
             record.validator = v.stakePool;
@@ -265,19 +262,20 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
-    /// @notice Validate consensus public key format
-    /// @dev BLS12-381 G1 compressed public key must be exactly 48 bytes.
-    ///      This prevents obviously invalid keys from entering on-chain storage.
-    ///      Note: Full validation (compression flags, x < field modulus, point-on-curve)
-    ///      is performed by blst::min_pk::PublicKey::from_bytes() in the Rust consensus node.
-    ///      Replicating those checks in Solidity is impractical since the most critical one
-    ///      (point-on-curve: checking x^3+4 is a quadratic residue mod p) requires 381-bit
-    ///      modular arithmetic that EVM does not natively support.
+    /// @notice Validate consensus public key with proof of possession
+    /// @dev Calls the BLS12-381 PoP verification precompile at 0x1625F5001.
+    ///      Input: pubkey (48 bytes) || pop (96 bytes) = 144 bytes
+    ///      Output: ABI-encoded bool (32 bytes)
+    ///      The precompile performs full validation: deserialization, subgroup check,
+    ///      and PoP signature verification.
     function _validateConsensusPubkey(
-        bytes calldata consensusPubkey
-    ) internal pure {
-        if (consensusPubkey.length != BLS12381_PUBKEY_LENGTH) {
-            revert Errors.InvalidConsensusPubkeyLength(BLS12381_PUBKEY_LENGTH, consensusPubkey.length);
+        bytes calldata consensusPubkey,
+        bytes calldata consensusPop
+    ) internal view {
+        bytes memory input = abi.encodePacked(consensusPubkey, consensusPop);
+        (bool success, bytes memory result) = SystemAddresses.BLS_POP_VERIFY_PRECOMPILE.staticcall(input);
+        if (!success || result.length < 32 || abi.decode(result, (uint256)) == 0) {
+            revert Errors.InvalidConsensusPopVerification();
         }
     }
 
@@ -290,8 +288,8 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) internal {
-        // Validate consensus pubkey length
-        _validateConsensusPubkey(consensusPubkey);
+        // Validate consensus pubkey with proof of possession
+        _validateConsensusPubkey(consensusPubkey, consensusPop);
 
         ValidatorRecord storage record = _validators[stakePool];
 
@@ -440,8 +438,8 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata newPubkey,
         bytes calldata newPop
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
-        // Validate consensus pubkey length
-        _validateConsensusPubkey(newPubkey);
+        // Validate consensus pubkey with proof of possession
+        _validateConsensusPubkey(newPubkey, newPop);
 
         ValidatorRecord storage validator = _validators[stakePool];
 
