@@ -13,8 +13,8 @@ import { PortalMessage } from "src/oracle/evm/PortalMessage.sol";
 /// @dev Reads amount and recipient from environment variables
 contract BridgeInteraction is Script {
     // Contract addresses (deployed on Sepolia at block 10195203)
-    address constant GRAVITY_PORTAL = 0x0f761B1B3c1aC9232C9015A7276692560aD6a05F;
-    address constant G_BRIDGE_SENDER = 0x3fc870008B1cc26f3614F14a726F8077227CA2c3;
+    address constant GRAVITY_PORTAL = 0x60fD4D8fB846D95CcDB1B0b81c5fed1e8b183375;
+    address constant G_BRIDGE_SENDER = 0x79226649b3A20231e6b468a9E1AbBD23d3DFbbC6;
 
     function run() external {
         // Load from environment
