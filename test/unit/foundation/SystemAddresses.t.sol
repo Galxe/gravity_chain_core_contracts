@@ -88,7 +88,7 @@ contract SystemAddressesTest is Test {
 
     /// @notice Test that all addresses are unique
     function test_AddressesUnique() public pure {
-        address[24] memory addresses = [
+        address[25] memory addresses = [
             // Consensus Engine
             SystemAddresses.SYSTEM_CALLER,
             SystemAddresses.GENESIS,

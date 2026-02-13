@@ -24,6 +24,7 @@ import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo, ValidatorStatus } from "../../../src/foundation/Types.sol";
 import { ValidatorPerformanceTracker } from "../../../src/blocker/ValidatorPerformanceTracker.sol";
+import { MockBlsPopVerify } from "../../utils/MockBlsPopVerify.sol";
 
 /// @title ConsensusEngineFlowTest
 /// @notice Integration tests simulating consensus engine interaction with reconfiguration
@@ -135,6 +136,9 @@ contract ConsensusEngineFlowTest is Test {
         blocker = Blocker(SystemAddresses.BLOCK);
 
         vm.etch(SystemAddresses.PERFORMANCE_TRACKER, address(new ValidatorPerformanceTracker()).code);
+
+        // Deploy mock BLS PoP precompile (real precompile lives in external EVM)
+        vm.etch(SystemAddresses.BLS_POP_VERIFY_PRECOMPILE, address(new MockBlsPopVerify()).code);
 
         // Initialize configs
         vm.prank(SystemAddresses.GENESIS);

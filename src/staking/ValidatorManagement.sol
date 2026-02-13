@@ -265,7 +265,7 @@ contract ValidatorManagement is IValidatorManagement {
     /// @notice Validate consensus public key with proof of possession
     /// @dev Calls the BLS12-381 PoP verification precompile at 0x1625F5001.
     ///      Input: pubkey (48 bytes) || pop (96 bytes) = 144 bytes
-    ///      Output: ABI-encoded bool (32 bytes)
+    ///      Output: ABI-encoded uint256 (32 bytes): 1 = valid, 0 = invalid
     ///      The precompile performs full validation: deserialization, subgroup check,
     ///      and PoP signature verification.
     function _validateConsensusPubkey(
