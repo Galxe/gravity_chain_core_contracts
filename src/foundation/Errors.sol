@@ -172,6 +172,9 @@ library Errors {
     /// @param actual Actual length in bytes
     error InvalidConsensusPubkeyLength(uint256 expected, uint256 actual);
 
+    /// @notice Consensus public key proof-of-possession verification failed
+    error InvalidConsensusPopVerification();
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================

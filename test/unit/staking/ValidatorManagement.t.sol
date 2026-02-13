@@ -14,6 +14,7 @@ import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
 import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
+import { MockBlsPopVerify } from "../../utils/MockBlsPopVerify.sol";
 
 /// @notice Mock Reconfiguration contract for testing
 contract MockReconfiguration {
@@ -90,6 +91,9 @@ contract ValidatorManagementTest is Test {
 
         // Deploy mock Reconfiguration at RECONFIGURATION address
         vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration()).code);
+
+        // Deploy mock BLS PoP precompile (real precompile lives in external EVM)
+        vm.etch(SystemAddresses.BLS_POP_VERIFY_PRECOMPILE, address(new MockBlsPopVerify()).code);
         mockReconfiguration = MockReconfiguration(SystemAddresses.RECONFIGURATION);
 
         // Initialize StakingConfig (with unbonding delay)

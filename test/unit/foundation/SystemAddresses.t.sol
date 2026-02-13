@@ -88,7 +88,7 @@ contract SystemAddressesTest is Test {
 
     /// @notice Test that all addresses are unique
     function test_AddressesUnique() public pure {
-        address[24] memory addresses = [
+        address[25] memory addresses = [
             // Consensus Engine
             SystemAddresses.SYSTEM_CALLER,
             SystemAddresses.GENESIS,
@@ -118,6 +118,7 @@ contract SystemAddressesTest is Test {
             SystemAddresses.ORACLE_REQUEST_QUEUE,
             // Precompiles
             SystemAddresses.NATIVE_MINT_PRECOMPILE,
+            SystemAddresses.BLS_POP_VERIFY_PRECOMPILE,
             address(0) // placeholder to make array size 24
         ];
 
@@ -169,6 +170,7 @@ contract SystemAddressesTest is Test {
 
         // Precompiles (0x1625F5xxx)
         assertEq(uint160(SystemAddresses.NATIVE_MINT_PRECOMPILE) >> shift, basePattern);
+        assertEq(uint160(SystemAddresses.BLS_POP_VERIFY_PRECOMPILE) >> shift, basePattern);
     }
 
     /// @notice Test address range categorization
@@ -234,6 +236,10 @@ contract SystemAddressesTest is Test {
         assertTrue(
             uint160(SystemAddresses.NATIVE_MINT_PRECOMPILE) >= precompileRangeStart
                 && uint160(SystemAddresses.NATIVE_MINT_PRECOMPILE) <= precompileRangeEnd
+        );
+        assertTrue(
+            uint160(SystemAddresses.BLS_POP_VERIFY_PRECOMPILE) >= precompileRangeStart
+                && uint160(SystemAddresses.BLS_POP_VERIFY_PRECOMPILE) <= precompileRangeEnd
         );
     }
 }

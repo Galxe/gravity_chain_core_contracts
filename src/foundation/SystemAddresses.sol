@@ -123,4 +123,8 @@ library SystemAddresses {
     /// @notice Native mint precompile
     /// @dev Callable by authorized system contracts to mint native G tokens
     address internal constant NATIVE_MINT_PRECOMPILE = address(0x0000000000000000000000000001625F5000);
+
+    /// @notice BLS12-381 proof-of-possession verification precompile
+    /// @dev Verifies consensus pubkey (48 bytes) + PoP (96 bytes) → bool
+    address internal constant BLS_POP_VERIFY_PRECOMPILE = address(0x0000000000000000000000000001625F5001);
 }
