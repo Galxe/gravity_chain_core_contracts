@@ -23,7 +23,8 @@
     "minVotingThreshold": "1000000000000000000",
     "requiredProposerStake": "10000000000000000000",
     "votingDurationMicros": 604800000000,
-    "executionDelayMicros": 86400000000
+    "executionDelayMicros": 86400000000,
+    "executionWindowMicros": 604800000000
   },
   "epochIntervalMicros": 7200000000,
   "majorVersion": 1,
@@ -48,7 +49,8 @@
     ],
     "bridgeConfig": {
       "deploy": true,
-      "trustedBridge": "0x3fc870008B1cc26f3614F14a726F8077227CA2c3"
+      "trustedBridge": "0x3fc870008B1cc26f3614F14a726F8077227CA2c3",
+      "trustedSourceId": 1
     },
     "tasks": [
       {

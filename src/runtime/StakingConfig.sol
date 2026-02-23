@@ -9,9 +9,20 @@ import { Errors } from "../foundation/Errors.sol";
 /// @author Gravity Team
 /// @notice Configuration parameters for governance staking
 /// @dev Initialized at genesis, updatable via governance (GOVERNANCE).
-///      Anyone can stake tokens to participate in governance voting.
-///      TODO(yxia): onNewEpoch() and pending config pattern?
+///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 contract StakingConfig {
+    // ========================================================================
+    // TYPES
+    // ========================================================================
+
+    /// @notice Pending configuration data structure
+    struct PendingConfig {
+        uint256 minimumStake;
+        uint64 lockupDurationMicros;
+        uint64 unbondingDelayMicros;
+        uint256 minimumProposalStake;
+    }
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -28,6 +39,12 @@ contract StakingConfig {
     /// @notice Minimum stake required to create governance proposals
     uint256 public minimumProposalStake;
 
+    /// @notice Pending configuration for next epoch
+    PendingConfig private _pendingConfig;
+
+    /// @notice Whether a pending configuration exists
+    bool public hasPendingConfig;
+
     /// @notice Whether the contract has been initialized
     bool private _initialized;
 
@@ -35,11 +52,14 @@ contract StakingConfig {
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when a configuration parameter is updated
-    /// @param param Parameter name hash
-    /// @param oldValue Previous value
-    /// @param newValue New value
-    event ConfigUpdated(bytes32 indexed param, uint256 oldValue, uint256 newValue);
+    /// @notice Emitted when configuration is applied at epoch boundary
+    event StakingConfigUpdated();
+
+    /// @notice Emitted when pending configuration is set by governance
+    event PendingStakingConfigSet();
+
+    /// @notice Emitted when pending configuration is cleared (applied or removed)
+    event PendingStakingConfigCleared();
 
     // ========================================================================
     // INITIALIZATION
@@ -47,10 +67,10 @@ contract StakingConfig {
 
     /// @notice Initialize the staking configuration
     /// @dev Can only be called once by GENESIS
-    /// @param _minimumStake Minimum stake for governance participation
+    /// @param _minimumStake Minimum stake for governance participation (must be > 0)
     /// @param _lockupDurationMicros Lockup duration in microseconds (must be > 0)
     /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
-    /// @param _minimumProposalStake Minimum stake to create proposals
+    /// @param _minimumProposalStake Minimum stake to create proposals (must be > 0)
     function initialize(
         uint256 _minimumStake,
         uint64 _lockupDurationMicros,
@@ -58,94 +78,114 @@ contract StakingConfig {
         uint256 _minimumProposalStake
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
-
-        if (_initialized) {
-            revert Errors.AlreadyInitialized();
-        }
-
-        if (_lockupDurationMicros == 0) {
-            revert Errors.InvalidLockupDuration();
-        }
-
-        if (_unbondingDelayMicros == 0) {
-            revert Errors.InvalidUnbondingDelay();
-        }
+        if (_initialized) revert Errors.AlreadyInitialized();
+        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros, _minimumProposalStake);
 
         minimumStake = _minimumStake;
         lockupDurationMicros = _lockupDurationMicros;
         unbondingDelayMicros = _unbondingDelayMicros;
         minimumProposalStake = _minimumProposalStake;
-
         _initialized = true;
+
+        emit StakingConfigUpdated();
     }
 
     // ========================================================================
-    // GOVERNANCE SETTERS (GOVERNANCE only)
+    // VIEW FUNCTIONS
     // ========================================================================
 
-    /// @notice Update minimum stake
-    /// @dev Only callable by GOVERNANCE
-    /// @param _minimumStake New minimum stake value
-    function setMinimumStake(
-        uint256 _minimumStake
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        uint256 oldValue = minimumStake;
-        minimumStake = _minimumStake;
-
-        emit ConfigUpdated("minimumStake", oldValue, _minimumStake);
+    /// @notice Get pending configuration if any
+    /// @return hasPending Whether a pending config exists
+    /// @return config The pending configuration (only valid if hasPending is true)
+    function getPendingConfig() external view returns (bool hasPending, PendingConfig memory config) {
+        _requireInitialized();
+        return (hasPendingConfig, _pendingConfig);
     }
 
-    /// @notice Update lockup duration
-    /// @dev Only callable by GOVERNANCE
-    /// @param _lockupDurationMicros New lockup duration in microseconds (must be > 0)
-    function setLockupDurationMicros(
-        uint64 _lockupDurationMicros
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        if (_lockupDurationMicros == 0) {
-            revert Errors.InvalidLockupDuration();
-        }
-
-        uint256 oldValue = lockupDurationMicros;
-        lockupDurationMicros = _lockupDurationMicros;
-
-        emit ConfigUpdated("lockupDurationMicros", oldValue, _lockupDurationMicros);
+    /// @notice Check if the contract has been initialized
+    /// @return True if initialized
+    function isInitialized() external view returns (bool) {
+        return _initialized;
     }
 
-    /// @notice Update unbonding delay
-    /// @dev Only callable by GOVERNANCE
-    /// @param _unbondingDelayMicros New unbonding delay in microseconds (must be > 0)
-    function setUnbondingDelayMicros(
-        uint64 _unbondingDelayMicros
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
+    // ========================================================================
+    // GOVERNANCE FUNCTIONS (GOVERNANCE only)
+    // ========================================================================
 
-        if (_unbondingDelayMicros == 0) {
-            revert Errors.InvalidUnbondingDelay();
-        }
-
-        uint256 oldValue = unbondingDelayMicros;
-        unbondingDelayMicros = _unbondingDelayMicros;
-
-        emit ConfigUpdated("unbondingDelayMicros", oldValue, _unbondingDelayMicros);
-    }
-
-    /// @notice Update minimum proposal stake
-    /// @dev Only callable by GOVERNANCE
-    /// @param _minimumProposalStake New minimum proposal stake value
-    function setMinimumProposalStake(
+    /// @notice Set configuration for next epoch
+    /// @dev Only callable by GOVERNANCE. Config will be applied at epoch boundary.
+    /// @param _minimumStake Minimum stake for governance participation (must be > 0)
+    /// @param _lockupDurationMicros Lockup duration in microseconds (must be > 0)
+    /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
+    /// @param _minimumProposalStake Minimum stake to create proposals (must be > 0)
+    function setForNextEpoch(
+        uint256 _minimumStake,
+        uint64 _lockupDurationMicros,
+        uint64 _unbondingDelayMicros,
         uint256 _minimumProposalStake
     ) external {
-        // TODO(yxia): should be moved to GovernanceConfig.
         requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros, _minimumProposalStake);
 
-        uint256 oldValue = minimumProposalStake;
-        minimumProposalStake = _minimumProposalStake;
+        _pendingConfig = PendingConfig({
+            minimumStake: _minimumStake,
+            lockupDurationMicros: _lockupDurationMicros,
+            unbondingDelayMicros: _unbondingDelayMicros,
+            minimumProposalStake: _minimumProposalStake
+        });
+        hasPendingConfig = true;
+        emit PendingStakingConfigSet();
+    }
 
-        emit ConfigUpdated("minimumProposalStake", oldValue, _minimumProposalStake);
+    // ========================================================================
+    // EPOCH TRANSITION (RECONFIGURATION only)
+    // ========================================================================
+
+    /// @notice Apply pending configuration at epoch boundary
+    /// @dev Only callable by RECONFIGURATION during epoch transition.
+    ///      If no pending config exists, this is a no-op.
+    function applyPendingConfig() external {
+        requireAllowed(SystemAddresses.RECONFIGURATION);
+        _requireInitialized();
+        if (!hasPendingConfig) return;
+
+        minimumStake = _pendingConfig.minimumStake;
+        lockupDurationMicros = _pendingConfig.lockupDurationMicros;
+        unbondingDelayMicros = _pendingConfig.unbondingDelayMicros;
+        minimumProposalStake = _pendingConfig.minimumProposalStake;
+        hasPendingConfig = false;
+
+        // Clear pending config storage
+        delete _pendingConfig;
+
+        emit StakingConfigUpdated();
+        emit PendingStakingConfigCleared();
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    /// @notice Validate configuration parameters
+    /// @param _minimumStake Minimum stake
+    /// @param _lockupDurationMicros Lockup duration
+    /// @param _unbondingDelayMicros Unbonding delay
+    /// @param _minimumProposalStake Minimum proposal stake
+    function _validateConfig(
+        uint256 _minimumStake,
+        uint64 _lockupDurationMicros,
+        uint64 _unbondingDelayMicros,
+        uint256 _minimumProposalStake
+    ) internal pure {
+        if (_minimumStake == 0) revert Errors.InvalidMinimumStake();
+        if (_lockupDurationMicros == 0) revert Errors.InvalidLockupDuration();
+        if (_unbondingDelayMicros == 0) revert Errors.InvalidUnbondingDelay();
+        if (_minimumProposalStake == 0) revert Errors.InvalidMinimumProposalStake();
+    }
+
+    /// @notice Require the contract to be initialized
+    function _requireInitialized() internal view {
+        if (!_initialized) revert Errors.StakingConfigNotInitialized();
     }
 }
-

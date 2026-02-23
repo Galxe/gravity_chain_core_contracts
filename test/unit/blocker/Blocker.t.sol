@@ -13,6 +13,7 @@ import { ExecutionConfig } from "../../../src/runtime/ExecutionConfig.sol";
 import { ValidatorConfig } from "../../../src/runtime/ValidatorConfig.sol";
 import { VersionConfig } from "../../../src/runtime/VersionConfig.sol";
 import { GovernanceConfig } from "../../../src/runtime/GovernanceConfig.sol";
+import { StakingConfig } from "../../../src/runtime/StakingConfig.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
@@ -137,6 +138,7 @@ contract BlockerTest is Test {
         vm.etch(SystemAddresses.VALIDATOR_CONFIG, address(new ValidatorConfig()).code);
         vm.etch(SystemAddresses.VERSION_CONFIG, address(new VersionConfig()).code);
         vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);
+        vm.etch(SystemAddresses.STAKE_CONFIG, address(new StakingConfig()).code);
 
         // Initialize ConsensusConfig
         vm.prank(SystemAddresses.GENESIS);
@@ -171,7 +173,18 @@ contract BlockerTest is Test {
                 1000 ether, // minVotingThreshold
                 100 ether, // requiredProposerStake
                 7 days * 1_000_000, // votingDurationMicros
-                1 days * 1_000_000 // executionDelayMicros
+                1 days * 1_000_000, // executionDelayMicros
+                7 days * 1_000_000 // executionWindowMicros
+            );
+
+        // Initialize StakingConfig
+        vm.prank(SystemAddresses.GENESIS);
+        StakingConfig(SystemAddresses.STAKE_CONFIG)
+            .initialize(
+                1 ether, // minimumStake
+                14 days * 1_000_000, // lockupDurationMicros
+                7 days * 1_000_000, // unbondingDelayMicros
+                10 ether // minimumProposalStake
             );
 
         // Setup mock validators

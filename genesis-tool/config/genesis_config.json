@@ -23,7 +23,8 @@
     "minVotingThreshold": "1000000000000000000",
     "requiredProposerStake": "10000000000000000000",
     "votingDurationMicros": 604800000000,
-    "executionDelayMicros": 86400000000
+    "executionDelayMicros": 86400000000,
+    "executionWindowMicros": 604800000000
   },
   "epochIntervalMicros": 7200000000,
   "majorVersion": 1,
@@ -44,7 +45,7 @@
       1
     ],
     "callbacks": [
-      "0x00000000000000000000000000000001625F2018"
+      "0x00000000000000000000000000000001625F4001"
     ]
   },
   "jwkConfig": {

@@ -72,6 +72,13 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
             revert InsufficientFee(requiredFee, msg.value);
         }
 
+        // Refund excess fee
+        if (msg.value > requiredFee) {
+            uint256 refundAmount = msg.value - requiredFee;
+            (bool success,) = msg.sender.call{ value: refundAmount }("");
+            require(success, "Refund failed");
+        }
+
         // Emit event for consensus engine to monitor
         // Nonce is extracted as indexed param for efficient consensus filtering
         emit MessageSent(messageNonce, block.number, payload);

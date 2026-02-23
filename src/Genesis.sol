@@ -59,6 +59,7 @@ contract Genesis {
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
         uint64 executionDelayMicros;
+        uint64 executionWindowMicros;
     }
 
     struct OracleTaskParams {
@@ -71,6 +72,7 @@ contract Genesis {
     struct BridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct OracleInitParams {
@@ -227,7 +229,8 @@ contract Genesis {
                 params.governanceConfig.minVotingThreshold,
                 params.governanceConfig.requiredProposerStake,
                 params.governanceConfig.votingDurationMicros,
-                params.governanceConfig.executionDelayMicros
+                params.governanceConfig.executionDelayMicros,
+                params.governanceConfig.executionWindowMicros
             );
 
         VersionConfig(SystemAddresses.VERSION_CONFIG).initialize(params.majorVersion);
@@ -246,7 +249,8 @@ contract Genesis {
 
         if (oracleConfig.bridgeConfig.deploy) {
             // Deploy GBridgeReceiver
-            GBridgeReceiver receiver = new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge);
+            GBridgeReceiver receiver =
+                new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge, oracleConfig.bridgeConfig.trustedSourceId);
 
             // Construct new arrays with extra slot for GBridgeReceiver (sourceType=0)
             sourceTypes = new uint32[](length + 1);

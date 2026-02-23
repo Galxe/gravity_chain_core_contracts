@@ -30,6 +30,12 @@ contract StakePool is IStakePool, Ownable2Step {
     // IMMUTABLES
     // ========================================================================
 
+    /// @notice Maximum lockup duration (4 years in microseconds)
+    uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000;
+
+    /// @notice Maximum number of pending withdrawal buckets
+    uint256 public constant MAX_PENDING_BUCKETS = 1000;
+
     /// @notice Address of the Staking factory that created this pool
     address public immutable FACTORY;
 
@@ -307,7 +313,10 @@ contract StakePool is IStakePool, Ownable2Step {
     function renewLockUntil(
         uint64 durationMicros
     ) external onlyStaker whenNotReconfiguring {
-        // TODO(yxia): overlock protection check.
+        // Max lockup protection
+        if (durationMicros > MAX_LOCKUP_DURATION) {
+            revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION);
+        }
 
         // Check for overflow
         uint64 newLockedUntil = lockedUntil + durationMicros;
@@ -434,6 +443,9 @@ contract StakePool is IStakePool, Ownable2Step {
                 lastBucket.cumulativeAmount += amount;
             } else if (lastBucket.lockedUntil < bucketLockedUntil) {
                 // Append new bucket (strictly increasing lockedUntil)
+                if (len >= MAX_PENDING_BUCKETS) {
+                    revert Errors.TooManyPendingBuckets(len, MAX_PENDING_BUCKETS);
+                }
                 uint256 newCumulative = lastBucket.cumulativeAmount + amount;
                 _pendingBuckets.push(PendingBucket({ lockedUntil: bucketLockedUntil, cumulativeAmount: newCumulative }));
             } else {

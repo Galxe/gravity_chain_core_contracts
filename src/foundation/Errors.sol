@@ -91,6 +91,16 @@ library Errors {
     /// @param proposed Proposed lockedUntil that is lower
     error LockedUntilDecreased(uint64 current, uint64 proposed);
 
+    /// @notice Lockup duration exceeds maximum allowed
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
+
+    /// @notice Too many pending buckets (unbounded array growth protection)
+    /// @param current Current number of buckets
+    /// @param maximum Maximum allowed buckets
+    error TooManyPendingBuckets(uint256 current, uint256 maximum);
+
     // ========================================================================
     // VALIDATOR ERRORS
     // ========================================================================
@@ -286,6 +296,23 @@ library Errors {
     /// @notice Execution delay must be greater than zero
     error InvalidExecutionDelay();
 
+    /// @notice Voting threshold must be greater than zero
+    error InvalidVotingThreshold();
+
+    /// @notice Proposer stake must be greater than zero
+    error InvalidProposerStake();
+
+    /// @notice Proposal execution has expired
+    /// @param proposalId ID of the expired proposal
+    error ProposalExecutionExpired(uint64 proposalId);
+
+    /// @notice Execution window must be greater than zero
+    error InvalidExecutionWindow();
+
+    /// @notice Caller is not authorized to cancel this proposal
+    /// @param caller The unauthorized caller address
+    error NotAuthorizedToCancel(address caller);
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
@@ -334,6 +361,15 @@ library Errors {
     /// @param maximum The maximum bond value
     error MinimumBondExceedsMaximum(uint256 minimum, uint256 maximum);
 
+    /// @notice Staking config has not been initialized
+    error StakingConfigNotInitialized();
+
+    /// @notice Minimum stake must be greater than zero
+    error InvalidMinimumStake();
+
+    /// @notice Minimum proposal stake must be greater than zero
+    error InvalidMinimumProposalStake();
+
     // ========================================================================
     // RANDOMNESS CONFIG ERRORS
     // ========================================================================
@@ -375,6 +411,13 @@ library Errors {
     /// @param currentNonce The current nonce for this source
     /// @param providedNonce The provided nonce that is not greater
     error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
+
+    /// @notice Nonce must be sequential (no gaps allowed)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param expectedNonce The expected next nonce
+    /// @param providedNonce The nonce that was provided
+    error NonceNotSequential(uint32 sourceType, uint256 sourceId, uint128 expectedNonce, uint128 providedNonce);
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array

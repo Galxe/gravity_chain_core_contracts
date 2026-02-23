@@ -305,9 +305,9 @@ contract NativeOracle is INativeOracle {
     ) internal {
         uint128 currentNonce = _nonces[sourceType][sourceId];
 
-        // Nonce must be strictly increasing (currentNonce defaults to 0, so first nonce must be >= 1)
-        if (nonce <= currentNonce) {
-            revert Errors.NonceNotIncreasing(sourceType, sourceId, currentNonce, nonce);
+        // Nonce must be sequential (currentNonce defaults to 0, so first nonce must be 1)
+        if (nonce != currentNonce + 1) {
+            revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);
         }
 
         _nonces[sourceType][sourceId] = nonce;

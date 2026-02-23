@@ -51,8 +51,8 @@ contract GBridgeReceiverTest is Test {
         bytes memory successReturn = "";
         vm.mockCall(SystemAddresses.NATIVE_MINT_PRECOMPILE, emptyData, successReturn);
 
-        // Deploy receiver with trusted bridge
-        receiver = new GBridgeReceiver(trustedBridge);
+        // Deploy receiver with trusted bridge and source chain ID
+        receiver = new GBridgeReceiver(trustedBridge, ETHEREUM_SOURCE_ID);
     }
 
     // ========================================================================

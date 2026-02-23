@@ -442,8 +442,10 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
         }
 
-        // Unlike voluntary leave, governance CAN remove the last validator
-        // (emergency scenario where even consensus halt is acceptable)
+        // Prevent removing the last active validator (would halt consensus)
+        if (_activeValidators.length <= 1) {
+            revert Errors.CannotRemoveLastValidator();
+        }
 
         // Change status to PENDING_INACTIVE
         validator.status = ValidatorStatus.PENDING_INACTIVE;
@@ -589,11 +591,13 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 activeLen = _activeValidators.length;
         uint256 perfLen = perfs.length;
 
-        // Safety: perf array length should match active validator count.
-        // Use min to avoid out-of-bounds if there's a mismatch.
-        uint256 checkLen = activeLen < perfLen ? activeLen : perfLen;
+        // Strict equality check: perf array length must match active validator count.
+        if (activeLen != perfLen) {
+            emit PerformanceLengthMismatch(activeLen, perfLen);
+            return;
+        }
 
-        for (uint256 i = 0; i < checkLen; i++) {
+        for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
             ValidatorRecord storage validator = _validators[pool];
 

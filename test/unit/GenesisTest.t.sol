@@ -84,6 +84,7 @@ contract GenesisTest is Test {
         params.governanceConfig.requiredProposerStake = 100 ether;
         params.governanceConfig.votingDurationMicros = 2 days * 1_000_000;
         params.governanceConfig.executionDelayMicros = 1 days * 1_000_000;
+        params.governanceConfig.executionWindowMicros = 7 days * 1_000_000;
 
         // Version Config
         params.majorVersion = 1;
@@ -116,7 +117,7 @@ contract GenesisTest is Test {
         address[] memory callbacks = new address[](1);
         callbacks[0] = SystemAddresses.JWK_MANAGER;
         Genesis.OracleTaskParams[] memory tasks = new Genesis.OracleTaskParams[](0);
-        Genesis.BridgeConfig memory bridgeConfig = Genesis.BridgeConfig(false, address(0));
+        Genesis.BridgeConfig memory bridgeConfig = Genesis.BridgeConfig(false, address(0), 0);
         params.oracleConfig = Genesis.OracleInitParams(sourceTypes, callbacks, tasks, bridgeConfig);
 
         // JWK Config

@@ -125,6 +125,9 @@ pub struct GovernanceConfigParams {
 
     #[serde(rename = "executionDelayMicros")]
     pub execution_delay_micros: u64,
+
+    #[serde(rename = "executionWindowMicros")]
+    pub execution_window_micros: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -191,6 +194,9 @@ pub struct BridgeConfig {
 
     #[serde(rename = "trustedBridge")]
     pub trusted_bridge: String, // address
+
+    #[serde(rename = "trustedSourceId", default)]
+    pub trusted_source_id: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -262,6 +268,7 @@ sol! {
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
         uint64 executionDelayMicros;
+        uint64 executionWindowMicros;
     }
 
     struct SolConfigV2Data {
@@ -285,6 +292,7 @@ sol! {
     struct SolBridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct SolOracleInitParams {
@@ -402,6 +410,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         requiredProposerStake: parse_u256(&config.governance_config.required_proposer_stake),
         votingDurationMicros: config.governance_config.voting_duration_micros,
         executionDelayMicros: config.governance_config.execution_delay_micros,
+        executionWindowMicros: config.governance_config.execution_window_micros,
     };
 
     // Convert RandomnessConfig
@@ -465,6 +474,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
             } else {
                 parse_address(&config.oracle_config.bridge_config.trusted_bridge)
             },
+            trustedSourceId: U256::from(config.oracle_config.bridge_config.trusted_source_id),
         },
     };
 

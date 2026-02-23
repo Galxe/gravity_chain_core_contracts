@@ -43,6 +43,13 @@ contract OracleRequestQueue is IOracleRequestQueue {
     error TransferFailed();
 
     // ========================================================================
+    // CONSTANTS
+    // ========================================================================
+
+    /// @notice Grace period after expiration during which SYSTEM_CALLER can still fulfill
+    uint64 public constant FULFILLMENT_GRACE_PERIOD = 300; // 5 minutes in seconds
+
+    // ========================================================================
     // STATE
     // ========================================================================
 
@@ -190,9 +197,10 @@ contract OracleRequestQueue is IOracleRequestQueue {
             revert AlreadyRefunded(requestId);
         }
 
-        // Validate expired
-        if (block.timestamp < req.expiresAt) {
-            revert NotExpired(requestId, req.expiresAt, uint64(block.timestamp));
+        // Validate expired (with grace period for fulfillment)
+        uint64 effectiveExpiration = req.expiresAt + FULFILLMENT_GRACE_PERIOD;
+        if (block.timestamp < effectiveExpiration) {
+            revert NotExpired(requestId, effectiveExpiration, uint64(block.timestamp));
         }
 
         // Mark as refunded (CEI pattern)

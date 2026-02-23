@@ -90,7 +90,13 @@ contract GovernanceTest is Test {
 
         // Initialize GovernanceConfig
         vm.prank(SystemAddresses.GENESIS);
-        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, 1 days * 1_000_000);
+        govConfig.initialize(
+            MIN_VOTING_THRESHOLD,
+            REQUIRED_PROPOSER_STAKE,
+            VOTING_DURATION_MICROS,
+            1 days * 1_000_000,
+            7 days * 1_000_000 // executionWindowMicros
+        );
 
         // Deploy Governance with owner
         // Deploy to a temporary address first, then copy bytecode and storage to system address
@@ -237,13 +243,13 @@ contract GovernanceTest is Test {
         // Create pool with sufficient stake
         address pool = _createStakePool(alice, 100 ether);
 
-        // Advance time so lockup expires before voting would end
-        _advanceTime(LOCKUP_DURATION_MICROS - VOTING_DURATION_MICROS + 1);
+        // Advance time past lockup expiry so voting power is 0 at creation time
+        // (GCC-010: voting power is now evaluated at creation time, not expiration time)
+        _advanceTime(LOCKUP_DURATION_MICROS + 1);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
-        // With the new voting power model, insufficient lockup means 0 voting power at expiration
-        // Since lockup expires before proposal expiration, voting power at expiration = 0
+        // Lockup has expired, so voting power at creation time = 0
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 0));
         governance.createProposal(pool, targets, datas, "ipfs://test");

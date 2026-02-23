@@ -49,6 +49,10 @@ interface IGovernance {
     /// @param datas Calldata that was sent to each target
     event ProposalExecuted(uint64 indexed proposalId, address indexed executor, address[] targets, bytes[] datas);
 
+    /// @notice Emitted when a proposal is cancelled
+    /// @param proposalId ID of the cancelled proposal
+    event ProposalCancelled(uint64 indexed proposalId);
+
     /// @notice Emitted when an executor is added
     /// @param executor Address of the added executor
     event ExecutorAdded(address indexed executor);
@@ -131,6 +135,13 @@ interface IGovernance {
         uint64 proposalId
     ) external view returns (uint64);
 
+    /// @notice Get the latest time a proposal can be executed (after which it expires)
+    /// @param proposalId ID of the proposal
+    /// @return Latest execution timestamp in microseconds (0 if not yet resolved)
+    function getLatestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64);
+
     /// @notice Get all authorized executors
     /// @return Array of executor addresses
     function getExecutors() external view returns (address[] memory);
@@ -204,6 +215,13 @@ interface IGovernance {
     /// @dev Anyone can call this function.
     /// @param proposalId ID of the proposal to resolve
     function resolve(
+        uint64 proposalId
+    ) external;
+
+    /// @notice Cancel a pending proposal
+    /// @dev Only the original proposer can cancel. Must be during voting period.
+    /// @param proposalId ID of the proposal to cancel
+    function cancel(
         uint64 proposalId
     ) external;
 

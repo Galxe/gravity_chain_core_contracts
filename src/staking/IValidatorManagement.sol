@@ -88,6 +88,11 @@ interface IValidatorManagement {
     /// @param totalVotingPower Total voting power of genesis validators
     event ValidatorManagementInitialized(uint256 validatorCount, uint256 totalVotingPower);
 
+    /// @notice Emitted when performance array length doesn't match active validator count
+    /// @param activeCount Number of active validators
+    /// @param perfCount Number of performance entries
+    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================

@@ -40,6 +40,9 @@ contract Governance is IGovernance, Ownable2Step {
     /// @dev Resolution must happen in a later timestamp than the last vote
     mapping(uint64 => uint64) public lastVoteTime;
 
+    /// @notice Whether a proposal has been cancelled
+    mapping(uint64 => bool) public cancelled;
+
     /// @notice Set of authorized executors
     EnumerableSet.AddressSet private _executors;
 
@@ -131,6 +134,11 @@ contract Governance is IGovernance, Ownable2Step {
             return ProposalState.EXECUTED;
         }
 
+        // Check if cancelled
+        if (cancelled[proposalId]) {
+            return ProposalState.CANCELLED;
+        }
+
         // Check if resolved
         if (p.isResolved) {
             // Determine if it passed
@@ -163,8 +171,8 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalNotFound(proposalId);
         }
 
-        // Get voting power at proposal's expiration time
-        uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
+        // Get voting power at proposal's creation time (snapshot-based)
+        uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.creationTime);
         uint128 used = usedVotingPower[stakePool][proposalId];
 
         if (poolPower <= used) {
@@ -255,6 +263,16 @@ contract Governance is IGovernance, Ownable2Step {
         return p.resolutionTime + _config().executionDelayMicros();
     }
 
+    /// @inheritdoc IGovernance
+    function getLatestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
+        if (!p.isResolved) return 0;
+        return p.resolutionTime + _config().executionDelayMicros() + _config().executionWindowMicros();
+    }
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -285,9 +303,8 @@ contract Governance is IGovernance, Ownable2Step {
         uint64 votingDuration = _config().votingDurationMicros();
         uint64 expirationTime = now_ + votingDuration;
 
-        // Get pool's voting power at expiration time
-        // This inherently checks that lockup covers the voting period
-        uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime);
+        // Get pool's voting power at creation time (snapshot-based)
+        uint256 votingPower = _staking().getPoolVotingPower(stakePool, now_);
         uint256 requiredStake = _config().requiredProposerStake();
 
         if (votingPower < requiredStake) {
@@ -460,6 +477,26 @@ contract Governance is IGovernance, Ownable2Step {
     }
 
     /// @inheritdoc IGovernance
+    function cancel(
+        uint64 proposalId
+    ) external {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
+        if (p.isResolved) revert Errors.ProposalAlreadyResolved(proposalId);
+        if (executed[proposalId]) revert Errors.ProposalAlreadyExecuted(proposalId);
+        if (msg.sender != p.proposer) revert Errors.NotAuthorizedToCancel(msg.sender);
+
+        uint64 now_ = _now();
+        if (now_ >= p.expirationTime) revert Errors.VotingPeriodEnded(p.expirationTime);
+
+        cancelled[proposalId] = true;
+        p.isResolved = true;
+        p.resolutionTime = now_;
+
+        emit ProposalCancelled(proposalId);
+    }
+
+    /// @inheritdoc IGovernance
     function execute(
         uint64 proposalId,
         address[] calldata targets,
@@ -495,6 +532,13 @@ contract Governance is IGovernance, Ownable2Step {
         uint64 now_ = _now();
         if (now_ < earliestExecution) {
             revert Errors.ExecutionDelayNotMet(earliestExecution, now_);
+        }
+
+        // Verify execution window has not expired
+        uint64 executionWindow = _config().executionWindowMicros();
+        uint64 latestExecution = earliestExecution + executionWindow;
+        if (now_ > latestExecution) {
+            revert Errors.ProposalExecutionExpired(proposalId);
         }
 
         // Verify execution hash matches
