@@ -885,6 +885,52 @@ contract ValidatorManagementTest is Test {
         validatorManager.leaveValidatorSet(pool);
     }
 
+    /// @notice GRAV-005: Test that a second validator cannot leave when one is already PENDING_INACTIVE
+    /// @dev Before the fix, _activeValidators.length was checked instead of actual ACTIVE count,
+    ///      allowing all validators to become PENDING_INACTIVE and causing consensus halt.
+    function test_RevertWhen_leaveValidatorSet_wouldLeaveZeroActive() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch(); // Both become ACTIVE
+
+        // Alice leaves — becomes PENDING_INACTIVE (bob is still ACTIVE)
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+        assertEq(uint8(validatorManager.getValidatorStatus(pool1)), uint8(ValidatorStatus.PENDING_INACTIVE));
+
+        // Bob tries to leave — should revert because he is the LAST truly ACTIVE validator
+        // (alice is PENDING_INACTIVE, still in _activeValidators array but not really active)
+        vm.prank(bob);
+        vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
+        validatorManager.leaveValidatorSet(pool2);
+    }
+
+    /// @notice GRAV-005: Test that with 3 validators, two can leave but the third cannot
+    function test_leaveValidatorSet_countsActiveNotArrayLength() public {
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        _processEpoch(); // All three become ACTIVE
+
+        // Alice leaves — 2 ACTIVE remain (bob, charlie)
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+
+        // Bob leaves — 1 ACTIVE remains (charlie)
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        // Charlie tries to leave — should revert (last ACTIVE validator)
+        vm.prank(charlie);
+        vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
+        validatorManager.leaveValidatorSet(pool3);
+
+        // After epoch: alice and bob deactivated, charlie stays
+        _processEpoch();
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Only charlie should remain active");
+        assertEq(uint8(validatorManager.getValidatorStatus(pool3)), uint8(ValidatorStatus.ACTIVE));
+    }
+
     /// @notice Test that a validator can cancel their join request by leaving from PENDING_ACTIVE
     function test_leaveValidatorSet_fromPendingActive() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
