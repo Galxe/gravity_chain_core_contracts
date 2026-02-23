@@ -418,8 +418,10 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
         }
 
-        // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length == 1) {
+        // GRAV-005: Prevent removing the last active validator (would halt consensus).
+        // Must count by status, not array length, because _activeValidators still
+        // contains PENDING_INACTIVE validators until the next epoch boundary.
+        if (_countActiveValidators() <= 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
@@ -777,6 +779,20 @@ contract ValidatorManagement is IValidatorManagement {
                 return;
             }
         }
+    }
+
+    /// @notice Count validators with ACTIVE status in the current active set
+    /// @dev GRAV-005: _activeValidators.length includes PENDING_INACTIVE validators
+    ///      that haven't been removed yet. This function counts only truly ACTIVE ones.
+    function _countActiveValidators() internal view returns (uint256) {
+        uint256 count = 0;
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// @notice Calculate total voting power of active validators
