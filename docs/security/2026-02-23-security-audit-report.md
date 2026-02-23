@@ -11,10 +11,24 @@
 
 | Severity | Findings | Status | Commit |
 |----------|----------|--------|--------|
+| CRITICAL | 1 | Fixed | [`f4c8325`](https://github.com/Galxe/gravity_chain_core_contracts/commit/f4c8325) |
 | HIGH | 3 | All fixed | [`d535c0a`](https://github.com/Galxe/gravity_chain_core_contracts/commit/d535c0a) |
 | MEDIUM | 16 | All fixed | [`3861046`](https://github.com/Galxe/gravity_chain_core_contracts/commit/3861046) |
 | LOW | 24 | All fixed | [`0c578ef`](https://github.com/Galxe/gravity_chain_core_contracts/commit/0c578ef) |
-| **Total** | **43** | **All fixed** | |
+| **Total** | **44** | **All fixed** | |
+
+---
+
+## CRITICAL Severity (1)
+
+### GRAV-005: Consensus Halt via Multiple Voluntary Leaves
+
+**Contract:** `ValidatorManagement.sol`
+**Function:** `leaveValidatorSet()`
+**Issue:** `leaveValidatorSet()` checked `_activeValidators.length == 1` to prevent removing the last validator. However, this checks array length (including PENDING_INACTIVE validators still in the array), not the count of truly ACTIVE validators. If multiple validators call `leaveValidatorSet()` in the same epoch, the array length stays > 1 but all validators transition to PENDING_INACTIVE, leaving zero ACTIVE validators at epoch boundary — halting consensus.
+**Fix:** Added `_countActiveValidators()` helper that iterates the array counting only `ValidatorStatus.ACTIVE` entries. Changed guard to `if (_countActiveValidators() <= 1) revert CannotRemoveLastValidator()`.
+**Files:** `src/staking/ValidatorManagement.sol`
+**Tests:** `test_RevertWhen_leaveValidatorSet_wouldLeaveZeroActive`, `test_leaveValidatorSet_countsActiveNotArrayLength`
 
 ---
 
@@ -221,6 +235,7 @@
 
 | Commit | Description | Files Changed |
 |--------|-------------|---------------|
+| [`f4c8325`](https://github.com/Galxe/gravity_chain_core_contracts/commit/f4c8325) | CRITICAL: GRAV-005 consensus halt via voluntary leaves | 2 files |
 | [`d535c0a`](https://github.com/Galxe/gravity_chain_core_contracts/commit/d535c0a) | HIGH severity fixes (GCC-001, GCC-002, GCC-003) | 16 files |
 | [`3861046`](https://github.com/Galxe/gravity_chain_core_contracts/commit/3861046) | MEDIUM severity fixes (GCC-004 through GCC-019) | 38 files |
 | [`0c578ef`](https://github.com/Galxe/gravity_chain_core_contracts/commit/0c578ef) | LOW severity fixes (GCC-020 through GCC-043) | 40 files |
