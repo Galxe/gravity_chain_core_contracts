@@ -12,6 +12,16 @@ import { Errors } from "../foundation/Errors.sol";
 ///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 contract StakingConfig {
     // ========================================================================
+    // CONSTANTS
+    // ========================================================================
+
+    /// @notice Maximum lockup duration: 4 years in microseconds
+    uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000;
+
+    /// @notice Maximum unbonding delay: 1 year in microseconds
+    uint64 public constant MAX_UNBONDING_DELAY = uint64(365 days) * 1_000_000;
+
+    // ========================================================================
     // TYPES
     // ========================================================================
 
@@ -180,7 +190,13 @@ contract StakingConfig {
     ) internal pure {
         if (_minimumStake == 0) revert Errors.InvalidMinimumStake();
         if (_lockupDurationMicros == 0) revert Errors.InvalidLockupDuration();
+        if (_lockupDurationMicros > MAX_LOCKUP_DURATION) {
+            revert Errors.ExcessiveDuration(_lockupDurationMicros, MAX_LOCKUP_DURATION);
+        }
         if (_unbondingDelayMicros == 0) revert Errors.InvalidUnbondingDelay();
+        if (_unbondingDelayMicros > MAX_UNBONDING_DELAY) {
+            revert Errors.ExcessiveDuration(_unbondingDelayMicros, MAX_UNBONDING_DELAY);
+        }
         if (_minimumProposalStake == 0) revert Errors.InvalidMinimumProposalStake();
     }
 

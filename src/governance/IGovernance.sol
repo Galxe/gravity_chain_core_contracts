@@ -46,8 +46,11 @@ interface IGovernance {
     /// @param proposalId ID of the executed proposal
     /// @param executor Address that executed the proposal
     /// @param targets Contracts that were called
+    /// @param values Native token amounts sent to each target
     /// @param datas Calldata that was sent to each target
-    event ProposalExecuted(uint64 indexed proposalId, address indexed executor, address[] targets, bytes[] datas);
+    event ProposalExecuted(
+        uint64 indexed proposalId, address indexed executor, address[] targets, uint256[] values, bytes[] datas
+    );
 
     /// @notice Emitted when a proposal is cancelled
     /// @param proposalId ID of the cancelled proposal
@@ -157,15 +160,17 @@ interface IGovernance {
     /// @notice Create a new governance proposal
     /// @dev Caller must be the voter address of the stake pool.
     ///      Pool must have sufficient voting power and lockup >= voting duration.
-    ///      Execution hash is computed as keccak256(abi.encode(targets, datas)).
+    ///      Execution hash is computed as keccak256(abi.encode(targets, values, datas)).
     /// @param stakePool Address of the stake pool to use for proposer stake
     /// @param targets Array of contract addresses to call during execution
+    /// @param values Array of native token amounts to send with each call
     /// @param datas Array of calldata to send to each target
     /// @param metadataUri URI pointing to proposal metadata
     /// @return proposalId The ID of the newly created proposal
     function createProposal(
         address stakePool,
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas,
         string calldata metadataUri
     ) external returns (uint64 proposalId);
@@ -227,24 +232,29 @@ interface IGovernance {
 
     /// @notice Execute an approved proposal
     /// @dev Only authorized executors can call this function.
-    ///      The hash of keccak256(abi.encode(targets, datas)) must match the stored execution hash.
+    ///      The hash of keccak256(abi.encode(targets, values, datas)) must match the stored execution hash.
     ///      All calls are executed atomically - if any call fails, the entire execution reverts.
+    ///      Leftover ETH is refunded to the caller after execution.
     /// @param proposalId ID of the proposal to execute
     /// @param targets Array of contract addresses to call
+    /// @param values Array of native token amounts to send with each call
     /// @param datas Array of calldata to send to each target
     function execute(
         uint64 proposalId,
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas
-    ) external;
+    ) external payable;
 
     /// @notice Compute the execution hash for a batch of calls
     /// @dev Useful for off-chain computation before creating proposals
     /// @param targets Array of contract addresses
+    /// @param values Array of native token amounts
     /// @param datas Array of calldata
-    /// @return The keccak256 hash of abi.encode(targets, datas)
+    /// @return The keccak256 hash of abi.encode(targets, values, datas)
     function computeExecutionHash(
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas
     ) external pure returns (bytes32);
 

@@ -128,6 +128,9 @@ contract GenesisTest is Test {
         jwks[0][0] = IJWKManager.RSA_JWK("kid1", "RSA", "RS256", "e", "n");
         params.jwkConfig = Genesis.JWKInitParams(issuers, jwks);
 
+        // Initial lockup: far future timestamp in microseconds (2027-01-01 + lockup duration)
+        params.initialLockedUntilMicros = uint64(1798761600) * 1_000_000 + params.stakingConfig.lockupDurationMicros;
+
         // Impersonate SYSTEM_CALLER
         vm.startPrank(SystemAddresses.SYSTEM_CALLER);
 

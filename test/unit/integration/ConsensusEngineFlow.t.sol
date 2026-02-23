@@ -220,7 +220,7 @@ contract ConsensusEngineFlowTest is Test {
         bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
         vm.prank(owner);
         validatorManager.registerValidator(
-            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, owner
         );
     }
 

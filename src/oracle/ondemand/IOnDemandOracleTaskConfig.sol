@@ -16,7 +16,7 @@ interface IOnDemandOracleTaskConfig {
     struct OnDemandTaskType {
         /// @notice Type configuration bytes (e.g., API endpoint, validation rules)
         bytes config;
-        /// @notice Timestamp when this task type was last updated
+        /// @notice Timestamp when this task type was last updated (block.timestamp in seconds, NOT microseconds)
         uint64 updatedAt;
     }
 

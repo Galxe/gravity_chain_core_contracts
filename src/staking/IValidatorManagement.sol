@@ -72,10 +72,20 @@ interface IValidatorManagement {
     /// @param newPubkey New BLS public key
     event ConsensusKeyRotated(address indexed stakePool, bytes newPubkey);
 
-    /// @notice Emitted when a validator's fee recipient is updated
+    /// @notice Emitted when a validator's fee recipient is updated (pending)
     /// @param stakePool Address of the validator's stake pool
     /// @param newRecipient New fee recipient address
     event FeeRecipientUpdated(address indexed stakePool, address newRecipient);
+
+    /// @notice Emitted when a pending fee recipient change is applied at epoch boundary
+    /// @param stakePool Address of the validator's stake pool
+    /// @param oldRecipient Previous fee recipient address
+    /// @param newRecipient New fee recipient address
+    event FeeRecipientApplied(address indexed stakePool, address oldRecipient, address newRecipient);
+
+    /// @notice Emitted when a validator is reverted from PENDING_ACTIVE to INACTIVE
+    /// @param stakePool Address of the validator's stake pool
+    event ValidatorRevertedInactive(address indexed stakePool);
 
     /// @notice Emitted when a new epoch is processed
     /// @param epoch The new epoch number
@@ -123,13 +133,15 @@ interface IValidatorManagement {
     /// @param consensusPop Proof of possession for the BLS key
     /// @param networkAddresses Network addresses for P2P communication
     /// @param fullnodeAddresses Fullnode addresses
+    /// @param feeRecipient Address to receive validator fees
     function registerValidator(
         address stakePool,
         string calldata moniker,
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses
+        bytes calldata fullnodeAddresses,
+        address feeRecipient
     ) external;
 
     // ========================================================================

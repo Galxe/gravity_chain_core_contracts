@@ -52,6 +52,9 @@ library Errors {
     /// @notice Amount cannot be zero
     error ZeroAmount();
 
+    /// @notice Address cannot be zero
+    error ZeroAddress();
+
     /// @notice Staker has no stake position (legacy, kept for compatibility)
     /// @param staker Address that has no stake
     error NoStakePosition(address staker);
@@ -288,6 +291,11 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
+    /// @notice Proposal values array length does not match targets length
+    /// @param valuesLength Length of values array
+    /// @param targetsLength Length of targets array
+    error ProposalValuesLengthMismatch(uint256 valuesLength, uint256 targetsLength);
+
     /// @notice Execution delay has not elapsed (timelock)
     /// @param earliestExecution When execution becomes available (microseconds)
     /// @param currentTime Current timestamp (microseconds)
@@ -421,9 +429,12 @@ library Errors {
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array
+    /// @param blockNumbersLength Length of blockNumbers array
     /// @param payloadsLength Length of payloads array
     /// @param gasLimitsLength Length of callbackGasLimits array
-    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+    error OracleBatchArrayLengthMismatch(
+        uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
+    );
 
     /// @notice No failed callback exists for the given key
     /// @param sourceType The source type
@@ -526,5 +537,17 @@ library Errors {
     /// @param index The requested index
     /// @param count The total number of providers
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
+
+    // ========================================================================
+    // GENERAL ERRORS
+    // ========================================================================
+
+    /// @notice Operation is not supported
+    error OperationNotSupported();
+
+    /// @notice Duration exceeds the maximum allowed value
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveDuration(uint64 provided, uint64 maximum);
 }
 

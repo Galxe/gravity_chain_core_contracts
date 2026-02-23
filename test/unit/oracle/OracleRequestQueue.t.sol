@@ -146,13 +146,16 @@ contract OracleRequestQueueTest is Test {
     function test_Request_WithExcessFee() public {
         bytes memory requestData = abi.encode("AAPL");
         uint256 excessFee = DEFAULT_FEE + 0.05 ether;
+        uint256 aliceBalanceBefore = alice.balance;
 
         vm.prank(alice);
         uint256 requestId =
             requestQueue.request{ value: excessFee }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
-        assertEq(req.fee, excessFee); // Full amount is stored
+        assertEq(req.fee, DEFAULT_FEE); // Only required fee is stored
+        // Excess was refunded to alice
+        assertEq(alice.balance, aliceBalanceBefore - DEFAULT_FEE);
     }
 
     function test_Request_WithZeroFeeConfig() public {
@@ -526,7 +529,7 @@ contract OracleRequestQueueTest is Test {
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
         assertEq(req.requestData, requestData);
-        assertEq(req.fee, fee);
+        assertEq(req.fee, DEFAULT_FEE); // Only required fee stored, excess refunded
     }
 
     function testFuzz_FulfillAndRefundMutuallyExclusive(

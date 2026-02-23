@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IStakePool } from "./IStakePool.sol";
 import { IValidatorManagement } from "./IValidatorManagement.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { ReentrancyGuard } from "@openzeppelin/utils/ReentrancyGuard.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorStatus } from "../foundation/Types.sol";
@@ -25,7 +26,7 @@ import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 ///      - withdrawAvailable() claims all pending where (now > lockedUntil + unbondingDelay)
 ///      - unstakeAndWithdraw() helper combines both operations
 ///      - Voting power = activeStake + effective pending (via O(log n) binary search)
-contract StakePool is IStakePool, Ownable2Step {
+contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ========================================================================
     // IMMUTABLES
     // ========================================================================
@@ -236,6 +237,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setOperator(
         address newOperator
     ) external onlyOwner {
+        if (newOperator == address(0)) revert Errors.ZeroAddress();
         address oldOperator = operator;
         operator = newOperator;
         emit OperatorChanged(address(this), oldOperator, newOperator);
@@ -245,6 +247,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setVoter(
         address newVoter
     ) external onlyOwner {
+        if (newVoter == address(0)) revert Errors.ZeroAddress();
         address oldVoter = voter;
         voter = newVoter;
         emit VoterChanged(address(this), oldVoter, newVoter);
@@ -254,6 +257,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setStaker(
         address newStaker
     ) external onlyOwner {
+        if (newStaker == address(0)) revert Errors.ZeroAddress();
         address oldStaker = staker;
         staker = newStaker;
         emit StakerChanged(address(this), oldStaker, newStaker);
@@ -274,6 +278,11 @@ contract StakePool is IStakePool, Ownable2Step {
         // Extend lockup if needed: lockedUntil = max(current, now + minLockupDuration)
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+
+        // Overflow check: ensure now_ + minLockup does not overflow uint64
+        if (now_ > type(uint64).max - minLockup) {
+            revert Errors.ExcessiveLockupDuration(minLockup, MAX_LOCKUP_DURATION);
+        }
         uint64 newLockedUntil = now_ + minLockup;
 
         if (newLockedUntil > lockedUntil) {
@@ -293,7 +302,7 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function withdrawAvailable(
         address recipient
-    ) external onlyStaker whenNotReconfiguring returns (uint256 amount) {
+    ) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 amount) {
         amount = _withdrawAvailable(recipient);
     }
 

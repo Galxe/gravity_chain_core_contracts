@@ -143,7 +143,7 @@ contract ValidatorManagementTest is Test {
         bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
         vm.prank(owner); // owner is also operator by default
         validatorManager.registerValidator(
-            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, owner
         );
     }
 
@@ -176,7 +176,7 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(alice);
         validatorManager.registerValidator(
-            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         assertTrue(validatorManager.isValidator(pool), "Should be a validator");
@@ -195,7 +195,7 @@ contract ValidatorManagementTest is Test {
         vm.expectEmit(true, false, false, true);
         emit IValidatorManagement.ValidatorRegistered(pool, "alice-validator");
         validatorManager.registerValidator(
-            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -205,7 +205,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, fakePool));
         validatorManager.registerValidator(
-            fakePool, "fake", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            fakePool, "fake", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -215,7 +215,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(bob); // Bob is not the operator
         vm.expectRevert(abi.encodeWithSelector(Errors.NotOperator.selector, alice, bob));
         validatorManager.registerValidator(
-            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -225,7 +225,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.ValidatorAlreadyExists.selector, pool));
         validatorManager.registerValidator(
-            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -235,7 +235,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientBond.selector, MIN_BOND, MIN_BOND - 1 ether));
         validatorManager.registerValidator(
-            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -246,7 +246,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.MonikerTooLong.selector, 31, bytes(longMoniker).length));
         validatorManager.registerValidator(
-            pool, longMoniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, longMoniker, CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
     }
 
@@ -559,7 +559,7 @@ contract ValidatorManagementTest is Test {
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
-            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         // Bob tries to register with the same pubkey - should fail
@@ -567,7 +567,7 @@ contract ValidatorManagementTest is Test {
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, alicePubkey));
         validatorManager.registerValidator(
-            bobPool, "bob", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            bobPool, "bob", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
         );
     }
 
@@ -579,7 +579,7 @@ contract ValidatorManagementTest is Test {
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
-            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         address bobPool = _createStakePool(bob, MIN_BOND);
@@ -587,7 +587,7 @@ contract ValidatorManagementTest is Test {
             hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(bob);
         validatorManager.registerValidator(
-            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
         );
 
         // Alice tries to rotate to Bob's pubkey - should fail
@@ -604,7 +604,7 @@ contract ValidatorManagementTest is Test {
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
-            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         // Alice rotates to a new key
@@ -617,7 +617,7 @@ contract ValidatorManagementTest is Test {
         address bobPool = _createStakePool(bob, MIN_BOND);
         vm.prank(bob);
         validatorManager.registerValidator(
-            bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
         );
 
         // Verify both validators have their expected pubkeys
@@ -635,7 +635,7 @@ contract ValidatorManagementTest is Test {
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.registerValidator(
-            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         address bobPool = _createStakePool(bob, MIN_BOND);
@@ -643,7 +643,7 @@ contract ValidatorManagementTest is Test {
             hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(bob);
         validatorManager.registerValidator(
-            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
         );
 
         // Alice rotates to a completely new key (not Bob's)
@@ -719,7 +719,7 @@ contract ValidatorManagementTest is Test {
         // Register - INACTIVE
         vm.prank(alice);
         validatorManager.registerValidator(
-            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
         assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
 
@@ -757,7 +757,7 @@ contract ValidatorManagementTest is Test {
         address pool = _createStakePool(alice, bondAmount);
         vm.prank(alice);
         validatorManager.registerValidator(
-            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
 
         ValidatorRecord memory record = validatorManager.getValidator(pool);

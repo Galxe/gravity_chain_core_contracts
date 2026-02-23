@@ -13,6 +13,10 @@ import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 /// @dev Tasks are keyed by (sourceType, sourceId, taskName) tuple.
 ///      Multiple tasks can exist for the same (sourceType, sourceId) pair.
 ///      Only GOVERNANCE can create, update, or remove tasks.
+///
+///      NOTE ON TIMESTAMPS: The `updatedAt` field in OracleTask uses `block.timestamp` (seconds) rather than
+///      the Gravity system's microsecond `Timestamp` contract. This is intentional because task config updates
+///      operate on EVM block boundaries and the value is used for cache invalidation, not consensus timing.
 contract OracleTaskConfig is IOracleTaskConfig {
     using EnumerableSet for EnumerableSet.Bytes32Set;
     using EnumerableSet for EnumerableSet.UintSet;
@@ -57,7 +61,7 @@ contract OracleTaskConfig is IOracleTaskConfig {
         // Add task name to the set (no-op if already exists)
         _taskNames[sourceType][sourceId].add(taskName);
 
-        // Store/update task data
+        // Store/update task data (updatedAt uses block.timestamp in seconds, NOT microseconds)
         _tasks[sourceType][sourceId][taskName] = OracleTask({ config: config, updatedAt: uint64(block.timestamp) });
 
         emit TaskSet(sourceType, sourceId, taskName, config);

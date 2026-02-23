@@ -76,7 +76,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
         if (msg.value > requiredFee) {
             uint256 refundAmount = msg.value - requiredFee;
             (bool success,) = msg.sender.call{ value: refundAmount }("");
-            require(success, "Refund failed");
+            if (!success) revert RefundFailed();
         }
 
         // Emit event for consensus engine to monitor
@@ -117,7 +117,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     }
 
     /// @inheritdoc IGravityPortal
-    function withdrawFees() external {
+    function withdrawFees() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NoFeesToWithdraw();
 
@@ -125,7 +125,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
 
         // Transfer fees to recipient
         (bool success,) = recipient.call{ value: balance }("");
-        require(success, "Transfer failed");
+        if (!success) revert TransferFailed();
 
         emit FeesWithdrawn(recipient, balance);
     }

@@ -233,7 +233,26 @@ contract NativeOracleTest is Test {
         payloads[0] = abi.encode("event0");
         payloads[1] = abi.encode("event1");
 
-        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 2, 3));
+        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 3, 2, 3));
+        vm.prank(systemCaller);
+        oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
+    }
+
+    function test_RecordBatch_RevertWhenBlockNumbersLengthMismatch() public {
+        uint128[] memory nonces = new uint128[](3);
+        uint256[] memory blockNumbers = new uint256[](2); // Mismatched length
+        bytes[] memory payloads = new bytes[](3);
+        uint256[] memory gasLimits = new uint256[](3);
+
+        for (uint256 i = 0; i < 3; i++) {
+            nonces[i] = 1000 + uint128(i);
+            payloads[i] = abi.encode("event", i);
+            gasLimits[i] = CALLBACK_GAS_LIMIT;
+        }
+        blockNumbers[0] = 0;
+        blockNumbers[1] = 0;
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 2, 3, 3));
         vm.prank(systemCaller);
         oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
     }

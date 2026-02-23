@@ -24,9 +24,9 @@ interface IOracleRequestQueue {
         bytes requestData;
         /// @notice Fee paid for this request
         uint256 fee;
-        /// @notice Timestamp when the request was submitted
+        /// @notice Timestamp when the request was submitted (block.timestamp in seconds, NOT microseconds)
         uint64 requestedAt;
-        /// @notice Timestamp when the request expires
+        /// @notice Timestamp when the request expires (block.timestamp in seconds, NOT microseconds)
         uint64 expiresAt;
         /// @notice Whether the request has been fulfilled
         bool fulfilled;

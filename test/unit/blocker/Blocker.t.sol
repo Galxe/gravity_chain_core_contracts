@@ -278,7 +278,7 @@ contract BlockerTest is Test {
         _initializeBlocker();
 
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(Blocker.AlreadyInitialized.selector);
+        vm.expectRevert(Errors.AlreadyInitialized.selector);
         Blocker(SystemAddresses.BLOCK).initialize();
     }
 

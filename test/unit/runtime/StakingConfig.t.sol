@@ -305,8 +305,8 @@ contract StakingConfigTest is Test {
         uint256 minProposalStake
     ) public {
         vm.assume(minStake > 0);
-        vm.assume(lockupDuration > 0);
-        vm.assume(unbondingDelay > 0);
+        vm.assume(lockupDuration > 0 && lockupDuration <= config.MAX_LOCKUP_DURATION());
+        vm.assume(unbondingDelay > 0 && unbondingDelay <= config.MAX_UNBONDING_DELAY());
         vm.assume(minProposalStake > 0);
 
         vm.prank(SystemAddresses.GENESIS);
@@ -325,8 +325,8 @@ contract StakingConfigTest is Test {
         uint256 newProposalStake
     ) public {
         vm.assume(newMinStake > 0);
-        vm.assume(newLockup > 0);
-        vm.assume(newUnbonding > 0);
+        vm.assume(newLockup > 0 && newLockup <= config.MAX_LOCKUP_DURATION());
+        vm.assume(newUnbonding > 0 && newUnbonding <= config.MAX_UNBONDING_DELAY());
         vm.assume(newProposalStake > 0);
         _initializeConfig();
 
@@ -340,6 +340,22 @@ contract StakingConfigTest is Test {
         assertEq(pending.lockupDurationMicros, newLockup);
         assertEq(pending.unbondingDelayMicros, newUnbonding);
         assertEq(pending.minimumProposalStake, newProposalStake);
+    }
+
+    function test_RevertWhen_Initialize_ExcessiveLockupDuration() public {
+        uint64 maxLockup = config.MAX_LOCKUP_DURATION();
+        uint64 excessiveLockup = maxLockup + 1;
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveLockup, maxLockup));
+        config.initialize(MIN_STAKE, excessiveLockup, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
+    }
+
+    function test_RevertWhen_Initialize_ExcessiveUnbondingDelay() public {
+        uint64 maxUnbonding = config.MAX_UNBONDING_DELAY();
+        uint64 excessiveUnbonding = maxUnbonding + 1;
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveUnbonding, maxUnbonding));
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, excessiveUnbonding, MIN_PROPOSAL_STAKE);
     }
 
     // ========================================================================

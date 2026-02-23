@@ -237,13 +237,21 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses
+        bytes calldata fullnodeAddresses,
+        address feeRecipient
     ) external {
+        // GCC-041: Check that validator set changes are allowed
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            revert Errors.ValidatorSetChangesDisabled();
+        }
+
         // Validate inputs and get required data
         _validateRegistration(stakePool, moniker);
 
         // Create validator record
-        _createValidatorRecord(stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses);
+        _createValidatorRecord(
+            stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses, feeRecipient
+        );
 
         emit ValidatorRegistered(stakePool, moniker);
     }
@@ -310,7 +318,8 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses
+        bytes calldata fullnodeAddresses,
+        address feeRecipient
     ) internal {
         // Validate consensus pubkey with proof of possession
         _validateConsensusPubkey(consensusPubkey, consensusPop);
@@ -322,8 +331,8 @@ contract ValidatorManagement is IValidatorManagement {
         record.moniker = moniker;
         record.stakingPool = stakePool;
 
-        // Set fee recipient from staking contract
-        record.feeRecipient = IStaking(SystemAddresses.STAKING).getPoolOwner(stakePool); // TODO(yxia): the fee recipient should be a parameter.
+        // Set fee recipient from caller-provided parameter
+        record.feeRecipient = feeRecipient;
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;
@@ -597,6 +606,14 @@ contract ValidatorManagement is IValidatorManagement {
             return;
         }
 
+        // GCC-035: Initialize counter once and decrement per eviction instead of O(n) inner loop
+        uint256 remainingActive = 0;
+        for (uint256 i = 0; i < activeLen; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                remainingActive++;
+            }
+        }
+
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
             ValidatorRecord storage validator = _validators[pool];
@@ -609,13 +626,6 @@ contract ValidatorManagement is IValidatorManagement {
             // Check if validator meets eviction criteria
             if (perfs[i].successfulProposals <= threshold) {
                 // Preserve liveness: never evict the last active validator
-                // Count remaining active validators (those not already pending inactive)
-                uint256 remainingActive = 0;
-                for (uint256 j = 0; j < activeLen; j++) {
-                    if (_validators[_activeValidators[j]].status == ValidatorStatus.ACTIVE) {
-                        remainingActive++;
-                    }
-                }
                 if (remainingActive <= 1) {
                     // Cannot evict the last active validator — would halt consensus
                     break;
@@ -624,6 +634,7 @@ contract ValidatorManagement is IValidatorManagement {
                 // Mark as PENDING_INACTIVE for processing by onNewEpoch()
                 validator.status = ValidatorStatus.PENDING_INACTIVE;
                 _pendingInactive.push(pool);
+                remainingActive--;
 
                 emit ValidatorAutoEvicted(pool, perfs[i].successfulProposals);
             }
@@ -676,6 +687,7 @@ contract ValidatorManagement is IValidatorManagement {
     ) internal {
         for (uint256 i = 0; i < count; i++) {
             _validators[validators[i]].status = ValidatorStatus.INACTIVE;
+            emit ValidatorRevertedInactive(validators[i]);
         }
     }
 
@@ -727,10 +739,13 @@ contract ValidatorManagement is IValidatorManagement {
     function _applyPendingFeeRecipients() internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
-            ValidatorRecord storage validator = _validators[_activeValidators[i]];
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
             if (validator.pendingFeeRecipient != address(0)) {
+                address oldRecipient = validator.feeRecipient;
                 validator.feeRecipient = validator.pendingFeeRecipient;
                 validator.pendingFeeRecipient = address(0);
+                emit FeeRecipientApplied(pool, oldRecipient, validator.feeRecipient);
             }
         }
     }
@@ -810,9 +825,10 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Step 2: Count staying active validators (active minus pending_inactive)
+        // GCC-034: Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
         uint256 stayingActiveCount = 0;
         for (uint256 i = 0; i < activeLen; i++) {
-            if (!_isInPendingInactive(_activeValidators[i])) {
+            if (_validators[_activeValidators[i]].status != ValidatorStatus.PENDING_INACTIVE) {
                 stayingActiveCount++;
             }
         }
@@ -857,7 +873,7 @@ contract ValidatorManagement is IValidatorManagement {
         // Add staying active validators (excluding pending_inactive)
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
-            if (!_isInPendingInactive(pool)) {
+            if (_validators[pool].status != ValidatorStatus.PENDING_INACTIVE) {
                 ValidatorRecord storage validator = _validators[pool];
                 result.validators[idx] = ValidatorConsensusInfo({
                     validator: pool,

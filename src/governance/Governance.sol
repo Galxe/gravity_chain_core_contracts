@@ -69,6 +69,16 @@ contract Governance is IGovernance, Ownable2Step {
     }
 
     // ========================================================================
+    // OWNERSHIP OVERRIDES
+    // ========================================================================
+
+    /// @notice Prevent ownership renunciation
+    /// @dev Governance must always have an owner for executor management
+    function renounceOwnership() public pure override {
+        revert Errors.OperationNotSupported();
+    }
+
+    // ========================================================================
     // INTERNAL HELPERS
     // ========================================================================
 
@@ -281,12 +291,16 @@ contract Governance is IGovernance, Ownable2Step {
     function createProposal(
         address stakePool,
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas,
         string calldata metadataUri
     ) external returns (uint64 proposalId) {
         // Validate batch arrays
         if (targets.length != datas.length) {
             revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
+        }
+        if (values.length != targets.length) {
+            revert Errors.ProposalValuesLengthMismatch(values.length, targets.length);
         }
         if (targets.length == 0) {
             revert Errors.EmptyProposalBatch();
@@ -311,25 +325,26 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.InsufficientVotingPower(requiredStake, votingPower);
         }
 
-        // Compute execution hash from batch arrays
-        bytes32 executionHash = keccak256(abi.encode(targets, datas));
+        // Compute execution hash from batch arrays (includes values for native token support)
+        bytes32 executionHash = keccak256(abi.encode(targets, values, datas));
 
         // Create proposal
         proposalId = nextProposalId++;
 
-        _proposals[proposalId] = Proposal({
-            id: proposalId,
-            proposer: msg.sender,
-            executionHash: executionHash,
-            metadataUri: metadataUri,
-            creationTime: now_,
-            expirationTime: expirationTime,
-            minVoteThreshold: _config().minVotingThreshold(),
-            yesVotes: 0,
-            noVotes: 0,
-            isResolved: false,
-            resolutionTime: 0
-        });
+        Proposal storage p = _proposals[proposalId];
+        p.id = proposalId;
+        p.proposer = msg.sender;
+        p.executionHash = executionHash;
+        p.metadataUri = metadataUri;
+        p.creationTime = now_;
+        p.expirationTime = expirationTime;
+        p.minVoteThreshold = _config().minVotingThreshold();
+
+        // Store values for reference
+        uint256 len = values.length;
+        for (uint256 i = 0; i < len; ++i) {
+            p.values.push(values[i]);
+        }
 
         emit ProposalCreated(proposalId, msg.sender, stakePool, executionHash, metadataUri);
     }
@@ -500,11 +515,15 @@ contract Governance is IGovernance, Ownable2Step {
     function execute(
         uint64 proposalId,
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas
-    ) external onlyExecutor {
+    ) external payable onlyExecutor {
         // Validate batch arrays
         if (targets.length != datas.length) {
             revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
+        }
+        if (values.length != targets.length) {
+            revert Errors.ProposalValuesLengthMismatch(values.length, targets.length);
         }
         if (targets.length == 0) {
             revert Errors.EmptyProposalBatch();
@@ -541,9 +560,9 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalExecutionExpired(proposalId);
         }
 
-        // Verify execution hash matches
+        // Verify execution hash matches (includes values in hash)
         bytes32 expectedHash = _proposals[proposalId].executionHash;
-        bytes32 actualHash = keccak256(abi.encode(targets, datas));
+        bytes32 actualHash = keccak256(abi.encode(targets, values, datas));
         if (actualHash != expectedHash) {
             revert Errors.ExecutionHashMismatch(expectedHash, actualHash);
         }
@@ -551,28 +570,39 @@ contract Governance is IGovernance, Ownable2Step {
         // Mark as executed BEFORE external calls (CEI pattern)
         executed[proposalId] = true;
 
-        // Execute all calls atomically
+        // Execute all calls atomically, forwarding native token values
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
-            (bool success,) = targets[i].call(datas[i]);
+            (bool success,) = targets[i].call{ value: values[i] }(datas[i]);
             if (!success) {
                 revert Errors.ExecutionFailed(proposalId);
             }
         }
 
-        emit ProposalExecuted(proposalId, msg.sender, targets, datas);
+        // Refund leftover ETH to executor
+        uint256 remaining = address(this).balance;
+        if (remaining > 0) {
+            (bool refundSuccess,) = msg.sender.call{ value: remaining }("");
+            if (!refundSuccess) {
+                revert Errors.TransferFailed();
+            }
+        }
+
+        emit ProposalExecuted(proposalId, msg.sender, targets, values, datas);
     }
 
     /// @notice Compute the execution hash for a batch of calls
     /// @dev Useful for off-chain computation before creating proposals
     /// @param targets Array of contract addresses
+    /// @param values Array of native token amounts
     /// @param datas Array of calldata
-    /// @return The keccak256 hash of abi.encode(targets, datas)
+    /// @return The keccak256 hash of abi.encode(targets, values, datas)
     function computeExecutionHash(
         address[] calldata targets,
+        uint256[] calldata values,
         bytes[] calldata datas
     ) external pure returns (bytes32) {
-        return keccak256(abi.encode(targets, datas));
+        return keccak256(abi.encode(targets, values, datas));
     }
 
     // ========================================================================
