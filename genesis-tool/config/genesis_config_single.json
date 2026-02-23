@@ -1,6 +1,5 @@
 {
   "_comment": "Single node genesis config for gravity_chain_core_contracts Genesis.initialize(GenesisInitParams)",
-
   "validatorConfig": {
     "_comment": "ValidatorConfig.initialize params",
     "minimumBond": "1000000000000000000",
@@ -12,7 +11,6 @@
     "autoEvictEnabled": false,
     "autoEvictThreshold": "0"
   },
-
   "stakingConfig": {
     "_comment": "StakingConfig.initialize params - for governance staking",
     "minimumStake": "1000000000000000000",
@@ -20,22 +18,17 @@
     "unbondingDelayMicros": 86400000000,
     "minimumProposalStake": "10000000000000000000"
   },
-
   "governanceConfig": {
     "_comment": "GovernanceConfig.initialize params",
     "minVotingThreshold": "1000000000000000000",
     "requiredProposerStake": "10000000000000000000",
-    "votingDurationMicros": 604800000000
+    "votingDurationMicros": 604800000000,
+    "executionDelayMicros": 86400000000
   },
-
   "epochIntervalMicros": 7200000000,
-
   "majorVersion": 1,
-
   "consensusConfig": "0x0301010a00000000000000280000000000000001010000000a000000000000000100010200000000000000000020000000000000",
-
   "executionConfig": "0x00",
-
   "randomnessConfig": {
     "_comment": "RandomnessConfig - variant: 0=Off, 1=V2",
     "variant": 0,
@@ -45,11 +38,14 @@
       "fastPathSecrecyThreshold": 0
     }
   },
-
   "oracleConfig": {
     "_comment": "NativeOracle.initialize - sourceType 1 = JWK, 0 = Blockchain",
-    "sourceTypes": [1],
-    "callbacks": ["0x00000000000000000000000000000001625F4001"],
+    "sourceTypes": [
+      1
+    ],
+    "callbacks": [
+      "0x00000000000000000000000000000001625F4001"
+    ],
     "bridgeConfig": {
       "deploy": true,
       "trustedBridge": "0x3fc870008B1cc26f3614F14a726F8077227CA2c3"
@@ -63,7 +59,6 @@
       }
     ]
   },
-
   "jwkConfig": {
     "_comment": "JWKManager.initialize - issuers and jwks",
     "issuers": [
@@ -81,7 +76,6 @@
       ]
     ]
   },
-
   "validators": [
     {
       "operator": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",

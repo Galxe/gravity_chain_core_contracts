@@ -245,6 +245,16 @@ contract Governance is IGovernance, Ownable2Step {
         return lastVoteTime[proposalId];
     }
 
+    /// @inheritdoc IGovernance
+    function getEarliestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
+        if (!p.isResolved) return 0;
+        return p.resolutionTime + _config().executionDelayMicros();
+    }
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -477,6 +487,14 @@ contract Governance is IGovernance, Ownable2Step {
         ProposalState state = getProposalState(proposalId);
         if (state != ProposalState.SUCCEEDED) {
             revert Errors.ProposalNotSucceeded(proposalId);
+        }
+
+        // Verify execution delay has passed (timelock)
+        uint64 executionDelay = _config().executionDelayMicros();
+        uint64 earliestExecution = _proposals[proposalId].resolutionTime + executionDelay;
+        uint64 now_ = _now();
+        if (now_ < earliestExecution) {
+            revert Errors.ExecutionDelayNotMet(earliestExecution, now_);
         }
 
         // Verify execution hash matches

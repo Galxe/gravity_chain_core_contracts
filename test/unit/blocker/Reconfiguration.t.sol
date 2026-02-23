@@ -187,7 +187,8 @@ contract ReconfigurationTest is Test {
             .initialize(
                 1000 ether, // minVotingThreshold
                 100 ether, // requiredProposerStake
-                7 days * 1_000_000 // votingDurationMicros
+                7 days * 1_000_000, // votingDurationMicros
+                1 days * 1_000_000 // executionDelayMicros
             );
 
         // Setup mock validators

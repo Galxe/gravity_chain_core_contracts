@@ -20,6 +20,7 @@ contract GovernanceConfig {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
     }
 
     // ========================================================================
@@ -34,6 +35,9 @@ contract GovernanceConfig {
 
     /// @notice Duration of voting period in microseconds
     uint64 public votingDurationMicros;
+
+    /// @notice Duration of execution delay (timelock) in microseconds
+    uint64 public executionDelayMicros;
 
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
@@ -66,10 +70,12 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds
+    /// @param _executionDelayMicros Execution delay (timelock) duration in microseconds
     function initialize(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
@@ -78,11 +84,12 @@ contract GovernanceConfig {
         }
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(_votingDurationMicros, _executionDelayMicros);
 
         minVotingThreshold = _minVotingThreshold;
         requiredProposerStake = _requiredProposerStake;
         votingDurationMicros = _votingDurationMicros;
+        executionDelayMicros = _executionDelayMicros;
 
         _initialized = true;
 
@@ -116,21 +123,24 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds (must be > 0)
+    /// @param _executionDelayMicros Execution delay (timelock) duration in microseconds (must be > 0)
     function setForNextEpoch(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(_votingDurationMicros, _executionDelayMicros);
 
         _pendingConfig = PendingConfig({
             minVotingThreshold: _minVotingThreshold,
             requiredProposerStake: _requiredProposerStake,
-            votingDurationMicros: _votingDurationMicros
+            votingDurationMicros: _votingDurationMicros,
+            executionDelayMicros: _executionDelayMicros
         });
         hasPendingConfig = true;
 
@@ -156,6 +166,7 @@ contract GovernanceConfig {
         minVotingThreshold = _pendingConfig.minVotingThreshold;
         requiredProposerStake = _pendingConfig.requiredProposerStake;
         votingDurationMicros = _pendingConfig.votingDurationMicros;
+        executionDelayMicros = _pendingConfig.executionDelayMicros;
 
         hasPendingConfig = false;
 
@@ -172,11 +183,16 @@ contract GovernanceConfig {
 
     /// @notice Validate configuration parameters
     /// @param _votingDurationMicros Voting duration
+    /// @param _executionDelayMicros Execution delay (timelock) duration
     function _validateConfig(
-        uint64 _votingDurationMicros
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros
     ) internal pure {
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
+        }
+        if (_executionDelayMicros == 0) {
+            revert Errors.InvalidExecutionDelay();
         }
     }
 

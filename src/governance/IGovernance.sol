@@ -124,6 +124,13 @@ interface IGovernance {
         uint64 proposalId
     ) external view returns (uint64);
 
+    /// @notice Get the earliest time a proposal can be executed (after timelock)
+    /// @param proposalId ID of the proposal
+    /// @return Earliest execution timestamp in microseconds (0 if not yet resolved)
+    function getEarliestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64);
+
     /// @notice Get all authorized executors
     /// @return Array of executor addresses
     function getExecutors() external view returns (address[] memory);

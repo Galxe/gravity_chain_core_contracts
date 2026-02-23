@@ -51,6 +51,7 @@ contract GovernanceTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 100 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 50 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days
+    uint64 constant EXECUTION_DELAY_MICROS = 1 days * 1_000_000; // 1 day
 
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION_MICROS = 30 days * 1_000_000; // 30 days
@@ -89,7 +90,7 @@ contract GovernanceTest is Test {
 
         // Initialize GovernanceConfig
         vm.prank(SystemAddresses.GENESIS);
-        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS, 1 days * 1_000_000);
 
         // Deploy Governance with owner
         // Deploy to a temporary address first, then copy bytecode and storage to system address
@@ -532,6 +533,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
         governance.execute(proposalId, targets, datas);
@@ -566,6 +568,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute failed proposal
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalNotSucceeded.selector, proposalId));
@@ -587,6 +590,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
         governance.execute(proposalId, targets, datas);
 
         // Try to execute again
@@ -610,6 +614,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute with wrong data
         bytes memory wrongData = abi.encodeWithSignature("setValue(uint256)", 999);
@@ -635,6 +640,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute should fail
         vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
@@ -730,6 +736,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         vm.expectEmit(true, true, false, true);
         emit IGovernance.ProposalExecuted(proposalId, address(this), targets, datas);
@@ -889,6 +896,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Bob (not an executor) tries to execute
         vm.prank(bob);
@@ -914,6 +922,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // executor1 executes the proposal
         vm.prank(executor1);
@@ -944,6 +953,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // executor1 (now removed) tries to execute
         vm.prank(executor1);
@@ -1510,6 +1520,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
         governance.execute(proposalId, targets, datas);
@@ -1543,6 +1554,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute should fail and revert all changes atomically
         vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
@@ -1609,6 +1621,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute with empty arrays
         address[] memory emptyTargets = new address[](0);
@@ -1631,6 +1644,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute with mismatched arrays
         address[] memory mismatchTargets = new address[](2);

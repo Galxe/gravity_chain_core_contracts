@@ -30,6 +30,9 @@ contract NativeOracle is INativeOracle {
     /// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
     mapping(uint32 => mapping(uint256 => address)) private _callbacks;
 
+    /// @notice Failed callbacks stored for retry: sourceType -> sourceId -> nonce -> FailedCallback
+    mapping(uint32 => mapping(uint256 => mapping(uint128 => FailedCallback))) private _failedCallbacks;
+
     /// @notice Whether the contract has been initialized
     bool private _initialized;
 
@@ -242,6 +245,51 @@ contract NativeOracle is INativeOracle {
     }
 
     // ========================================================================
+    // RETRY FUNCTIONS (Consensus Only)
+    // ========================================================================
+
+    /// @inheritdoc INativeOracle
+    function retryCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        uint256 callbackGasLimit
+    ) external {
+        requireAllowed(SystemAddresses.SYSTEM_CALLER);
+
+        FailedCallback storage failed = _failedCallbacks[sourceType][sourceId][nonce];
+        if (failed.callback == address(0)) {
+            revert Errors.NoFailedCallback(sourceType, sourceId, nonce);
+        }
+
+        address callback = failed.callback;
+        bytes memory payload = failed.payload;
+
+        try IOracleCallback(callback).onOracleEvent{ gas: callbackGasLimit }(
+            sourceType, sourceId, nonce, payload
+        ) returns (
+            bool
+        ) {
+            // Success - clear the failed callback
+            delete _failedCallbacks[sourceType][sourceId][nonce];
+            emit CallbackRetrySucceeded(sourceType, sourceId, nonce, callback);
+        } catch (bytes memory reason) {
+            // Still failing - update attempts
+            failed.attempts += 1;
+            emit CallbackRetryFailed(sourceType, sourceId, nonce, callback, reason);
+        }
+    }
+
+    /// @inheritdoc INativeOracle
+    function getFailedCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (FailedCallback memory) {
+        return _failedCallbacks[sourceType][sourceId][nonce];
+    }
+
+    // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
 
@@ -312,6 +360,9 @@ contract NativeOracle is INativeOracle {
             }
             return callbackShouldStore;
         } catch (bytes memory reason) {
+            // Store failed callback for retry
+            _failedCallbacks[sourceType][sourceId][nonce] =
+                FailedCallback({ payload: payload, gasLimit: gasLimit, callback: callback, attempts: 1 });
             emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
             return true; // On failure, store by default to preserve data
         }

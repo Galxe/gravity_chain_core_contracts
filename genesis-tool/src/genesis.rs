@@ -122,6 +122,9 @@ pub struct GovernanceConfigParams {
 
     #[serde(rename = "votingDurationMicros")]
     pub voting_duration_micros: u64,
+
+    #[serde(rename = "executionDelayMicros")]
+    pub execution_delay_micros: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -258,6 +261,7 @@ sol! {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
     }
 
     struct SolConfigV2Data {
@@ -397,6 +401,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         minVotingThreshold: parse_u128(&config.governance_config.min_voting_threshold),
         requiredProposerStake: parse_u256(&config.governance_config.required_proposer_stake),
         votingDurationMicros: config.governance_config.voting_duration_micros,
+        executionDelayMicros: config.governance_config.execution_delay_micros,
     };
 
     // Convert RandomnessConfig

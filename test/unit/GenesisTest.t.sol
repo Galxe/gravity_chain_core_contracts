@@ -83,6 +83,7 @@ contract GenesisTest is Test {
         params.governanceConfig.minVotingThreshold = 1000 ether;
         params.governanceConfig.requiredProposerStake = 100 ether;
         params.governanceConfig.votingDurationMicros = 2 days * 1_000_000;
+        params.governanceConfig.executionDelayMicros = 1 days * 1_000_000;
 
         // Version Config
         params.majorVersion = 1;

@@ -175,6 +175,9 @@ library Errors {
     /// @notice Consensus public key proof-of-possession verification failed
     error InvalidConsensusPopVerification();
 
+    /// @notice Consensus proof-of-possession is empty
+    error InvalidConsensusPopLength();
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================
@@ -275,6 +278,14 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
+    /// @notice Execution delay has not elapsed (timelock)
+    /// @param earliestExecution When execution becomes available (microseconds)
+    /// @param currentTime Current timestamp (microseconds)
+    error ExecutionDelayNotMet(uint64 earliestExecution, uint64 currentTime);
+
+    /// @notice Execution delay must be greater than zero
+    error InvalidExecutionDelay();
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
@@ -370,6 +381,12 @@ library Errors {
     /// @param payloadsLength Length of payloads array
     /// @param gasLimitsLength Length of callbackGasLimits array
     error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+
+    /// @notice No failed callback exists for the given key
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce
+    error NoFailedCallback(uint32 sourceType, uint256 sourceId, uint128 nonce);
 
     // ========================================================================
     // VERSION CONFIG ERRORS

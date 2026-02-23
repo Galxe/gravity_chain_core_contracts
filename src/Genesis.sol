@@ -58,6 +58,7 @@ contract Genesis {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
     }
 
     struct OracleTaskParams {
@@ -151,14 +152,26 @@ contract Genesis {
         // 2. Initialize Oracles
         _initializeOracles(params.oracleConfig, params.jwkConfig);
 
+        // 3-7. Initialize validators and system components
+        _initializeValidatorsAndSystem(params.validators);
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    function _initializeValidatorsAndSystem(
+        InitialValidator[] calldata validators
+    ) internal {
         // 3. Create Stake Pools & Prepare Validator Data
-        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(params.validators);
+        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(validators);
 
         // 4. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);
 
         // 5. Initialize Performance Tracker (before Reconfiguration, since first epoch needs tracking)
-        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(params.validators.length);
+        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(validators.length);
+
         // 6. Initialize Reconfiguration
         Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
@@ -166,14 +179,17 @@ contract Genesis {
         Blocker(SystemAddresses.BLOCK).initialize();
 
         _isInitialized = true;
-        emit GenesisCompleted(params.validators.length, uint64(block.timestamp));
+        emit GenesisCompleted(validators.length, uint64(block.timestamp));
     }
 
-    // ========================================================================
-    // INTERNAL FUNCTIONS
-    // ========================================================================
-
     function _initializeConfigs(
+        GenesisInitParams calldata params
+    ) internal {
+        _initializeValidatorAndStakingConfigs(params);
+        _initializeRemainingConfigs(params);
+    }
+
+    function _initializeValidatorAndStakingConfigs(
         GenesisInitParams calldata params
     ) internal {
         ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
@@ -195,7 +211,11 @@ contract Genesis {
                 params.stakingConfig.unbondingDelayMicros,
                 params.stakingConfig.minimumProposalStake
             );
+    }
 
+    function _initializeRemainingConfigs(
+        GenesisInitParams calldata params
+    ) internal {
         EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(params.epochIntervalMicros);
 
         ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).initialize(params.consensusConfig);
@@ -206,7 +226,8 @@ contract Genesis {
             .initialize(
                 params.governanceConfig.minVotingThreshold,
                 params.governanceConfig.requiredProposerStake,
-                params.governanceConfig.votingDurationMicros
+                params.governanceConfig.votingDurationMicros,
+                params.governanceConfig.executionDelayMicros
             );
 
         VersionConfig(SystemAddresses.VERSION_CONFIG).initialize(params.majorVersion);
