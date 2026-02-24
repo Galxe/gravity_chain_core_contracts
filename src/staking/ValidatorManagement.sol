@@ -480,22 +480,24 @@ contract ValidatorManagement is IValidatorManagement {
 
         ValidatorRecord storage validator = _validators[stakePool];
 
-        // Check new pubkey is unique
+        // Check new pubkey is unique (against both active and pending keys)
         bytes32 newKeyHash = keccak256(newPubkey);
         if (_pubkeyToValidator[newKeyHash] != address(0)) {
             revert Errors.DuplicateConsensusPubkey(newPubkey);
         }
 
-        // Clear old pubkey from mapping and register new one
-        bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
-        delete _pubkeyToValidator[oldKeyHash];
+        // If there was a previous pending rotation, free that key from the mapping
+        if (validator.pendingConsensusPubkey.length > 0) {
+            bytes32 oldPendingKeyHash = keccak256(validator.pendingConsensusPubkey);
+            delete _pubkeyToValidator[oldPendingKeyHash];
+        }
+
+        // Reserve the new key in the mapping immediately to prevent duplicates
         _pubkeyToValidator[newKeyHash] = stakePool;
 
-        // TODO(yxia): it wont take effect immediately i think, it has to wait until the next epoch.
-        // check if aptos has some fancy way to make it take effect immediately.
-        // Update consensus key material (takes effect immediately)
-        validator.consensusPubkey = newPubkey;
-        validator.consensusPop = newPop;
+        // Store as pending — applied at next epoch boundary
+        validator.pendingConsensusPubkey = newPubkey;
+        validator.pendingConsensusPop = newPop;
 
         emit ConsensusKeyRotated(stakePool, newPubkey);
     }
@@ -546,14 +548,17 @@ contract ValidatorManagement is IValidatorManagement {
         // 7. Auto-renew lockups for active validators (Aptos-style)
         _renewActiveValidatorLockups();
 
-        // 8. Apply pending fee recipient changes for all active validators
+        // 8. Apply pending consensus key rotations for all active validators
+        _applyPendingConsensusKeys();
+
+        // 9. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 9. Update bond (voting power) for all active validators
-        //    This captures post-lockup-renewal voting power
+        // 10. Update bond (voting power) for all active validators
+        //     This captures post-lockup-renewal voting power
         _syncValidatorBonds();
 
-        // 10. Update total voting power
+        // 11. Update total voting power
         //     Note: Epoch is managed by Reconfiguration contract (single source of truth)
         totalVotingPower = _calculateTotalVotingPower();
 
@@ -734,6 +739,29 @@ contract ValidatorManagement is IValidatorManagement {
             address pool = _activeValidators[i];
             // Renew lockup via Staking factory (which calls StakePool.systemRenewLockup)
             IStaking(SystemAddresses.STAKING).renewPoolLockup(pool);
+        }
+    }
+
+    /// @notice Apply pending consensus key rotations at epoch boundary
+    /// @dev Frees the old active key from the pubkey mapping and promotes the pending key.
+    function _applyPendingConsensusKeys() internal {
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+            if (validator.pendingConsensusPubkey.length > 0) {
+                // Free the old active key from the uniqueness mapping
+                bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
+                delete _pubkeyToValidator[oldKeyHash];
+
+                // Promote pending to active
+                validator.consensusPubkey = validator.pendingConsensusPubkey;
+                validator.consensusPop = validator.pendingConsensusPop;
+
+                // Clear pending
+                delete validator.pendingConsensusPubkey;
+                delete validator.pendingConsensusPop;
+            }
         }
     }
 

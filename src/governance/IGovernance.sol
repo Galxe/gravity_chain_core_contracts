@@ -207,12 +207,12 @@ interface IGovernance {
     ///      If votingPower exceeds remaining power for a pool, uses all remaining power.
     /// @param stakePools Array of stake pool addresses to vote with
     /// @param proposalId ID of the proposal to vote on
-    /// @param votingPower Amount of voting power to use from each pool
+    /// @param votingPowers Amount of voting power to use from each pool (must match stakePools length)
     /// @param support True to vote yes, false to vote no
     function batchPartialVote(
         address[] calldata stakePools,
         uint64 proposalId,
-        uint128 votingPower,
+        uint128[] calldata votingPowers,
         bool support
     ) external;
 

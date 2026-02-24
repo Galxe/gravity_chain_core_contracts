@@ -376,12 +376,15 @@ contract Governance is IGovernance, Ownable2Step {
     function batchPartialVote(
         address[] calldata stakePools,
         uint64 proposalId,
-        uint128 votingPower,
+        uint128[] calldata votingPowers,
         bool support
     ) external {
         uint256 len = stakePools.length;
+        if (votingPowers.length != len) {
+            revert Errors.ArrayLengthMismatch(len, votingPowers.length);
+        }
         for (uint256 i = 0; i < len; ++i) {
-            _voteInternal(stakePools[i], proposalId, votingPower, support);
+            _voteInternal(stakePools[i], proposalId, votingPowers[i], support);
         }
     }
 
@@ -573,8 +576,14 @@ contract Governance is IGovernance, Ownable2Step {
         // Execute all calls atomically, forwarding native token values
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
-            (bool success,) = targets[i].call{ value: values[i] }(datas[i]);
+            (bool success, bytes memory returnData) = targets[i].call{ value: values[i] }(datas[i]);
             if (!success) {
+                // Bubble up the original revert reason if available
+                if (returnData.length > 0) {
+                    assembly {
+                        revert(add(returnData, 32), mload(returnData))
+                    }
+                }
                 revert Errors.ExecutionFailed(proposalId);
             }
         }

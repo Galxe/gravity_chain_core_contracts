@@ -3,7 +3,7 @@
 **Date:** 2026-02-23
 **Scope:** All Solidity contracts in `src/` (Layers 0-6)
 **Solidity:** 0.8.30 | **Toolchain:** Foundry
-**Test suite:** 897 tests, all passing
+**Test suite:** 900 tests, all passing
 
 ---
 
@@ -13,9 +13,9 @@
 |----------|----------|--------|--------|
 | CRITICAL | 1 | Fixed | [`f4c8325`](https://github.com/Galxe/gravity_chain_core_contracts/commit/f4c8325) |
 | HIGH | 3 | All fixed | [`d535c0a`](https://github.com/Galxe/gravity_chain_core_contracts/commit/d535c0a) |
-| MEDIUM | 16 | All fixed | [`3861046`](https://github.com/Galxe/gravity_chain_core_contracts/commit/3861046) |
-| LOW | 24 | All fixed | [`0c578ef`](https://github.com/Galxe/gravity_chain_core_contracts/commit/0c578ef) |
-| **Total** | **44** | **All fixed** | |
+| MEDIUM | 16 + 2 | All fixed | [`3861046`](https://github.com/Galxe/gravity_chain_core_contracts/commit/3861046), supplemental commit |
+| LOW | 24 + 1 | All fixed | [`0c578ef`](https://github.com/Galxe/gravity_chain_core_contracts/commit/0c578ef), supplemental commit |
+| **Total** | **47** | **All fixed** | |
 
 ---
 
@@ -171,9 +171,23 @@
 **Fix:** Updated to correct address matching single-node config.
 **Files:** `genesis-tool/config/genesis_config.json`
 
+### GCC-044: Governance.execute() Discards Revert Reason (Supplemental)
+
+**Contract:** `Governance.sol`
+**Issue:** `execute()` discards return data from external calls via `(bool success,) = ...`. When targets revert with custom errors, the specific revert reason is lost, making on-chain debugging impossible.
+**Fix:** Capture `returnData` and bubble up via assembly when available. Falls back to `ExecutionFailed` only when no revert data is returned.
+**Files:** `src/governance/Governance.sol`
+
+### GCC-045: Consensus Key Rotation Takes Effect Immediately (Supplemental)
+
+**Contract:** `ValidatorManagement.sol`
+**Issue:** `rotateConsensusKey()` updates consensus key and PoP immediately in storage. Mid-epoch key changes could disrupt consensus if the engine reads the new key before epoch boundary.
+**Fix:** Implemented pending key rotation pattern (mirrors `pendingFeeRecipient`). Keys stored as `pendingConsensusPubkey`/`pendingConsensusPop`, applied at epoch boundary via `_applyPendingConsensusKeys()`. Old key remains reserved until epoch transition.
+**Files:** `src/staking/ValidatorManagement.sol`, `src/foundation/Types.sol`
+
 ---
 
-## LOW Severity (24)
+## LOW Severity (24 + 1)
 
 ### Category A — Missing Input Validation
 
@@ -229,6 +243,12 @@
 | GCC-032 | Governance ownership can be renounced | Override `renounceOwnership()` to revert | `Governance.sol` |
 | GCC-038 | StakePool missing reentrancy protection | Added OpenZeppelin `ReentrancyGuard` to `withdrawAvailable()` | `StakePool.sol` |
 
+### Category G — API Design (Supplemental)
+
+| ID | Issue | Fix | Files |
+|----|-------|-----|-------|
+| GCC-046 | batchPartialVote applies same votingPower per pool | Changed to per-pool `uint128[] votingPowers` array with length validation | `Governance.sol`, `IGovernance.sol` |
+
 ---
 
 ## Commits
@@ -239,6 +259,7 @@
 | [`d535c0a`](https://github.com/Galxe/gravity_chain_core_contracts/commit/d535c0a) | HIGH severity fixes (GCC-001, GCC-002, GCC-003) | 16 files |
 | [`3861046`](https://github.com/Galxe/gravity_chain_core_contracts/commit/3861046) | MEDIUM severity fixes (GCC-004 through GCC-019) | 38 files |
 | [`0c578ef`](https://github.com/Galxe/gravity_chain_core_contracts/commit/0c578ef) | LOW severity fixes (GCC-020 through GCC-043) | 40 files |
+| Supplemental | GCC-044, GCC-045, GCC-046 (cross-audit findings) | 6 files |
 
 ## Design Documents
 

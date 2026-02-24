@@ -522,8 +522,9 @@ contract ValidatorManagementTest is Test {
     // OPERATOR FUNCTION TESTS
     // ========================================================================
 
-    function test_rotateConsensusKey_success() public {
+    function test_rotateConsensusKey_storesPending() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        bytes memory originalPubkey = validatorManager.getValidator(pool).consensusPubkey;
         bytes memory newPubkey =
             hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
         bytes memory newPop = hex"cafebabe";
@@ -531,9 +532,34 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
 
+        // Key should remain unchanged until epoch boundary
         ValidatorRecord memory record = validatorManager.getValidator(pool);
-        assertEq(record.consensusPubkey, newPubkey, "Pubkey should be updated");
-        assertEq(record.consensusPop, newPop, "PoP should be updated");
+        assertEq(record.consensusPubkey, originalPubkey, "Active pubkey should not change immediately");
+        // Pending key should be stored
+        assertEq(record.pendingConsensusPubkey, newPubkey, "Pending pubkey should be stored");
+        assertEq(record.pendingConsensusPop, newPop, "Pending PoP should be stored");
+    }
+
+    function test_rotateConsensusKey_appliedAtEpochBoundary() public {
+        // Must be ACTIVE for epoch transition to apply pending keys
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch(); // PENDING_ACTIVE -> ACTIVE
+
+        bytes memory newPubkey =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
+        bytes memory newPop = hex"cafebabe";
+
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
+
+        // Trigger epoch transition — applies pending keys
+        _processEpoch();
+
+        // After epoch, the key should be applied
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(record.consensusPubkey, newPubkey, "Pubkey should be updated after epoch");
+        assertEq(record.consensusPop, newPop, "PoP should be updated after epoch");
+        assertEq(record.pendingConsensusPubkey.length, 0, "Pending pubkey should be cleared");
     }
 
     function test_rotateConsensusKey_emitsEvent() public {
@@ -596,9 +622,9 @@ contract ValidatorManagementTest is Test {
         validatorManager.rotateConsensusKey(alicePool, bobPubkey, hex"abcd1234");
     }
 
-    /// @notice Test that after rotation, old pubkey can be reused by another validator
-    function test_rotateConsensusKey_clearsOldPubkey() public {
-        // Alice registers with a specific pubkey
+    /// @notice Test that after epoch transition, old pubkey is freed and can be reused
+    function test_rotateConsensusKey_clearsOldPubkeyAfterEpoch() public {
+        // Alice registers and becomes active
         address alicePool = _createStakePool(alice, MIN_BOND);
         bytes memory aliceOldPubkey =
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
@@ -606,15 +632,28 @@ contract ValidatorManagementTest is Test {
         validatorManager.registerValidator(
             alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, alice
         );
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        _processEpoch(); // PENDING_ACTIVE -> ACTIVE
 
-        // Alice rotates to a new key
+        // Alice rotates to a new key (pending)
         bytes memory aliceNewPubkey =
             hex"a1ecafe00000000200000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
-        // Bob should now be able to register with Alice's old pubkey
+        // Before epoch: Bob cannot use Alice's old pubkey (still reserved as active key)
         address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, aliceOldPubkey));
+        validatorManager.registerValidator(
+            bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
+        );
+
+        // Trigger epoch transition — applies pending key, frees old key
+        _processEpoch();
+
+        // After epoch: Bob can now register with Alice's old pubkey
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
@@ -646,14 +685,14 @@ contract ValidatorManagementTest is Test {
             bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES, bob
         );
 
-        // Alice rotates to a completely new key (not Bob's)
+        // Alice rotates to a completely new key (not Bob's) — stored as pending
         bytes memory aliceNewPubkey =
             hex"a1ecafe00000000300000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
         ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
-        assertEq(aliceRecord.consensusPubkey, aliceNewPubkey, "Alice should have new pubkey");
+        assertEq(aliceRecord.pendingConsensusPubkey, aliceNewPubkey, "Alice should have pending pubkey");
     }
 
     function test_setFeeRecipient_success() public {

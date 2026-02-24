@@ -657,8 +657,8 @@ contract GovernanceTest is Test {
         governance.resolve(proposalId);
         _advanceTime(EXECUTION_DELAY_MICROS);
 
-        // Execute should fail
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        // Execute should fail — bubbles up the original revert reason
+        vm.expectRevert("MockTarget: always reverts");
         governance.execute(proposalId, targets, values, datas);
     }
 
@@ -1173,8 +1173,12 @@ contract GovernanceTest is Test {
         pools[0] = alicePool;
         pools[1] = bobPool;
 
+        uint128[] memory powers = new uint128[](2);
+        powers[0] = 30 ether;
+        powers[1] = 30 ether;
+
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 30 ether, false);
+        governance.batchPartialVote(pools, proposalId, powers, false);
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 0);
@@ -1203,8 +1207,11 @@ contract GovernanceTest is Test {
         address[] memory pools = new address[](1);
         pools[0] = bobPool;
 
+        uint128[] memory powers = new uint128[](1);
+        powers[0] = 100 ether;
+
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 100 ether, true); // Request 100, only 20 available
+        governance.batchPartialVote(pools, proposalId, powers, true); // Request 100, only 20 available
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 20 ether); // Capped at 20
@@ -1319,12 +1326,18 @@ contract GovernanceTest is Test {
         pools[1] = bobPool;
 
         // First round: vote yes with 20 ether each
+        uint128[] memory yesPowers = new uint128[](2);
+        yesPowers[0] = 20 ether;
+        yesPowers[1] = 20 ether;
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 20 ether, true);
+        governance.batchPartialVote(pools, proposalId, yesPowers, true);
 
         // Second round: vote no with 15 ether each
+        uint128[] memory noPowers = new uint128[](2);
+        noPowers[0] = 15 ether;
+        noPowers[1] = 15 ether;
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 15 ether, false);
+        governance.batchPartialVote(pools, proposalId, noPowers, false);
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 40 ether); // 20 + 20
@@ -1666,8 +1679,8 @@ contract GovernanceTest is Test {
         governance.resolve(proposalId);
         _advanceTime(EXECUTION_DELAY_MICROS);
 
-        // Execute should fail and revert all changes atomically
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        // Execute should fail and revert all changes atomically — bubbles up original revert
+        vm.expectRevert("MockTarget: always reverts");
         governance.execute(proposalId, targets, values, datas);
 
         // Verify first call was rolled back (value should still be 0)

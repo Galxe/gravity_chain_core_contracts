@@ -248,6 +248,8 @@ contract TypesTest is Test {
             consensusPop: hex"11223344",
             networkAddresses: hex"",
             fullnodeAddresses: hex"",
+            pendingConsensusPubkey: hex"",
+            pendingConsensusPop: hex"",
             feeRecipient: address(0x5678),
             pendingFeeRecipient: address(0),
             stakingPool: address(0),
