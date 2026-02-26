@@ -161,28 +161,31 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InvalidConsensusPopLength();
         }
 
+        // Cache stakePool to reduce stack pressure
+        address pool = v.stakePool;
+
         // Create validator record
-        ValidatorRecord storage record = _validators[v.stakePool];
-        record.validator = v.stakePool;
+        ValidatorRecord storage record = _validators[pool];
+        record.validator = pool;
         record.moniker = v.moniker;
-        record.stakingPool = v.stakePool;
+        record.stakingPool = pool;
         record.status = ValidatorStatus.ACTIVE;
         record.bond = v.votingPower;
         record.consensusPubkey = v.consensusPubkey;
         record.consensusPop = v.consensusPop;
 
         // Register pubkey in the mapping
-        _pubkeyToValidator[keccak256(v.consensusPubkey)] = v.stakePool;
+        _pubkeyToValidator[keccak256(v.consensusPubkey)] = pool;
         record.networkAddresses = v.networkAddresses;
         record.fullnodeAddresses = v.fullnodeAddresses;
-        record.feeRecipient = v.feeRecipient;
+        record.feeRecipient = pool;
         record.validatorIndex = index;
 
         // Add to active validators
-        _activeValidators.push(v.stakePool);
+        _activeValidators.push(pool);
 
-        emit ValidatorRegistered(v.stakePool, v.moniker);
-        emit ValidatorActivated(v.stakePool, index, v.votingPower);
+        emit ValidatorRegistered(pool, v.moniker);
+        emit ValidatorActivated(pool, index, v.votingPower);
 
         return v.votingPower;
     }
@@ -237,8 +240,7 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses,
-        address feeRecipient
+        bytes calldata fullnodeAddresses
     ) external {
         // GCC-041: Check that validator set changes are allowed
         if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
@@ -250,7 +252,7 @@ contract ValidatorManagement is IValidatorManagement {
 
         // Create validator record
         _createValidatorRecord(
-            stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses, feeRecipient
+            stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses
         );
 
         emit ValidatorRegistered(stakePool, moniker);
@@ -318,8 +320,7 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses,
-        address feeRecipient
+        bytes calldata fullnodeAddresses
     ) internal {
         // Validate consensus pubkey with proof of possession
         _validateConsensusPubkey(consensusPubkey, consensusPop);
@@ -331,8 +332,8 @@ contract ValidatorManagement is IValidatorManagement {
         record.moniker = moniker;
         record.stakingPool = stakePool;
 
-        // Set fee recipient from caller-provided parameter
-        record.feeRecipient = feeRecipient;
+        // Default fee recipient to the caller (operator)
+        record.feeRecipient = msg.sender;
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;

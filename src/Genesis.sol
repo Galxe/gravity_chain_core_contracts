@@ -322,7 +322,6 @@ contract Genesis {
                 consensusPop: v.consensusPop,
                 networkAddresses: v.networkAddresses,
                 fullnodeAddresses: v.fullnodeAddresses,
-                feeRecipient: v.owner, // Default to owner
                 votingPower: v.votingPower
             });
 

@@ -18,8 +18,6 @@ struct GenesisValidator {
     bytes networkAddresses;
     /// @notice Fullnode addresses
     bytes fullnodeAddresses;
-    /// @notice Fee recipient address
-    address feeRecipient;
     /// @notice Initial voting power
     uint256 votingPower;
 }
@@ -133,15 +131,13 @@ interface IValidatorManagement {
     /// @param consensusPop Proof of possession for the BLS key
     /// @param networkAddresses Network addresses for P2P communication
     /// @param fullnodeAddresses Fullnode addresses
-    /// @param feeRecipient Address to receive validator fees
     function registerValidator(
         address stakePool,
         string calldata moniker,
         bytes calldata consensusPubkey,
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
-        bytes calldata fullnodeAddresses,
-        address feeRecipient
+        bytes calldata fullnodeAddresses
     ) external;
 
     // ========================================================================

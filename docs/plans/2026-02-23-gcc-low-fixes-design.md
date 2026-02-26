@@ -43,8 +43,8 @@ Emit `ValidatorRevertedInactive(stakePool, votingPower, minimumBond)` in `_apply
 ### GCC-022: Governance.execute() native token support — **NOT NEEDED (Removed)**
 > Native token forwarding in governance proposals is not required. Governance calls should execute without forwarding ETH. The `uint256[] values` parameter, `payable` modifier, and ETH refund logic have been removed. Future audits should not consider the absence of native token support in `execute()` as a gap.
 
-### GCC-024: Fee recipient parameter at registration
-Add `feeRecipient` to `registerValidator()`.
+### GCC-024: Fee recipient parameter at registration — **NOT NEEDED (Removed)**
+> The `feeRecipient` parameter is not needed at registration time. Fee recipient defaults to `msg.sender` (operator) at registration and can be changed post-registration via `setFeeRecipient()`. Future audits should not consider the absence of explicit `feeRecipient` at registration as a gap.
 
 ### GCC-026: Upper bound on config durations
 Add max constants to StakingConfig and ValidatorConfig.
