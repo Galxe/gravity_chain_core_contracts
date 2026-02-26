@@ -60,8 +60,6 @@ contract GovernanceTest is Test {
     // Test target contract for execution
     MockTarget public mockTarget;
 
-    /// @dev Allow test contract to receive ETH refunds from Governance.execute()
-    receive() external payable { }
 
     function setUp() public {
         // Deploy Timestamp
@@ -147,29 +145,24 @@ contract GovernanceTest is Test {
     ) internal pure returns (bytes32) {
         address[] memory targets = new address[](1);
         targets[0] = target;
-        uint256[] memory values = new uint256[](1);
-        values[0] = 0;
         bytes[] memory datas = new bytes[](1);
         datas[0] = data;
-        return keccak256(abi.encode(targets, values, datas));
+        return keccak256(abi.encode(targets, datas));
     }
 
     function _computeBatchExecutionHash(
         address[] memory targets,
-        uint256[] memory values,
         bytes[] memory datas
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(targets, values, datas));
+        return keccak256(abi.encode(targets, datas));
     }
 
     function _toArrays(
         address target,
         bytes memory data
-    ) internal pure returns (address[] memory targets, uint256[] memory values, bytes[] memory datas) {
+    ) internal pure returns (address[] memory targets, bytes[] memory datas) {
         targets = new address[](1);
         targets[0] = target;
-        values = new uint256[](1);
-        values[0] = 0;
         datas = new bytes[](1);
         datas[0] = data;
     }
@@ -192,12 +185,12 @@ contract GovernanceTest is Test {
 
         // Prepare batch arrays (single call)
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
         bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
 
         // Create proposal as pool's voter (alice is owner and default voter)
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Verify proposal was created
         assertEq(proposalId, 1);
@@ -215,36 +208,36 @@ contract GovernanceTest is Test {
     function test_RevertWhen_CreateProposalInvalidPool() public {
         address invalidPool = address(0x1234);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, invalidPool));
-        governance.createProposal(invalidPool, targets, values, datas, "ipfs://test");
+        governance.createProposal(invalidPool, targets, datas, "ipfs://test");
     }
 
     function test_RevertWhen_CreateProposalNotVoter() public {
         // Create pool with alice as owner
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         // Bob tries to create proposal with alice's pool
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotDelegatedVoter.selector, alice, bob));
-        governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        governance.createProposal(pool, targets, datas, "ipfs://test");
     }
 
     function test_RevertWhen_CreateProposalInsufficientVotingPower() public {
         // Create pool with insufficient stake
         address pool = _createStakePool(alice, 10 ether); // Less than REQUIRED_PROPOSER_STAKE
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 10 ether)
         );
-        governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        governance.createProposal(pool, targets, datas, "ipfs://test");
     }
 
     function test_RevertWhen_CreateProposalInsufficientLockup() public {
@@ -255,12 +248,12 @@ contract GovernanceTest is Test {
         // (GCC-010: voting power is now evaluated at creation time, not expiration time)
         _advanceTime(LOCKUP_DURATION_MICROS + 1);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         // Lockup has expired, so voting power at creation time = 0
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 0));
-        governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        governance.createProposal(pool, targets, datas, "ipfs://test");
     }
 
     // ========================================================================
@@ -272,10 +265,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote yes with full power
         vm.prank(alice);
@@ -290,10 +283,10 @@ contract GovernanceTest is Test {
         // Create pool and proposal
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote yes with partial power
         vm.prank(alice);
@@ -317,10 +310,10 @@ contract GovernanceTest is Test {
         address alicePool = _createStakePool(alice, 100 ether);
         address bobPool = _createStakePool(bob, 50 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Alice votes yes
         vm.prank(alice);
@@ -346,10 +339,10 @@ contract GovernanceTest is Test {
     function test_RevertWhen_VoteAfterVotingPeriodEnded() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Advance time past voting period
         _advanceTime(VOTING_DURATION_MICROS + 1);
@@ -364,10 +357,10 @@ contract GovernanceTest is Test {
     function test_RevertWhen_VoteNotDelegatedVoter() public {
         address alicePool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Bob tries to vote with alice's pool
         vm.prank(bob);
@@ -378,10 +371,10 @@ contract GovernanceTest is Test {
     function test_VoteSilentlyCapsPowerWhenExceedsRemaining() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote with full power
         vm.prank(alice);
@@ -403,10 +396,10 @@ contract GovernanceTest is Test {
     function test_ResolveAfterVotingPeriod() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote
         vm.prank(alice);
@@ -426,10 +419,10 @@ contract GovernanceTest is Test {
     function test_ResolveSucceeded() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote yes with enough power to meet threshold
         vm.prank(alice);
@@ -447,10 +440,10 @@ contract GovernanceTest is Test {
     function test_ResolveFailed_NoQuorum() public {
         address pool = _createStakePool(alice, 50 ether); // Less than MIN_VOTING_THRESHOLD
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote yes but not enough for quorum
         vm.prank(alice);
@@ -469,10 +462,10 @@ contract GovernanceTest is Test {
         address alicePool = _createStakePool(alice, 100 ether);
         address bobPool = _createStakePool(bob, 150 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Alice votes yes
         vm.prank(alice);
@@ -499,10 +492,10 @@ contract GovernanceTest is Test {
     function test_RevertWhen_ResolveAlreadyResolved() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
@@ -516,10 +509,10 @@ contract GovernanceTest is Test {
     function test_RevertWhen_ResolveVotingNotEnded() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         Proposal memory proposal = governance.getProposal(proposalId);
 
@@ -535,10 +528,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote
         vm.prank(alice);
@@ -550,7 +543,7 @@ contract GovernanceTest is Test {
         _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
 
         // Verify execution
         assertEq(mockTarget.value(), 42);
@@ -560,20 +553,20 @@ contract GovernanceTest is Test {
 
     function test_RevertWhen_ExecuteProposalNotFound() public {
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalNotFound.selector, uint64(999)));
-        governance.execute(999, targets, values, datas);
+        governance.execute(999, targets, datas);
     }
 
     function test_RevertWhen_ExecuteProposalNotSucceeded() public {
         address pool = _createStakePool(alice, 50 ether); // Less than MIN_VOTING_THRESHOLD
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote but not enough for quorum
         vm.prank(alice);
@@ -586,17 +579,17 @@ contract GovernanceTest is Test {
 
         // Try to execute failed proposal
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalNotSucceeded.selector, proposalId));
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
     function test_RevertWhen_ExecuteAlreadyExecuted() public {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote, resolve, execute
         vm.prank(alice);
@@ -605,22 +598,22 @@ contract GovernanceTest is Test {
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
         _advanceTime(EXECUTION_DELAY_MICROS);
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
 
         // Try to execute again
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalAlreadyExecuted.selector, proposalId));
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
     function test_RevertWhen_ExecuteHashMismatch() public {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
         bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote and resolve
         vm.prank(alice);
@@ -632,22 +625,22 @@ contract GovernanceTest is Test {
 
         // Try to execute with wrong data
         bytes memory wrongData = abi.encodeWithSignature("setValue(uint256)", 999);
-        (address[] memory wrongTargets, uint256[] memory wrongValues, bytes[] memory wrongDatas) =
+        (address[] memory wrongTargets, bytes[] memory wrongDatas) =
             _toArrays(address(mockTarget), wrongData);
         bytes32 wrongHash = _computeExecutionHash(address(mockTarget), wrongData);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionHashMismatch.selector, executionHash, wrongHash));
-        governance.execute(proposalId, wrongTargets, wrongValues, wrongDatas);
+        governance.execute(proposalId, wrongTargets, wrongDatas);
     }
 
     function test_RevertWhen_ExecutionFails() public {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("revertingFunction()");
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote and resolve
         vm.prank(alice);
@@ -659,99 +652,10 @@ contract GovernanceTest is Test {
 
         // Execute should fail — bubbles up the original revert reason
         vm.expectRevert("MockTarget: always reverts");
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
-    function test_ExecuteWithNativeTokenValues() public {
-        address pool = _createStakePool(alice, 100 ether);
 
-        // Create batch with two calls, each forwarding native tokens
-        address[] memory targets = new address[](2);
-        targets[0] = address(mockTarget);
-        targets[1] = address(mockTarget);
-
-        uint256[] memory nativeValues = new uint256[](2);
-        nativeValues[0] = 1 ether;
-        nativeValues[1] = 0.5 ether;
-
-        bytes[] memory datas = new bytes[](2);
-        datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
-        datas[1] = abi.encodeWithSignature("setValue(uint256)", 100);
-
-        vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, nativeValues, datas, "ipfs://native-value-test");
-
-        // Vote
-        vm.prank(alice);
-        governance.vote(pool, proposalId, 100 ether, true);
-
-        // Advance time and resolve
-        _advanceTime(VOTING_DURATION_MICROS + 1);
-        governance.resolve(proposalId);
-        _advanceTime(EXECUTION_DELAY_MICROS);
-
-        // Execute with native token values
-        uint256 totalValue = 1.5 ether;
-        governance.execute{ value: totalValue }(proposalId, targets, nativeValues, datas);
-
-        // Verify execution
-        assertEq(mockTarget.value(), 100); // Last call sets value to 100
-        assertTrue(governance.isExecuted(proposalId));
-        assertEq(address(mockTarget).balance, totalValue); // mockTarget received all ETH
-    }
-
-    function test_ExecuteWithNativeTokenValues_RefundsLeftover() public {
-        address pool = _createStakePool(alice, 100 ether);
-
-        // Create batch with one call forwarding 1 ether
-        address[] memory targets = new address[](1);
-        targets[0] = address(mockTarget);
-
-        uint256[] memory nativeValues = new uint256[](1);
-        nativeValues[0] = 1 ether;
-
-        bytes[] memory datas = new bytes[](1);
-        datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
-
-        vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, nativeValues, datas, "ipfs://refund-test");
-
-        // Vote
-        vm.prank(alice);
-        governance.vote(pool, proposalId, 100 ether, true);
-
-        // Advance time and resolve
-        _advanceTime(VOTING_DURATION_MICROS + 1);
-        governance.resolve(proposalId);
-        _advanceTime(EXECUTION_DELAY_MICROS);
-
-        // Execute with extra ETH (2 ether sent, only 1 needed)
-        uint256 balanceBefore = address(this).balance;
-        governance.execute{ value: 2 ether }(proposalId, targets, nativeValues, datas);
-
-        // Verify refund: 1 ether should be refunded
-        uint256 balanceAfter = address(this).balance;
-        assertEq(balanceBefore - balanceAfter, 1 ether, "Only 1 ether should have been consumed");
-        assertEq(address(mockTarget).balance, 1 ether);
-    }
-
-    function test_RevertWhen_CreateProposalValuesLengthMismatch() public {
-        address pool = _createStakePool(alice, 100 ether);
-
-        address[] memory targets = new address[](2);
-        targets[0] = address(mockTarget);
-        targets[1] = address(mockTarget);
-
-        uint256[] memory badValues = new uint256[](1); // Mismatch: 1 value for 2 targets
-
-        bytes[] memory datas = new bytes[](2);
-        datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
-        datas[1] = abi.encodeWithSignature("setValue(uint256)", 43);
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.ProposalValuesLengthMismatch.selector, 1, 2));
-        governance.createProposal(pool, targets, badValues, datas, "ipfs://values-mismatch");
-    }
 
     // ========================================================================
     // DELEGATED VOTING TESTS
@@ -764,11 +668,11 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         IStakePool(pool).setVoter(bob);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         // Bob creates proposal using alice's pool
         vm.prank(bob);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Bob votes using alice's pool
         vm.prank(bob);
@@ -787,22 +691,22 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
         bytes32 executionHash = _computeExecutionHash(address(mockTarget), data);
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
         emit IGovernance.ProposalCreated(1, alice, pool, executionHash, "ipfs://test");
-        governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        governance.createProposal(pool, targets, datas, "ipfs://test");
     }
 
     function test_EmitVoteCast() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         vm.expectEmit(true, true, true, true);
@@ -813,10 +717,10 @@ contract GovernanceTest is Test {
     function test_EmitProposalResolved() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -832,10 +736,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -845,8 +749,8 @@ contract GovernanceTest is Test {
         _advanceTime(EXECUTION_DELAY_MICROS);
 
         vm.expectEmit(true, true, false, true);
-        emit IGovernance.ProposalExecuted(proposalId, address(this), targets, values, datas);
-        governance.execute(proposalId, targets, values, datas);
+        emit IGovernance.ProposalExecuted(proposalId, address(this), targets, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
     // ========================================================================
@@ -992,10 +896,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -1007,7 +911,7 @@ contract GovernanceTest is Test {
         // Bob (not an executor) tries to execute
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotExecutor.selector, bob));
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
     function test_ExecuteAsAddedExecutor() public {
@@ -1018,10 +922,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -1032,7 +936,7 @@ contract GovernanceTest is Test {
 
         // executor1 executes the proposal
         vm.prank(executor1);
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
 
         // Verify execution
         assertEq(mockTarget.value(), 42);
@@ -1049,10 +953,10 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         bytes memory data = abi.encodeWithSignature("setValue(uint256)", 42);
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), data);
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), data);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -1064,7 +968,7 @@ contract GovernanceTest is Test {
         // executor1 (now removed) tries to execute
         vm.prank(executor1);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotExecutor.selector, executor1));
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
     }
 
     // ========================================================================
@@ -1080,10 +984,10 @@ contract GovernanceTest is Test {
         vm.prank(bob);
         IStakePool(bobPool).setVoter(alice);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Alice batch votes with both pools using full power
         address[] memory pools = new address[](2);
@@ -1111,10 +1015,10 @@ contract GovernanceTest is Test {
         vm.prank(bob);
         IStakePool(bobPool).setVoter(alice);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         address[] memory pools = new address[](2);
         pools[0] = alicePool;
@@ -1134,10 +1038,10 @@ contract GovernanceTest is Test {
         // Create pool
         address alicePool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Vote with all power first
         vm.prank(alice);
@@ -1163,10 +1067,10 @@ contract GovernanceTest is Test {
         vm.prank(bob);
         IStakePool(bobPool).setVoter(alice);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Alice batch partial votes with 30 ether from each pool
         address[] memory pools = new address[](2);
@@ -1198,10 +1102,10 @@ contract GovernanceTest is Test {
         vm.prank(bob);
         IStakePool(bobPool).setVoter(alice);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Try to batch partial vote with more than bob's pool has available
         address[] memory pools = new address[](1);
@@ -1233,10 +1137,10 @@ contract GovernanceTest is Test {
     function test_BatchVote_RevertWhen_VotingPeriodEnded() public {
         address alicePool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Advance time past voting period
         _advanceTime(VOTING_DURATION_MICROS + 1);
@@ -1255,10 +1159,10 @@ contract GovernanceTest is Test {
         address alicePool = _createStakePool(alice, 100 ether);
         address bobPool = _createStakePool(bob, 50 ether); // Bob is voter of his own pool
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Alice tries to batch vote with bob's pool (not delegated to her)
         address[] memory pools = new address[](2);
@@ -1274,10 +1178,10 @@ contract GovernanceTest is Test {
         address alicePool = _createStakePool(alice, 100 ether);
         address invalidPool = address(0x1234);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         address[] memory pools = new address[](2);
         pools[0] = alicePool;
@@ -1291,10 +1195,10 @@ contract GovernanceTest is Test {
     function test_BatchVote_EmptyArray() public {
         address alicePool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         address[] memory pools = new address[](0);
 
@@ -1316,10 +1220,10 @@ contract GovernanceTest is Test {
         vm.prank(bob);
         IStakePool(bobPool).setVoter(alice);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         address[] memory pools = new address[](2);
         pools[0] = alicePool;
@@ -1355,10 +1259,10 @@ contract GovernanceTest is Test {
     function test_LastVoteTimeRecorded() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Initially no votes, lastVoteTime should be 0
         assertEq(governance.getLastVoteTime(proposalId), 0);
@@ -1377,10 +1281,10 @@ contract GovernanceTest is Test {
     function test_LastVoteTimeUpdatesOnEachVote() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // First vote
         vm.prank(alice);
@@ -1406,10 +1310,10 @@ contract GovernanceTest is Test {
 
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Vote
         vm.prank(alice);
@@ -1432,10 +1336,10 @@ contract GovernanceTest is Test {
     function test_CanResolve_ReturnsTrueAfterVotingEnds() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // canResolve should be false initially (voting not ended)
         assertFalse(governance.canResolve(proposalId));
@@ -1454,10 +1358,10 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         address pool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Advance time to just before voting period ends (1 microsecond before)
         _advanceTime(VOTING_DURATION_MICROS - 1);
@@ -1498,10 +1402,10 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         address alicePool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Advance time to just before voting ends
         _advanceTime(VOTING_DURATION_MICROS - 1);
@@ -1532,10 +1436,10 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         address alicePool = staking.createPool{ value: 100 ether }(alice, alice, alice, alice, lockedUntil);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(alicePool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(alicePool, targets, datas, "ipfs://test");
 
         // Advance to 1 microsecond before voting ends
         _advanceTime(VOTING_DURATION_MICROS - 1);
@@ -1572,10 +1476,10 @@ contract GovernanceTest is Test {
 
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Verify no votes cast
         assertEq(governance.getLastVoteTime(proposalId), 0);
@@ -1595,10 +1499,10 @@ contract GovernanceTest is Test {
     function test_GetLastVoteTime() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         // Before any vote, should be 0
         assertEq(governance.getLastVoteTime(proposalId), 0);
@@ -1625,14 +1529,12 @@ contract GovernanceTest is Test {
         targets[0] = address(mockTarget);
         targets[1] = address(mockTarget2);
 
-        uint256[] memory values = new uint256[](2);
-
         bytes[] memory datas = new bytes[](2);
         datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
         datas[1] = abi.encodeWithSignature("setValue(uint256)", 100);
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://batch-test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://batch-test");
 
         // Vote
         vm.prank(alice);
@@ -1644,7 +1546,7 @@ contract GovernanceTest is Test {
         _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
 
         // Verify both targets were updated
         assertEq(mockTarget.value(), 42);
@@ -1661,14 +1563,12 @@ contract GovernanceTest is Test {
         targets[0] = address(mockTarget);
         targets[1] = address(mockTarget);
 
-        uint256[] memory values = new uint256[](2);
-
         bytes[] memory datas = new bytes[](2);
         datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
         datas[1] = abi.encodeWithSignature("revertingFunction()");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://failing-batch");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://failing-batch");
 
         // Vote
         vm.prank(alice);
@@ -1681,7 +1581,7 @@ contract GovernanceTest is Test {
 
         // Execute should fail and revert all changes atomically — bubbles up original revert
         vm.expectRevert("MockTarget: always reverts");
-        governance.execute(proposalId, targets, values, datas);
+        governance.execute(proposalId, targets, datas);
 
         // Verify first call was rolled back (value should still be 0)
         assertEq(mockTarget.value(), 0);
@@ -1693,19 +1593,15 @@ contract GovernanceTest is Test {
         targets[0] = address(mockTarget);
         targets[1] = address(0x123);
 
-        uint256[] memory values = new uint256[](2);
-        values[0] = 1 ether;
-        values[1] = 0;
-
         bytes[] memory datas = new bytes[](2);
         datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
         datas[1] = abi.encodeWithSignature("foo()");
 
         // Compute hash using the helper function
-        bytes32 hash = governance.computeExecutionHash(targets, values, datas);
+        bytes32 hash = governance.computeExecutionHash(targets, datas);
 
         // Should match manual computation
-        bytes32 expected = keccak256(abi.encode(targets, values, datas));
+        bytes32 expected = keccak256(abi.encode(targets, datas));
         assertEq(hash, expected);
     }
 
@@ -1713,12 +1609,11 @@ contract GovernanceTest is Test {
         address pool = _createStakePool(alice, 100 ether);
 
         address[] memory targets = new address[](0);
-        uint256[] memory values = new uint256[](0);
         bytes[] memory datas = new bytes[](0);
 
         vm.prank(alice);
         vm.expectRevert(Errors.EmptyProposalBatch.selector);
-        governance.createProposal(pool, targets, values, datas, "ipfs://empty");
+        governance.createProposal(pool, targets, datas, "ipfs://empty");
     }
 
     function test_RevertWhen_CreateProposalArrayLengthMismatch() public {
@@ -1728,23 +1623,21 @@ contract GovernanceTest is Test {
         targets[0] = address(mockTarget);
         targets[1] = address(mockTarget);
 
-        uint256[] memory mismatchValues = new uint256[](2);
-
         bytes[] memory datas = new bytes[](1);
         datas[0] = abi.encodeWithSignature("setValue(uint256)", 42);
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalArrayLengthMismatch.selector, 2, 1));
-        governance.createProposal(pool, targets, mismatchValues, datas, "ipfs://mismatch");
+        governance.createProposal(pool, targets, datas, "ipfs://mismatch");
     }
 
     function test_RevertWhen_ExecuteEmptyBatch() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -1755,20 +1648,19 @@ contract GovernanceTest is Test {
 
         // Try to execute with empty arrays
         address[] memory emptyTargets = new address[](0);
-        uint256[] memory emptyValues = new uint256[](0);
         bytes[] memory emptyDatas = new bytes[](0);
 
         vm.expectRevert(Errors.EmptyProposalBatch.selector);
-        governance.execute(proposalId, emptyTargets, emptyValues, emptyDatas);
+        governance.execute(proposalId, emptyTargets, emptyDatas);
     }
 
     function test_RevertWhen_ExecuteArrayLengthMismatch() public {
         address pool = _createStakePool(alice, 100 ether);
 
-        (address[] memory targets, uint256[] memory values, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
-        uint64 proposalId = governance.createProposal(pool, targets, values, datas, "ipfs://test");
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
         vm.prank(alice);
         governance.vote(pool, proposalId, 100 ether, true);
@@ -1781,10 +1673,9 @@ contract GovernanceTest is Test {
         address[] memory mismatchTargets = new address[](2);
         mismatchTargets[0] = address(mockTarget);
         mismatchTargets[1] = address(mockTarget);
-        uint256[] memory mismatchValues = new uint256[](2);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalArrayLengthMismatch.selector, 2, 1));
-        governance.execute(proposalId, mismatchTargets, mismatchValues, datas);
+        governance.execute(proposalId, mismatchTargets, datas);
     }
 }
 
@@ -1792,12 +1683,9 @@ contract GovernanceTest is Test {
 contract MockTarget {
     uint256 public value;
 
-    /// @dev Allow receiving native token for execution tests
-    receive() external payable { }
-
     function setValue(
         uint256 _value
-    ) external payable {
+    ) external {
         value = _value;
     }
 

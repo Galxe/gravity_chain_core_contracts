@@ -163,7 +163,6 @@ contract TypesTest is Test {
         uint64 creationTime = TIMESTAMP_NOV_2023;
         uint64 expirationTime = TIMESTAMP_NOV_2023 + ONE_DAY_MICROS; // 1 day voting period
 
-        uint256[] memory emptyValues = new uint256[](0);
         Proposal memory prop = Proposal({
             id: 1,
             proposer: address(0x1234),
@@ -175,8 +174,7 @@ contract TypesTest is Test {
             yesVotes: 0,
             noVotes: 0,
             isResolved: false,
-            resolutionTime: 0,
-            values: emptyValues
+            resolutionTime: 0
         });
 
         assertEq(prop.id, 1);
@@ -258,7 +256,6 @@ contract TypesTest is Test {
     }
 
     function _createDefaultProposal() internal pure returns (Proposal memory) {
-        uint256[] memory emptyValues = new uint256[](0);
         return Proposal({
             id: 1,
             proposer: address(0x1234),
@@ -270,8 +267,7 @@ contract TypesTest is Test {
             yesVotes: 0,
             noVotes: 0,
             isResolved: false,
-            resolutionTime: 0,
-            values: emptyValues
+            resolutionTime: 0
         });
     }
 }

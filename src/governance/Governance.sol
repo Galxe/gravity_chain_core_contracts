@@ -291,16 +291,12 @@ contract Governance is IGovernance, Ownable2Step {
     function createProposal(
         address stakePool,
         address[] calldata targets,
-        uint256[] calldata values,
         bytes[] calldata datas,
         string calldata metadataUri
     ) external returns (uint64 proposalId) {
         // Validate batch arrays
         if (targets.length != datas.length) {
             revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
-        }
-        if (values.length != targets.length) {
-            revert Errors.ProposalValuesLengthMismatch(values.length, targets.length);
         }
         if (targets.length == 0) {
             revert Errors.EmptyProposalBatch();
@@ -325,8 +321,8 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.InsufficientVotingPower(requiredStake, votingPower);
         }
 
-        // Compute execution hash from batch arrays (includes values for native token support)
-        bytes32 executionHash = keccak256(abi.encode(targets, values, datas));
+        // Compute execution hash from batch arrays
+        bytes32 executionHash = keccak256(abi.encode(targets, datas));
 
         // Create proposal
         proposalId = nextProposalId++;
@@ -339,12 +335,6 @@ contract Governance is IGovernance, Ownable2Step {
         p.creationTime = now_;
         p.expirationTime = expirationTime;
         p.minVoteThreshold = _config().minVotingThreshold();
-
-        // Store values for reference
-        uint256 len = values.length;
-        for (uint256 i = 0; i < len; ++i) {
-            p.values.push(values[i]);
-        }
 
         emit ProposalCreated(proposalId, msg.sender, stakePool, executionHash, metadataUri);
     }
@@ -518,15 +508,11 @@ contract Governance is IGovernance, Ownable2Step {
     function execute(
         uint64 proposalId,
         address[] calldata targets,
-        uint256[] calldata values,
         bytes[] calldata datas
-    ) external payable onlyExecutor {
+    ) external onlyExecutor {
         // Validate batch arrays
         if (targets.length != datas.length) {
             revert Errors.ProposalArrayLengthMismatch(targets.length, datas.length);
-        }
-        if (values.length != targets.length) {
-            revert Errors.ProposalValuesLengthMismatch(values.length, targets.length);
         }
         if (targets.length == 0) {
             revert Errors.EmptyProposalBatch();
@@ -563,9 +549,9 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalExecutionExpired(proposalId);
         }
 
-        // Verify execution hash matches (includes values in hash)
+        // Verify execution hash matches
         bytes32 expectedHash = _proposals[proposalId].executionHash;
-        bytes32 actualHash = keccak256(abi.encode(targets, values, datas));
+        bytes32 actualHash = keccak256(abi.encode(targets, datas));
         if (actualHash != expectedHash) {
             revert Errors.ExecutionHashMismatch(expectedHash, actualHash);
         }
@@ -573,10 +559,10 @@ contract Governance is IGovernance, Ownable2Step {
         // Mark as executed BEFORE external calls (CEI pattern)
         executed[proposalId] = true;
 
-        // Execute all calls atomically, forwarding native token values
+        // Execute all calls atomically
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
-            (bool success, bytes memory returnData) = targets[i].call{ value: values[i] }(datas[i]);
+            (bool success, bytes memory returnData) = targets[i].call(datas[i]);
             if (!success) {
                 // Bubble up the original revert reason if available
                 if (returnData.length > 0) {
@@ -588,30 +574,19 @@ contract Governance is IGovernance, Ownable2Step {
             }
         }
 
-        // Refund leftover ETH to executor
-        uint256 remaining = address(this).balance;
-        if (remaining > 0) {
-            (bool refundSuccess,) = msg.sender.call{ value: remaining }("");
-            if (!refundSuccess) {
-                revert Errors.TransferFailed();
-            }
-        }
-
-        emit ProposalExecuted(proposalId, msg.sender, targets, values, datas);
+        emit ProposalExecuted(proposalId, msg.sender, targets, datas);
     }
 
     /// @notice Compute the execution hash for a batch of calls
     /// @dev Useful for off-chain computation before creating proposals
     /// @param targets Array of contract addresses
-    /// @param values Array of native token amounts
     /// @param datas Array of calldata
-    /// @return The keccak256 hash of abi.encode(targets, values, datas)
+    /// @return The keccak256 hash of abi.encode(targets, datas)
     function computeExecutionHash(
         address[] calldata targets,
-        uint256[] calldata values,
         bytes[] calldata datas
     ) external pure returns (bytes32) {
-        return keccak256(abi.encode(targets, values, datas));
+        return keccak256(abi.encode(targets, datas));
     }
 
     // ========================================================================

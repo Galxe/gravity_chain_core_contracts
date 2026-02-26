@@ -222,7 +222,7 @@
 
 | ID | Issue | Fix | Files |
 |----|-------|-----|-------|
-| GCC-022 | Governance.execute() cannot forward ETH | Added `uint256[] values` parameter, made `execute()` payable | `Governance.sol`, `Types.sol` |
+| GCC-022 | Governance.execute() cannot forward ETH | **NOT NEEDED (Reverted)** — Native token forwarding is unnecessary; governance calls should not forward ETH. Future audits should not consider this a gap. | `Governance.sol`, `Types.sol` |
 | GCC-024 | Fee recipient not settable at registration | Added `feeRecipient` parameter to `registerValidator()` | `ValidatorManagement.sol`, `IValidatorManagement.sol` |
 | GCC-026 | No upper bound on config durations | Added MAX_LOCKUP_DURATION (4yr) and MAX_UNBONDING_DELAY (1yr) constants | `StakingConfig.sol`, `ValidatorConfig.sol` |
 | GCC-030 | OracleRequestQueue keeps excess fee | Refund excess `msg.value` to sender in `request()` | `OracleRequestQueue.sol` |

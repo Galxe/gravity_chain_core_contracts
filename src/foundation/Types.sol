@@ -131,6 +131,4 @@ struct Proposal {
     bool isResolved;
     /// @notice When proposal was resolved (microseconds)
     uint64 resolutionTime;
-    /// @notice Native token values to forward with each call during execution
-    uint256[] values;
 }

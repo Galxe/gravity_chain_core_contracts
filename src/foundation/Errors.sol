@@ -291,11 +291,6 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
-    /// @notice Proposal values array length does not match targets length
-    /// @param valuesLength Length of values array
-    /// @param targetsLength Length of targets array
-    error ProposalValuesLengthMismatch(uint256 valuesLength, uint256 targetsLength);
-
     /// @notice Execution delay has not elapsed (timelock)
     /// @param earliestExecution When execution becomes available (microseconds)
     /// @param currentTime Current timestamp (microseconds)
