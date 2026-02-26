@@ -2,13 +2,15 @@
 
 Date: 2026-02-23
 
-## GCC-001: Failed Callback Retry Queue
+## GCC-001: Failed Callback Retry Queue — NOT NEEDED (Removed)
 
 **Problem:** NativeOracle._invokeCallback() catches callback reverts, advances nonce, and bridge messages are permanently consumed. No retry mechanism.
 
-**Fix:** Add failedCallbacks mapping in NativeOracle. On callback failure, store the payload. New retryCallback() function (SYSTEM_CALLER only) re-invokes the callback. On success, clears the entry. On failure, re-stores.
+**Original Fix:** Added failedCallbacks mapping in NativeOracle. On callback failure, store the payload. New retryCallback() function (SYSTEM_CALLER only) re-invokes the callback.
 
-**Files:** NativeOracle.sol, INativeOracle.sol
+**Status: REVERTED** — After further analysis, the retry queue mechanism was determined to be unnecessary. The existing behavior (catch callback reverts, emit `CallbackFailed` event, store data by default to preserve it) is sufficient. Failed callbacks do not require a retry pathway. All retry-related code (FailedCallback struct, _failedCallbacks mapping, retryCallback(), getFailedCallback(), CallbackRetrySucceeded/CallbackRetryFailed events, NoFailedCallback error) has been removed. **Future audits should not consider the lack of a retry mechanism as a gap.**
+
+**Files (reverted):** NativeOracle.sol, INativeOracle.sol, Errors.sol
 
 ## GCC-002: Governance Execution Delay (Timelock)
 

@@ -23,18 +23,6 @@ interface INativeOracle {
         bytes data;
     }
 
-    /// @notice Failed callback info stored for retry
-    /// @dev Existence is determined by callback != address(0).
-    struct FailedCallback {
-        /// @notice The original payload that was passed to the callback
-        bytes payload;
-        /// @notice The gas limit used for the callback attempt
-        uint256 gasLimit;
-        /// @notice The callback contract address
-        address callback;
-        /// @notice Number of failed attempts
-        uint8 attempts;
-    }
 
     // ========================================================================
     // SOURCE TYPE CONSTANTS
@@ -97,22 +85,6 @@ interface INativeOracle {
     /// @param callback The callback contract that requested skip
     event StorageSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
-    /// @notice Emitted when a failed callback retry succeeds
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the record
-    /// @param callback The callback contract address
-    event CallbackRetrySucceeded(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
-
-    /// @notice Emitted when a failed callback retry fails again
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the record
-    /// @param callback The callback contract address
-    /// @param reason The failure reason
-    event CallbackRetryFailed(
-        uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
-    );
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
@@ -239,33 +211,7 @@ interface INativeOracle {
         uint128 nonce
     ) external view returns (bool);
 
-    // ========================================================================
-    // RETRY FUNCTIONS (Consensus Only)
-    // ========================================================================
 
-    /// @notice Retry a previously failed callback
-    /// @dev Only callable by SYSTEM_CALLER. Reverts if no failed callback exists for the given key.
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the failed callback
-    /// @param callbackGasLimit Gas limit for the retry attempt
-    function retryCallback(
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 nonce,
-        uint256 callbackGasLimit
-    ) external;
-
-    /// @notice Get the failed callback info for a given key
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce
-    /// @return failedCallback The failed callback info (callback == address(0) if none)
-    function getFailedCallback(
-        uint32 sourceType,
-        uint256 sourceId,
-        uint128 nonce
-    ) external view returns (FailedCallback memory failedCallback);
 }
 
 /// @title IOracleCallback

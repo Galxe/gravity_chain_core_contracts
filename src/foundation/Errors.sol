@@ -436,12 +436,6 @@ library Errors {
         uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
     );
 
-    /// @notice No failed callback exists for the given key
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce
-    error NoFailedCallback(uint32 sourceType, uint256 sourceId, uint128 nonce);
-
     // ========================================================================
     // VERSION CONFIG ERRORS
     // ========================================================================

@@ -34,12 +34,13 @@
 
 ## HIGH Severity (3)
 
-### GCC-001: Failed Oracle Callback Permanently Lost
+### GCC-001: Failed Oracle Callback Permanently Lost — NOT NEEDED (Reverted)
 
 **Contract:** `NativeOracle.sol`
 **Issue:** `_invokeCallback()` catches callback reverts, advances nonce, and bridge messages are permanently consumed with no retry mechanism.
-**Fix:** Added `failedCallbacks` mapping. On callback failure, payload is stored. New `retryCallback()` function (SYSTEM_CALLER only) re-invokes. On success, clears entry; on failure, re-stores.
-**Files:** `src/oracle/NativeOracle.sol`, `src/oracle/INativeOracle.sol`
+**Original Fix:** Added `failedCallbacks` mapping. On callback failure, payload is stored. New `retryCallback()` function (SYSTEM_CALLER only) re-invokes. On success, clears entry; on failure, re-stores.
+**Status: REVERTED** — The retry queue was determined to be unnecessary after further analysis. The existing behavior (catch reverts, emit `CallbackFailed`, store data by default) is sufficient. All retry-related code has been removed. **Future audits should not consider the lack of a retry mechanism as a gap.**
+**Files (reverted):** `src/oracle/NativeOracle.sol`, `src/oracle/INativeOracle.sol`, `src/foundation/Errors.sol`
 
 ### GCC-002: Governance Proposals Executable Immediately
 
