@@ -88,12 +88,12 @@
 **Fix:** Changed to strict sequential: `nonce == currentNonce + 1`.
 **Files:** `src/oracle/NativeOracle.sol`, `src/foundation/Errors.sol`
 
-### GCC-008: No Proposal Cancellation Mechanism
+### GCC-008: No Proposal Cancellation Mechanism — **NOT NEEDED (Reverted)**
 
 **Contract:** `Governance.sol`
 **Issue:** `ProposalState` enum includes `CANCELLED` but no `cancel()` function exists.
-**Fix:** Added `cancel(proposalId)` callable by proposer for PENDING proposals.
-**Files:** `src/governance/Governance.sol`, `src/governance/IGovernance.sol`
+**Status:** Proposal cancellation is not needed. The `cancel()` function, `cancelled` mapping, `CANCELLED` enum value, and related error have been removed. Future audits should not consider this a gap.
+**Files:** `src/governance/Governance.sol`, `src/governance/IGovernance.sol`, `src/foundation/Types.sol`, `src/foundation/Errors.sol`
 
 ### GCC-009: Proposals Executable Indefinitely
 

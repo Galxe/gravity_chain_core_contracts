@@ -312,9 +312,7 @@ library Errors {
     /// @notice Execution window must be greater than zero
     error InvalidExecutionWindow();
 
-    /// @notice Caller is not authorized to cancel this proposal
-    /// @param caller The unauthorized caller address
-    error NotAuthorizedToCancel(address caller);
+
 
     // ========================================================================
     // TIMESTAMP ERRORS

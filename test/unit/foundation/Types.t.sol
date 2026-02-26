@@ -152,7 +152,6 @@ contract TypesTest is Test {
         assertEq(uint8(ProposalState.SUCCEEDED), 1);
         assertEq(uint8(ProposalState.FAILED), 2);
         assertEq(uint8(ProposalState.EXECUTED), 3);
-        assertEq(uint8(ProposalState.CANCELLED), 4);
     }
 
     // ========================================================================

@@ -51,10 +51,6 @@ interface IGovernance {
         uint64 indexed proposalId, address indexed executor, address[] targets, bytes[] datas
     );
 
-    /// @notice Emitted when a proposal is cancelled
-    /// @param proposalId ID of the cancelled proposal
-    event ProposalCancelled(uint64 indexed proposalId);
-
     /// @notice Emitted when an executor is added
     /// @param executor Address of the added executor
     event ExecutorAdded(address indexed executor);
@@ -76,7 +72,7 @@ interface IGovernance {
 
     /// @notice Get the current state of a proposal
     /// @param proposalId ID of the proposal
-    /// @return Current state (PENDING, SUCCEEDED, FAILED, EXECUTED, CANCELLED)
+    /// @return Current state (PENDING, SUCCEEDED, FAILED, EXECUTED)
     function getProposalState(
         uint64 proposalId
     ) external view returns (ProposalState);
@@ -217,13 +213,6 @@ interface IGovernance {
     /// @dev Anyone can call this function.
     /// @param proposalId ID of the proposal to resolve
     function resolve(
-        uint64 proposalId
-    ) external;
-
-    /// @notice Cancel a pending proposal
-    /// @dev Only the original proposer can cancel. Must be during voting period.
-    /// @param proposalId ID of the proposal to cancel
-    function cancel(
         uint64 proposalId
     ) external;
 

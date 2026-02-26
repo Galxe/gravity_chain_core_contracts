@@ -40,8 +40,6 @@ contract Governance is IGovernance, Ownable2Step {
     /// @dev Resolution must happen in a later timestamp than the last vote
     mapping(uint64 => uint64) public lastVoteTime;
 
-    /// @notice Whether a proposal has been cancelled
-    mapping(uint64 => bool) public cancelled;
 
     /// @notice Set of authorized executors
     EnumerableSet.AddressSet private _executors;
@@ -142,11 +140,6 @@ contract Governance is IGovernance, Ownable2Step {
         // Check if executed
         if (executed[proposalId]) {
             return ProposalState.EXECUTED;
-        }
-
-        // Check if cancelled
-        if (cancelled[proposalId]) {
-            return ProposalState.CANCELLED;
         }
 
         // Check if resolved
@@ -484,25 +477,6 @@ contract Governance is IGovernance, Ownable2Step {
         emit ProposalResolved(proposalId, state);
     }
 
-    /// @inheritdoc IGovernance
-    function cancel(
-        uint64 proposalId
-    ) external {
-        Proposal storage p = _proposals[proposalId];
-        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
-        if (p.isResolved) revert Errors.ProposalAlreadyResolved(proposalId);
-        if (executed[proposalId]) revert Errors.ProposalAlreadyExecuted(proposalId);
-        if (msg.sender != p.proposer) revert Errors.NotAuthorizedToCancel(msg.sender);
-
-        uint64 now_ = _now();
-        if (now_ >= p.expirationTime) revert Errors.VotingPeriodEnded(p.expirationTime);
-
-        cancelled[proposalId] = true;
-        p.isResolved = true;
-        p.resolutionTime = now_;
-
-        emit ProposalCancelled(proposalId);
-    }
 
     /// @inheritdoc IGovernance
     function execute(

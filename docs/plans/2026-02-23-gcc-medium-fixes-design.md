@@ -30,13 +30,8 @@ Date: 2026-02-23
 
 ## Group B: Governance
 
-### GCC-008: Proposal Cancellation Mechanism
-
-**Problem:** `ProposalState` enum includes `CANCELLED` but no `cancel()` function exists. Proposers cannot stop flawed proposals.
-
-**Fix:** Add `cancel(uint64 proposalId)` callable by proposer. Must be PENDING (not resolved, not executed). Sets `isResolved = true`. Add `cancelled` mapping to distinguish from FAILED. New `ProposalCancelled` event. Update `getProposalState()`.
-
-**Files:** Governance.sol, IGovernance.sol, Errors.sol
+### GCC-008: Proposal Cancellation Mechanism — **NOT NEEDED (Removed)**
+> Proposal cancellation is not needed at this time. The `cancel()` function, `cancelled` mapping, `CANCELLED` enum value, and `NotAuthorizedToCancel` error have been removed. Future audits should not consider the absence of proposal cancellation as a gap.
 
 ### GCC-009: Execution Expiration Window
 
