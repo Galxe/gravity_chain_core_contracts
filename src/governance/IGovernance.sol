@@ -133,6 +133,20 @@ interface IGovernance {
     function getExecutorCount() external view returns (uint256);
 
     // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @notice Initialize the Governance contract with an owner and initial executors
+    /// @dev Called via system transaction during hardfork activation.
+    ///      Can only be called once by SYSTEM_CALLER.
+    /// @param initialOwner Address of the initial contract owner
+    /// @param initialExecutors Array of addresses to add as initial executors
+    function initialize(
+        address initialOwner,
+        address[] calldata initialExecutors
+    ) external;
+
+    // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
 

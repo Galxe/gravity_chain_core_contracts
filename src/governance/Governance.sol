@@ -5,6 +5,7 @@ import { IGovernance } from "./IGovernance.sol";
 import { GovernanceConfig } from "../runtime/GovernanceConfig.sol";
 import { Proposal, ProposalState } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStaking } from "../staking/IStaking.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
@@ -23,6 +24,9 @@ contract Governance is IGovernance, Ownable2Step {
     // ========================================================================
     // STATE
     // ========================================================================
+
+    /// @notice Whether the contract has been initialized
+    bool private _initialized;
 
     /// @notice Next proposal ID to be assigned
     uint64 public nextProposalId = 1;
@@ -44,14 +48,41 @@ contract Governance is IGovernance, Ownable2Step {
     EnumerableSet.AddressSet private _executors;
 
     // ========================================================================
-    // CONSTRUCTOR
+    // CONSTRUCTOR & INITIALIZATION
     // ========================================================================
 
-    /// @notice Initialize the Governance contract with an owner
+    /// @dev Constructor passes dummy address to Ownable since BSC-style deployment
+    ///      never executes constructors. Real initialization happens via initialize().
+    constructor() Ownable(address(1)) { }
+
+    /// @notice Initialize the Governance contract with an owner and initial executors
+    /// @dev Called via system transaction during hardfork activation.
+    ///      Can only be called once by SYSTEM_CALLER.
     /// @param initialOwner Address of the initial contract owner
-    constructor(
-        address initialOwner
-    ) Ownable(initialOwner) { }
+    /// @param initialExecutors Array of addresses to add as initial executors
+    function initialize(
+        address initialOwner,
+        address[] calldata initialExecutors
+    ) external {
+        requireAllowed(SystemAddresses.SYSTEM_CALLER);
+        if (_initialized) {
+            revert Errors.AlreadyInitialized();
+        }
+
+        _transferOwnership(initialOwner);
+
+        // Explicitly set nextProposalId since field initializer (= 1) doesn't run
+        // in BSC-style deployment where constructor is skipped
+        nextProposalId = 1;
+
+        for (uint256 i = 0; i < initialExecutors.length; i++) {
+            if (_executors.add(initialExecutors[i])) {
+                emit ExecutorAdded(initialExecutors[i]);
+            }
+        }
+
+        _initialized = true;
+    }
 
     // ========================================================================
     // MODIFIERS

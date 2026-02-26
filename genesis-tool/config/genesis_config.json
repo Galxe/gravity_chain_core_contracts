@@ -28,6 +28,12 @@
     "votingDurationMicros": 604800000000
   },
 
+  "governance": {
+    "_comment": "Governance.initialize params - activated via hardfork",
+    "owner": "0x6954476eAe13Bd072D9f19406A6B9543514f765C",
+    "initialExecutors": ["0x6954476eAe13Bd072D9f19406A6B9543514f765C"]
+  },
+
   "epochIntervalMicros": 7200000000,
 
   "majorVersion": 1,

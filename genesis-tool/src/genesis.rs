@@ -42,6 +42,10 @@ pub struct GenesisConfig {
     #[serde(rename = "governanceConfig")]
     pub governance_config: GovernanceConfigParams,
 
+    /// Governance contract initialization params (for hardfork activation)
+    #[serde(default)]
+    pub governance: Option<GovernanceInitParams>,
+
     #[serde(rename = "epochIntervalMicros")]
     pub epoch_interval_micros: u64,
 
@@ -122,6 +126,15 @@ pub struct GovernanceConfigParams {
 
     #[serde(rename = "votingDurationMicros")]
     pub voting_duration_micros: u64,
+}
+
+/// Governance contract initialization params (for hardfork activation via Governance.initialize())
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GovernanceInitParams {
+    pub owner: String,
+
+    #[serde(rename = "initialExecutors")]
+    pub initial_executors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

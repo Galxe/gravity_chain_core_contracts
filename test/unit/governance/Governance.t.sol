@@ -91,23 +91,15 @@ contract GovernanceTest is Test {
         vm.prank(SystemAddresses.GENESIS);
         govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
 
-        // Deploy Governance with owner
-        // Deploy to a temporary address first, then copy bytecode and storage to system address
-        Governance tempGov = new Governance(owner);
-        vm.etch(SystemAddresses.GOVERNANCE, address(tempGov).code);
+        // Deploy Governance (BSC-style: etch bytecode, then initialize)
+        vm.etch(SystemAddresses.GOVERNANCE, address(new Governance()).code);
         governance = Governance(SystemAddresses.GOVERNANCE);
 
-        // Copy storage slots from temp deployment
-        // Slot 0: _owner (address at offset 0)
-        // Slot 1: _pendingOwner (address at offset 0) + nextProposalId (uint64 at offset 20)
-        bytes32 slot0Value = vm.load(address(tempGov), bytes32(uint256(0)));
-        bytes32 slot1Value = vm.load(address(tempGov), bytes32(uint256(1)));
-        vm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(0)), slot0Value);
-        vm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(1)), slot1Value);
-
-        // Add default executor for tests (address(this) will be the executor for most tests)
-        vm.prank(owner);
-        governance.addExecutor(address(this));
+        // Initialize Governance with owner and default executor
+        address[] memory initialExecutors = new address[](1);
+        initialExecutors[0] = address(this);
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        governance.initialize(owner, initialExecutors);
 
         // Deploy mock target
         mockTarget = new MockTarget();
