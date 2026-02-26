@@ -18,8 +18,6 @@ struct GenesisValidator {
     bytes networkAddresses;
     /// @notice Fullnode addresses
     bytes fullnodeAddresses;
-    /// @notice Fee recipient address
-    address feeRecipient;
     /// @notice Initial voting power
     uint256 votingPower;
 }
@@ -72,10 +70,20 @@ interface IValidatorManagement {
     /// @param newPubkey New BLS public key
     event ConsensusKeyRotated(address indexed stakePool, bytes newPubkey);
 
-    /// @notice Emitted when a validator's fee recipient is updated
+    /// @notice Emitted when a validator's fee recipient is updated (pending)
     /// @param stakePool Address of the validator's stake pool
     /// @param newRecipient New fee recipient address
     event FeeRecipientUpdated(address indexed stakePool, address newRecipient);
+
+    /// @notice Emitted when a pending fee recipient change is applied at epoch boundary
+    /// @param stakePool Address of the validator's stake pool
+    /// @param oldRecipient Previous fee recipient address
+    /// @param newRecipient New fee recipient address
+    event FeeRecipientApplied(address indexed stakePool, address oldRecipient, address newRecipient);
+
+    /// @notice Emitted when a validator is reverted from PENDING_ACTIVE to INACTIVE
+    /// @param stakePool Address of the validator's stake pool
+    event ValidatorRevertedInactive(address indexed stakePool);
 
     /// @notice Emitted when a new epoch is processed
     /// @param epoch The new epoch number
@@ -87,6 +95,11 @@ interface IValidatorManagement {
     /// @param validatorCount Number of genesis validators
     /// @param totalVotingPower Total voting power of genesis validators
     event ValidatorManagementInitialized(uint256 validatorCount, uint256 totalVotingPower);
+
+    /// @notice Emitted when performance array length doesn't match active validator count
+    /// @param activeCount Number of active validators
+    /// @param perfCount Number of performance entries
+    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
 
     // ========================================================================
     // INITIALIZATION

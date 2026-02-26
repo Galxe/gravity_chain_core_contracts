@@ -58,6 +58,8 @@ contract Genesis {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
+        uint64 executionWindowMicros;
     }
 
     struct OracleTaskParams {
@@ -70,6 +72,7 @@ contract Genesis {
     struct BridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct OracleInitParams {
@@ -108,6 +111,8 @@ contract Genesis {
         OracleInitParams oracleConfig;
         JWKInitParams jwkConfig;
         InitialValidator[] validators;
+        /// @notice Lockup expiration timestamp for initial validator stake pools (microseconds)
+        uint64 initialLockedUntilMicros;
     }
 
     // ========================================================================
@@ -151,14 +156,27 @@ contract Genesis {
         // 2. Initialize Oracles
         _initializeOracles(params.oracleConfig, params.jwkConfig);
 
+        // 3-7. Initialize validators and system components
+        _initializeValidatorsAndSystem(params.validators, params.initialLockedUntilMicros);
+    }
+
+    // ========================================================================
+    // INTERNAL FUNCTIONS
+    // ========================================================================
+
+    function _initializeValidatorsAndSystem(
+        InitialValidator[] calldata validators,
+        uint64 initialLockedUntilMicros
+    ) internal {
         // 3. Create Stake Pools & Prepare Validator Data
-        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(params.validators);
+        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(validators, initialLockedUntilMicros);
 
         // 4. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);
 
         // 5. Initialize Performance Tracker (before Reconfiguration, since first epoch needs tracking)
-        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(params.validators.length);
+        ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(validators.length);
+
         // 6. Initialize Reconfiguration
         Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
@@ -166,14 +184,17 @@ contract Genesis {
         Blocker(SystemAddresses.BLOCK).initialize();
 
         _isInitialized = true;
-        emit GenesisCompleted(params.validators.length, uint64(block.timestamp));
+        emit GenesisCompleted(validators.length, uint64(block.timestamp));
     }
 
-    // ========================================================================
-    // INTERNAL FUNCTIONS
-    // ========================================================================
-
     function _initializeConfigs(
+        GenesisInitParams calldata params
+    ) internal {
+        _initializeValidatorAndStakingConfigs(params);
+        _initializeRemainingConfigs(params);
+    }
+
+    function _initializeValidatorAndStakingConfigs(
         GenesisInitParams calldata params
     ) internal {
         ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
@@ -195,7 +216,11 @@ contract Genesis {
                 params.stakingConfig.unbondingDelayMicros,
                 params.stakingConfig.minimumProposalStake
             );
+    }
 
+    function _initializeRemainingConfigs(
+        GenesisInitParams calldata params
+    ) internal {
         EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(params.epochIntervalMicros);
 
         ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).initialize(params.consensusConfig);
@@ -206,7 +231,9 @@ contract Genesis {
             .initialize(
                 params.governanceConfig.minVotingThreshold,
                 params.governanceConfig.requiredProposerStake,
-                params.governanceConfig.votingDurationMicros
+                params.governanceConfig.votingDurationMicros,
+                params.governanceConfig.executionDelayMicros,
+                params.governanceConfig.executionWindowMicros
             );
 
         VersionConfig(SystemAddresses.VERSION_CONFIG).initialize(params.majorVersion);
@@ -225,7 +252,8 @@ contract Genesis {
 
         if (oracleConfig.bridgeConfig.deploy) {
             // Deploy GBridgeReceiver
-            GBridgeReceiver receiver = new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge);
+            GBridgeReceiver receiver =
+                new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge, oracleConfig.bridgeConfig.trustedSourceId);
 
             // Construct new arrays with extra slot for GBridgeReceiver (sourceType=0)
             sourceTypes = new uint32[](length + 1);
@@ -260,28 +288,11 @@ contract Genesis {
     }
 
     function _createPoolsAndValidators(
-        InitialValidator[] calldata validators
+        InitialValidator[] calldata validators,
+        uint64 initialLockedUntilMicros
     ) internal returns (GenesisValidator[] memory) {
         uint256 len = validators.length;
         GenesisValidator[] memory genesisValidators = new GenesisValidator[](len);
-
-        uint64 lockupDuration = StakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        // Initial lockedUntil implies genesis timestamp is 0 or handled by Staking contract?
-        // Staking.createPool takes lockedUntil.
-        // We assume genesis timestamp is effectively 0 (or whatever block.timestamp is).
-        // Since we are at genesis, we should probably set lockedUntil based on current block timestamp + duration.
-        // However, Blocker initializes timestamp to 0.
-        // We'll use block.timestamp which should be the genesis block time.
-        // Note: Blocker.initialize logic calls updateGlobalTime(0, 0).
-        // But Staking.createPool uses Timestamp contract? No, it takes lockedUntil as arg.
-        // We can just use a fixed offset?
-        // Actually, we should probably rely on the implementation details.
-        // Let's use 0 + lockupDuration for simplicity as this effectively starts from time 0.
-        // Or better, query Timestamp? Timestamp is not initialized yet (Blocker init comes last).
-        // So we assume genesis time is 0.
-        // lockedUntil must be in the future relative to block.timestamp
-        // 2027-01-01 00:00:00 UTC = 1798761600 seconds
-        uint64 initialLockedUntil = uint64(1798761600 * 1_000_000) + lockupDuration;
 
         for (uint256 i; i < len;) {
             InitialValidator calldata v = validators[i];
@@ -300,7 +311,7 @@ contract Genesis {
                 v.owner, // staker (initially same as owner)
                 v.operator, // operator
                 v.owner, // voter (initially same as owner)
-                initialLockedUntil
+                initialLockedUntilMicros
             );
 
             // Construct GenesisValidator struct
@@ -311,7 +322,6 @@ contract Genesis {
                 consensusPop: v.consensusPop,
                 networkAddresses: v.networkAddresses,
                 fullnodeAddresses: v.fullnodeAddresses,
-                feeRecipient: v.owner, // Default to owner
                 votingPower: v.votingPower
             });
 

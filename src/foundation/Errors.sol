@@ -52,6 +52,9 @@ library Errors {
     /// @notice Amount cannot be zero
     error ZeroAmount();
 
+    /// @notice Address cannot be zero
+    error ZeroAddress();
+
     /// @notice Staker has no stake position (legacy, kept for compatibility)
     /// @param staker Address that has no stake
     error NoStakePosition(address staker);
@@ -90,6 +93,16 @@ library Errors {
     /// @param current Current lockedUntil
     /// @param proposed Proposed lockedUntil that is lower
     error LockedUntilDecreased(uint64 current, uint64 proposed);
+
+    /// @notice Lockup duration exceeds maximum allowed
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
+
+    /// @notice Too many pending buckets (unbounded array growth protection)
+    /// @param current Current number of buckets
+    /// @param maximum Maximum allowed buckets
+    error TooManyPendingBuckets(uint256 current, uint256 maximum);
 
     // ========================================================================
     // VALIDATOR ERRORS
@@ -174,6 +187,9 @@ library Errors {
 
     /// @notice Consensus public key proof-of-possession verification failed
     error InvalidConsensusPopVerification();
+
+    /// @notice Consensus proof-of-possession is empty
+    error InvalidConsensusPopLength();
 
     // ========================================================================
     // RECONFIGURATION ERRORS
@@ -275,6 +291,29 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
+    /// @notice Execution delay has not elapsed (timelock)
+    /// @param earliestExecution When execution becomes available (microseconds)
+    /// @param currentTime Current timestamp (microseconds)
+    error ExecutionDelayNotMet(uint64 earliestExecution, uint64 currentTime);
+
+    /// @notice Execution delay must be greater than zero
+    error InvalidExecutionDelay();
+
+    /// @notice Voting threshold must be greater than zero
+    error InvalidVotingThreshold();
+
+    /// @notice Proposer stake must be greater than zero
+    error InvalidProposerStake();
+
+    /// @notice Proposal execution has expired
+    /// @param proposalId ID of the expired proposal
+    error ProposalExecutionExpired(uint64 proposalId);
+
+    /// @notice Execution window must be greater than zero
+    error InvalidExecutionWindow();
+
+
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
@@ -323,6 +362,15 @@ library Errors {
     /// @param maximum The maximum bond value
     error MinimumBondExceedsMaximum(uint256 minimum, uint256 maximum);
 
+    /// @notice Staking config has not been initialized
+    error StakingConfigNotInitialized();
+
+    /// @notice Minimum stake must be greater than zero
+    error InvalidMinimumStake();
+
+    /// @notice Minimum proposal stake must be greater than zero
+    error InvalidMinimumProposalStake();
+
     // ========================================================================
     // RANDOMNESS CONFIG ERRORS
     // ========================================================================
@@ -365,11 +413,21 @@ library Errors {
     /// @param providedNonce The provided nonce that is not greater
     error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
 
+    /// @notice Nonce must be sequential (no gaps allowed)
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param expectedNonce The expected next nonce
+    /// @param providedNonce The nonce that was provided
+    error NonceNotSequential(uint32 sourceType, uint256 sourceId, uint128 expectedNonce, uint128 providedNonce);
+
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array
+    /// @param blockNumbersLength Length of blockNumbers array
     /// @param payloadsLength Length of payloads array
     /// @param gasLimitsLength Length of callbackGasLimits array
-    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+    error OracleBatchArrayLengthMismatch(
+        uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
+    );
 
     // ========================================================================
     // VERSION CONFIG ERRORS
@@ -466,5 +524,17 @@ library Errors {
     /// @param index The requested index
     /// @param count The total number of providers
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
+
+    // ========================================================================
+    // GENERAL ERRORS
+    // ========================================================================
+
+    /// @notice Operation is not supported
+    error OperationNotSupported();
+
+    /// @notice Duration exceeds the maximum allowed value
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveDuration(uint64 provided, uint64 maximum);
 }
 

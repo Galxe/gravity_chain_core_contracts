@@ -51,6 +51,7 @@ contract GovernanceTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 100 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 50 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days
+    uint64 constant EXECUTION_DELAY_MICROS = 1 days * 1_000_000; // 1 day
 
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION_MICROS = 30 days * 1_000_000; // 30 days
@@ -58,6 +59,7 @@ contract GovernanceTest is Test {
 
     // Test target contract for execution
     MockTarget public mockTarget;
+
 
     function setUp() public {
         // Deploy Timestamp
@@ -89,7 +91,13 @@ contract GovernanceTest is Test {
 
         // Initialize GovernanceConfig
         vm.prank(SystemAddresses.GENESIS);
-        govConfig.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+        govConfig.initialize(
+            MIN_VOTING_THRESHOLD,
+            REQUIRED_PROPOSER_STAKE,
+            VOTING_DURATION_MICROS,
+            1 days * 1_000_000,
+            7 days * 1_000_000 // executionWindowMicros
+        );
 
         // Deploy Governance with owner
         // Deploy to a temporary address first, then copy bytecode and storage to system address
@@ -236,13 +244,13 @@ contract GovernanceTest is Test {
         // Create pool with sufficient stake
         address pool = _createStakePool(alice, 100 ether);
 
-        // Advance time so lockup expires before voting would end
-        _advanceTime(LOCKUP_DURATION_MICROS - VOTING_DURATION_MICROS + 1);
+        // Advance time past lockup expiry so voting power is 0 at creation time
+        // (GCC-010: voting power is now evaluated at creation time, not expiration time)
+        _advanceTime(LOCKUP_DURATION_MICROS + 1);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
-        // With the new voting power model, insufficient lockup means 0 voting power at expiration
-        // Since lockup expires before proposal expiration, voting power at expiration = 0
+        // Lockup has expired, so voting power at creation time = 0
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InsufficientVotingPower.selector, REQUIRED_PROPOSER_STAKE, 0));
         governance.createProposal(pool, targets, datas, "ipfs://test");
@@ -532,6 +540,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
         governance.execute(proposalId, targets, datas);
@@ -566,6 +575,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute failed proposal
         vm.expectRevert(abi.encodeWithSelector(Errors.ProposalNotSucceeded.selector, proposalId));
@@ -587,6 +597,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
         governance.execute(proposalId, targets, datas);
 
         // Try to execute again
@@ -610,10 +621,12 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute with wrong data
         bytes memory wrongData = abi.encodeWithSignature("setValue(uint256)", 999);
-        (address[] memory wrongTargets, bytes[] memory wrongDatas) = _toArrays(address(mockTarget), wrongData);
+        (address[] memory wrongTargets, bytes[] memory wrongDatas) =
+            _toArrays(address(mockTarget), wrongData);
         bytes32 wrongHash = _computeExecutionHash(address(mockTarget), wrongData);
 
         vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionHashMismatch.selector, executionHash, wrongHash));
@@ -635,11 +648,14 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
-        // Execute should fail
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        // Execute should fail — bubbles up the original revert reason
+        vm.expectRevert("MockTarget: always reverts");
         governance.execute(proposalId, targets, datas);
     }
+
+
 
     // ========================================================================
     // DELEGATED VOTING TESTS
@@ -730,6 +746,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         vm.expectEmit(true, true, false, true);
         emit IGovernance.ProposalExecuted(proposalId, address(this), targets, datas);
@@ -889,6 +906,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Bob (not an executor) tries to execute
         vm.prank(bob);
@@ -914,6 +932,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // executor1 executes the proposal
         vm.prank(executor1);
@@ -944,6 +963,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // executor1 (now removed) tries to execute
         vm.prank(executor1);
@@ -1057,8 +1077,12 @@ contract GovernanceTest is Test {
         pools[0] = alicePool;
         pools[1] = bobPool;
 
+        uint128[] memory powers = new uint128[](2);
+        powers[0] = 30 ether;
+        powers[1] = 30 ether;
+
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 30 ether, false);
+        governance.batchPartialVote(pools, proposalId, powers, false);
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 0);
@@ -1087,8 +1111,11 @@ contract GovernanceTest is Test {
         address[] memory pools = new address[](1);
         pools[0] = bobPool;
 
+        uint128[] memory powers = new uint128[](1);
+        powers[0] = 100 ether;
+
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 100 ether, true); // Request 100, only 20 available
+        governance.batchPartialVote(pools, proposalId, powers, true); // Request 100, only 20 available
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 20 ether); // Capped at 20
@@ -1203,12 +1230,18 @@ contract GovernanceTest is Test {
         pools[1] = bobPool;
 
         // First round: vote yes with 20 ether each
+        uint128[] memory yesPowers = new uint128[](2);
+        yesPowers[0] = 20 ether;
+        yesPowers[1] = 20 ether;
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 20 ether, true);
+        governance.batchPartialVote(pools, proposalId, yesPowers, true);
 
         // Second round: vote no with 15 ether each
+        uint128[] memory noPowers = new uint128[](2);
+        noPowers[0] = 15 ether;
+        noPowers[1] = 15 ether;
         vm.prank(alice);
-        governance.batchPartialVote(pools, proposalId, 15 ether, false);
+        governance.batchPartialVote(pools, proposalId, noPowers, false);
 
         Proposal memory proposal = governance.getProposal(proposalId);
         assertEq(proposal.yesVotes, 40 ether); // 20 + 20
@@ -1510,6 +1543,7 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Execute
         governance.execute(proposalId, targets, datas);
@@ -1543,9 +1577,10 @@ contract GovernanceTest is Test {
         // Advance time and resolve
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
-        // Execute should fail and revert all changes atomically
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        // Execute should fail and revert all changes atomically — bubbles up original revert
+        vm.expectRevert("MockTarget: always reverts");
         governance.execute(proposalId, targets, datas);
 
         // Verify first call was rolled back (value should still be 0)
@@ -1609,6 +1644,7 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
         // Try to execute with empty arrays
         address[] memory emptyTargets = new address[](0);
@@ -1631,8 +1667,9 @@ contract GovernanceTest is Test {
 
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
+        _advanceTime(EXECUTION_DELAY_MICROS);
 
-        // Try to execute with mismatched arrays
+        // Try to execute with mismatched arrays (targets vs datas)
         address[] memory mismatchTargets = new address[](2);
         mismatchTargets[0] = address(mockTarget);
         mismatchTargets[1] = address(mockTarget);

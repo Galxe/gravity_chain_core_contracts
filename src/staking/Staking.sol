@@ -181,6 +181,10 @@ contract Staking is IStaking {
         address voter,
         uint64 lockedUntil
     ) external payable returns (address pool) {
+        // Validate critical addresses are not zero
+        if (owner == address(0)) revert Errors.ZeroAddress();
+        if (staker == address(0)) revert Errors.ZeroAddress();
+
         // Check minimum stake
         uint256 minStake = IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake();
         if (msg.value < minStake) {

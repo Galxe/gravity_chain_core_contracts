@@ -210,6 +210,7 @@ contract GravityPortalTest is Test {
         uint256 portalBalance = address(portal).balance;
         uint256 recipientBalanceBefore = feeRecipient.balance;
 
+        vm.prank(owner);
         vm.expectEmit(true, true, true, true);
         emit IGravityPortal.FeesWithdrawn(feeRecipient, portalBalance);
         portal.withdrawFees();
@@ -219,22 +220,22 @@ contract GravityPortalTest is Test {
     }
 
     function test_WithdrawFees_RevertWhenNoFees() public {
+        vm.prank(owner);
         vm.expectRevert(IGravityPortal.NoFeesToWithdraw.selector);
         portal.withdrawFees();
     }
 
-    function test_WithdrawFees_AnyoneCanCall() public {
+    function test_WithdrawFees_RevertWhenNotOwner() public {
         // Accumulate fees
         bytes memory message = hex"1234";
         uint256 fee = portal.calculateFee(message.length);
         vm.prank(alice);
         portal.send{ value: fee }(message);
 
-        // Anyone can call withdrawFees (but funds go to feeRecipient)
+        // Non-owner cannot call withdrawFees
         vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
         portal.withdrawFees();
-
-        assertEq(address(portal).balance, 0);
     }
 
     // ========================================================================

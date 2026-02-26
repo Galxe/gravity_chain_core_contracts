@@ -23,6 +23,7 @@ interface INativeOracle {
         bytes data;
     }
 
+
     // ========================================================================
     // SOURCE TYPE CONSTANTS
     // ========================================================================
@@ -83,6 +84,7 @@ interface INativeOracle {
     /// @param nonce The nonce of the record
     /// @param callback The callback contract that requested skip
     event StorageSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
+
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
@@ -208,6 +210,8 @@ interface INativeOracle {
         uint256 sourceId,
         uint128 nonce
     ) external view returns (bool);
+
+
 }
 
 /// @title IOracleCallback

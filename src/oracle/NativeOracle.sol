@@ -30,6 +30,7 @@ contract NativeOracle is INativeOracle {
     /// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
     mapping(uint32 => mapping(uint256 => address)) private _callbacks;
 
+
     /// @notice Whether the contract has been initialized
     bool private _initialized;
 
@@ -114,8 +115,10 @@ contract NativeOracle is INativeOracle {
         if (length == 0) return;
 
         // Validate array lengths match
-        if (length != payloads.length || length != callbackGasLimits.length) {
-            revert Errors.OracleBatchArrayLengthMismatch(length, payloads.length, callbackGasLimits.length);
+        if (length != blockNumbers.length || length != payloads.length || length != callbackGasLimits.length) {
+            revert Errors.OracleBatchArrayLengthMismatch(
+                length, blockNumbers.length, payloads.length, callbackGasLimits.length
+            );
         }
 
         // Record all data entries with individual nonce validation
@@ -241,6 +244,7 @@ contract NativeOracle is INativeOracle {
         return latestNonce > 0 && latestNonce >= nonce;
     }
 
+
     // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
@@ -257,9 +261,9 @@ contract NativeOracle is INativeOracle {
     ) internal {
         uint128 currentNonce = _nonces[sourceType][sourceId];
 
-        // Nonce must be strictly increasing (currentNonce defaults to 0, so first nonce must be >= 1)
-        if (nonce <= currentNonce) {
-            revert Errors.NonceNotIncreasing(sourceType, sourceId, currentNonce, nonce);
+        // Nonce must be sequential (currentNonce defaults to 0, so first nonce must be 1)
+        if (nonce != currentNonce + 1) {
+            revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);
         }
 
         _nonces[sourceType][sourceId] = nonce;

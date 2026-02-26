@@ -83,6 +83,8 @@ contract GenesisTest is Test {
         params.governanceConfig.minVotingThreshold = 1000 ether;
         params.governanceConfig.requiredProposerStake = 100 ether;
         params.governanceConfig.votingDurationMicros = 2 days * 1_000_000;
+        params.governanceConfig.executionDelayMicros = 1 days * 1_000_000;
+        params.governanceConfig.executionWindowMicros = 7 days * 1_000_000;
 
         // Version Config
         params.majorVersion = 1;
@@ -115,7 +117,7 @@ contract GenesisTest is Test {
         address[] memory callbacks = new address[](1);
         callbacks[0] = SystemAddresses.JWK_MANAGER;
         Genesis.OracleTaskParams[] memory tasks = new Genesis.OracleTaskParams[](0);
-        Genesis.BridgeConfig memory bridgeConfig = Genesis.BridgeConfig(false, address(0));
+        Genesis.BridgeConfig memory bridgeConfig = Genesis.BridgeConfig(false, address(0), 0);
         params.oracleConfig = Genesis.OracleInitParams(sourceTypes, callbacks, tasks, bridgeConfig);
 
         // JWK Config
@@ -125,6 +127,9 @@ contract GenesisTest is Test {
         jwks[0] = new IJWKManager.RSA_JWK[](1);
         jwks[0][0] = IJWKManager.RSA_JWK("kid1", "RSA", "RS256", "e", "n");
         params.jwkConfig = Genesis.JWKInitParams(issuers, jwks);
+
+        // Initial lockup: far future timestamp in microseconds (2027-01-01 + lockup duration)
+        params.initialLockedUntilMicros = uint64(1798761600) * 1_000_000 + params.stakingConfig.lockupDurationMicros;
 
         // Impersonate SYSTEM_CALLER
         vm.startPrank(SystemAddresses.SYSTEM_CALLER);

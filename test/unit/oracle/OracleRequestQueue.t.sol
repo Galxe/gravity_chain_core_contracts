@@ -146,13 +146,16 @@ contract OracleRequestQueueTest is Test {
     function test_Request_WithExcessFee() public {
         bytes memory requestData = abi.encode("AAPL");
         uint256 excessFee = DEFAULT_FEE + 0.05 ether;
+        uint256 aliceBalanceBefore = alice.balance;
 
         vm.prank(alice);
         uint256 requestId =
             requestQueue.request{ value: excessFee }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
-        assertEq(req.fee, excessFee); // Full amount is stored
+        assertEq(req.fee, DEFAULT_FEE); // Only required fee is stored
+        // Excess was refunded to alice
+        assertEq(alice.balance, aliceBalanceBefore - DEFAULT_FEE);
     }
 
     function test_Request_WithZeroFeeConfig() public {
@@ -236,8 +239,8 @@ contract OracleRequestQueueTest is Test {
         uint256 requestId =
             requestQueue.request{ value: DEFAULT_FEE }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
-        // Fast forward past expiration
-        vm.warp(block.timestamp + DEFAULT_EXPIRATION + 1);
+        // Fast forward past expiration + grace period
+        vm.warp(block.timestamp + DEFAULT_EXPIRATION + requestQueue.FULFILLMENT_GRACE_PERIOD() + 1);
 
         // Refund
         requestQueue.refund(requestId);
@@ -260,8 +263,8 @@ contract OracleRequestQueueTest is Test {
 
         uint256 aliceBalanceBefore = alice.balance;
 
-        // Fast forward past expiration
-        vm.warp(block.timestamp + DEFAULT_EXPIRATION + 1);
+        // Fast forward past expiration + grace period
+        vm.warp(block.timestamp + DEFAULT_EXPIRATION + requestQueue.FULFILLMENT_GRACE_PERIOD() + 1);
 
         // Anyone can call refund
         vm.prank(bob);
@@ -283,10 +286,11 @@ contract OracleRequestQueueTest is Test {
             requestQueue.request{ value: DEFAULT_FEE }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
+        uint64 effectiveExpiration = req.expiresAt + requestQueue.FULFILLMENT_GRACE_PERIOD();
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                OracleRequestQueue.NotExpired.selector, requestId, req.expiresAt, uint64(block.timestamp)
+                OracleRequestQueue.NotExpired.selector, requestId, effectiveExpiration, uint64(block.timestamp)
             )
         );
         requestQueue.refund(requestId);
@@ -307,8 +311,8 @@ contract OracleRequestQueueTest is Test {
         vm.prank(systemCaller);
         requestQueue.markFulfilled(requestId);
 
-        // Fast forward past expiration
-        vm.warp(block.timestamp + DEFAULT_EXPIRATION + 1);
+        // Fast forward past expiration + grace period
+        vm.warp(block.timestamp + DEFAULT_EXPIRATION + requestQueue.FULFILLMENT_GRACE_PERIOD() + 1);
 
         vm.expectRevert(abi.encodeWithSelector(OracleRequestQueue.AlreadyFulfilled.selector, requestId));
         requestQueue.refund(requestId);
@@ -321,8 +325,8 @@ contract OracleRequestQueueTest is Test {
         uint256 requestId =
             requestQueue.request{ value: DEFAULT_FEE }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
-        // Fast forward past expiration
-        vm.warp(block.timestamp + DEFAULT_EXPIRATION + 1);
+        // Fast forward past expiration + grace period
+        vm.warp(block.timestamp + DEFAULT_EXPIRATION + requestQueue.FULFILLMENT_GRACE_PERIOD() + 1);
 
         requestQueue.refund(requestId);
 
@@ -330,7 +334,7 @@ contract OracleRequestQueueTest is Test {
         requestQueue.refund(requestId);
     }
 
-    function test_Refund_AtExactExpiration() public {
+    function test_Refund_AtExactExpirationPlusGrace() public {
         bytes memory requestData = abi.encode("AAPL");
 
         vm.prank(alice);
@@ -339,10 +343,10 @@ contract OracleRequestQueueTest is Test {
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
 
-        // Fast forward to exact expiration time
-        vm.warp(req.expiresAt);
+        // Fast forward to exact expiration + grace period
+        vm.warp(req.expiresAt + requestQueue.FULFILLMENT_GRACE_PERIOD());
 
-        // Should succeed at exact expiration
+        // Should succeed at exact expiration + grace period
         requestQueue.refund(requestId);
 
         assertTrue(requestQueue.getRequest(requestId).refunded);
@@ -471,7 +475,7 @@ contract OracleRequestQueueTest is Test {
         uint256 requestId =
             requestQueue.request{ value: DEFAULT_FEE }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
-        vm.warp(block.timestamp + DEFAULT_EXPIRATION + 1);
+        vm.warp(block.timestamp + DEFAULT_EXPIRATION + requestQueue.FULFILLMENT_GRACE_PERIOD() + 1);
 
         vm.expectEmit(true, true, true, true);
         emit IOracleRequestQueue.RequestRefunded(requestId, alice, DEFAULT_FEE);
@@ -525,7 +529,7 @@ contract OracleRequestQueueTest is Test {
 
         IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
         assertEq(req.requestData, requestData);
-        assertEq(req.fee, fee);
+        assertEq(req.fee, DEFAULT_FEE); // Only required fee stored, excess refunded
     }
 
     function testFuzz_FulfillAndRefundMutuallyExclusive(
@@ -537,12 +541,16 @@ contract OracleRequestQueueTest is Test {
         uint256 requestId =
             requestQueue.request{ value: DEFAULT_FEE }(SOURCE_TYPE_PRICE_FEED, NASDAQ_SOURCE_ID, requestData);
 
-        timeDelta = bound(timeDelta, 0, DEFAULT_EXPIRATION * 2);
+        IOracleRequestQueue.OracleRequest memory req = requestQueue.getRequest(requestId);
+        uint64 effectiveExpiration = req.expiresAt + requestQueue.FULFILLMENT_GRACE_PERIOD();
+
+        timeDelta = bound(timeDelta, 0, uint256(effectiveExpiration) + DEFAULT_EXPIRATION);
         vm.warp(block.timestamp + timeDelta);
 
-        bool isExpired = requestQueue.isExpired(requestId);
+        // Refund requires block.timestamp >= effectiveExpiration (expiresAt + grace period)
+        bool canRefund = block.timestamp >= effectiveExpiration;
 
-        if (isExpired) {
+        if (canRefund) {
             // Can refund
             requestQueue.refund(requestId);
             assertTrue(requestQueue.getRequest(requestId).refunded);
@@ -552,7 +560,7 @@ contract OracleRequestQueueTest is Test {
             vm.prank(systemCaller);
             requestQueue.markFulfilled(requestId);
         } else {
-            // Can fulfill before expiration
+            // Can fulfill before effective expiration
             vm.prank(systemCaller);
             requestQueue.markFulfilled(requestId);
             assertTrue(requestQueue.getRequest(requestId).fulfilled);

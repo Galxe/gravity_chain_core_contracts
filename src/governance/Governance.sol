@@ -40,6 +40,7 @@ contract Governance is IGovernance, Ownable2Step {
     /// @dev Resolution must happen in a later timestamp than the last vote
     mapping(uint64 => uint64) public lastVoteTime;
 
+
     /// @notice Set of authorized executors
     EnumerableSet.AddressSet private _executors;
 
@@ -63,6 +64,16 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.NotExecutor(msg.sender);
         }
         _;
+    }
+
+    // ========================================================================
+    // OWNERSHIP OVERRIDES
+    // ========================================================================
+
+    /// @notice Prevent ownership renunciation
+    /// @dev Governance must always have an owner for executor management
+    function renounceOwnership() public pure override {
+        revert Errors.OperationNotSupported();
     }
 
     // ========================================================================
@@ -163,8 +174,8 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalNotFound(proposalId);
         }
 
-        // Get voting power at proposal's expiration time
-        uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
+        // Get voting power at proposal's creation time (snapshot-based)
+        uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.creationTime);
         uint128 used = usedVotingPower[stakePool][proposalId];
 
         if (poolPower <= used) {
@@ -245,6 +256,26 @@ contract Governance is IGovernance, Ownable2Step {
         return lastVoteTime[proposalId];
     }
 
+    /// @inheritdoc IGovernance
+    function getEarliestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
+        if (!p.isResolved) return 0;
+        return p.resolutionTime + _config().executionDelayMicros();
+    }
+
+    /// @inheritdoc IGovernance
+    function getLatestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
+        if (!p.isResolved) return 0;
+        return p.resolutionTime + _config().executionDelayMicros() + _config().executionWindowMicros();
+    }
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -275,9 +306,8 @@ contract Governance is IGovernance, Ownable2Step {
         uint64 votingDuration = _config().votingDurationMicros();
         uint64 expirationTime = now_ + votingDuration;
 
-        // Get pool's voting power at expiration time
-        // This inherently checks that lockup covers the voting period
-        uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime);
+        // Get pool's voting power at creation time (snapshot-based)
+        uint256 votingPower = _staking().getPoolVotingPower(stakePool, now_);
         uint256 requiredStake = _config().requiredProposerStake();
 
         if (votingPower < requiredStake) {
@@ -290,19 +320,14 @@ contract Governance is IGovernance, Ownable2Step {
         // Create proposal
         proposalId = nextProposalId++;
 
-        _proposals[proposalId] = Proposal({
-            id: proposalId,
-            proposer: msg.sender,
-            executionHash: executionHash,
-            metadataUri: metadataUri,
-            creationTime: now_,
-            expirationTime: expirationTime,
-            minVoteThreshold: _config().minVotingThreshold(),
-            yesVotes: 0,
-            noVotes: 0,
-            isResolved: false,
-            resolutionTime: 0
-        });
+        Proposal storage p = _proposals[proposalId];
+        p.id = proposalId;
+        p.proposer = msg.sender;
+        p.executionHash = executionHash;
+        p.metadataUri = metadataUri;
+        p.creationTime = now_;
+        p.expirationTime = expirationTime;
+        p.minVoteThreshold = _config().minVotingThreshold();
 
         emit ProposalCreated(proposalId, msg.sender, stakePool, executionHash, metadataUri);
     }
@@ -334,12 +359,15 @@ contract Governance is IGovernance, Ownable2Step {
     function batchPartialVote(
         address[] calldata stakePools,
         uint64 proposalId,
-        uint128 votingPower,
+        uint128[] calldata votingPowers,
         bool support
     ) external {
         uint256 len = stakePools.length;
+        if (votingPowers.length != len) {
+            revert Errors.ArrayLengthMismatch(len, votingPowers.length);
+        }
         for (uint256 i = 0; i < len; ++i) {
-            _voteInternal(stakePools[i], proposalId, votingPower, support);
+            _voteInternal(stakePools[i], proposalId, votingPowers[i], support);
         }
     }
 
@@ -449,6 +477,7 @@ contract Governance is IGovernance, Ownable2Step {
         emit ProposalResolved(proposalId, state);
     }
 
+
     /// @inheritdoc IGovernance
     function execute(
         uint64 proposalId,
@@ -479,6 +508,21 @@ contract Governance is IGovernance, Ownable2Step {
             revert Errors.ProposalNotSucceeded(proposalId);
         }
 
+        // Verify execution delay has passed (timelock)
+        uint64 executionDelay = _config().executionDelayMicros();
+        uint64 earliestExecution = _proposals[proposalId].resolutionTime + executionDelay;
+        uint64 now_ = _now();
+        if (now_ < earliestExecution) {
+            revert Errors.ExecutionDelayNotMet(earliestExecution, now_);
+        }
+
+        // Verify execution window has not expired
+        uint64 executionWindow = _config().executionWindowMicros();
+        uint64 latestExecution = earliestExecution + executionWindow;
+        if (now_ > latestExecution) {
+            revert Errors.ProposalExecutionExpired(proposalId);
+        }
+
         // Verify execution hash matches
         bytes32 expectedHash = _proposals[proposalId].executionHash;
         bytes32 actualHash = keccak256(abi.encode(targets, datas));
@@ -492,8 +536,14 @@ contract Governance is IGovernance, Ownable2Step {
         // Execute all calls atomically
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
-            (bool success,) = targets[i].call(datas[i]);
+            (bool success, bytes memory returnData) = targets[i].call(datas[i]);
             if (!success) {
+                // Bubble up the original revert reason if available
+                if (returnData.length > 0) {
+                    assembly {
+                        revert(add(returnData, 32), mload(returnData))
+                    }
+                }
                 revert Errors.ExecutionFailed(proposalId);
             }
         }

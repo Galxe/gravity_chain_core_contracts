@@ -68,23 +68,16 @@ contract ValidatorPerformanceTracker is IValidatorPerformanceTracker {
         // Record successful proposal (skip for NIL blocks where proposerIndex == type(uint64).max)
         // Also skip out-of-bounds indices to match Aptos's non-aborting behavior
         if (proposerIndex != type(uint64).max && proposerIndex < validatorLen) {
-            unchecked {
-                _validators[proposerIndex].successfulProposals++;
-            }
+            _validators[proposerIndex].successfulProposals++;
         }
 
         // Record failed proposals
         uint256 failedLen = failedProposerIndices.length;
-        for (uint256 f; f < failedLen;) {
+        for (uint256 f; f < failedLen; ++f) {
             uint64 validatorIndex = failedProposerIndices[f];
             // Skip out-of-bounds indices (Aptos pattern: never abort)
             if (validatorIndex < validatorLen) {
-                unchecked {
-                    _validators[validatorIndex].failedProposals++;
-                }
-            }
-            unchecked {
-                ++f;
+                _validators[validatorIndex].failedProposals++;
             }
         }
 

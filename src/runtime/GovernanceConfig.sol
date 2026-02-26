@@ -20,6 +20,8 @@ contract GovernanceConfig {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
+        uint64 executionWindowMicros;
     }
 
     // ========================================================================
@@ -34,6 +36,12 @@ contract GovernanceConfig {
 
     /// @notice Duration of voting period in microseconds
     uint64 public votingDurationMicros;
+
+    /// @notice Duration of execution delay (timelock) in microseconds
+    uint64 public executionDelayMicros;
+
+    /// @notice Duration of execution window in microseconds (after delay, before expiration)
+    uint64 public executionWindowMicros;
 
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
@@ -66,10 +74,14 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds
+    /// @param _executionDelayMicros Execution delay (timelock) duration in microseconds
+    /// @param _executionWindowMicros Execution window duration in microseconds
     function initialize(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros,
+        uint64 _executionWindowMicros
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
@@ -78,11 +90,19 @@ contract GovernanceConfig {
         }
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(
+            _minVotingThreshold,
+            _requiredProposerStake,
+            _votingDurationMicros,
+            _executionDelayMicros,
+            _executionWindowMicros
+        );
 
         minVotingThreshold = _minVotingThreshold;
         requiredProposerStake = _requiredProposerStake;
         votingDurationMicros = _votingDurationMicros;
+        executionDelayMicros = _executionDelayMicros;
+        executionWindowMicros = _executionWindowMicros;
 
         _initialized = true;
 
@@ -116,21 +136,33 @@ contract GovernanceConfig {
     /// @param _minVotingThreshold Minimum votes for quorum
     /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting period duration in microseconds (must be > 0)
+    /// @param _executionDelayMicros Execution delay (timelock) duration in microseconds (must be > 0)
+    /// @param _executionWindowMicros Execution window duration in microseconds (must be > 0)
     function setForNextEpoch(
         uint128 _minVotingThreshold,
         uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros,
+        uint64 _executionWindowMicros
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(
+            _minVotingThreshold,
+            _requiredProposerStake,
+            _votingDurationMicros,
+            _executionDelayMicros,
+            _executionWindowMicros
+        );
 
         _pendingConfig = PendingConfig({
             minVotingThreshold: _minVotingThreshold,
             requiredProposerStake: _requiredProposerStake,
-            votingDurationMicros: _votingDurationMicros
+            votingDurationMicros: _votingDurationMicros,
+            executionDelayMicros: _executionDelayMicros,
+            executionWindowMicros: _executionWindowMicros
         });
         hasPendingConfig = true;
 
@@ -156,6 +188,8 @@ contract GovernanceConfig {
         minVotingThreshold = _pendingConfig.minVotingThreshold;
         requiredProposerStake = _pendingConfig.requiredProposerStake;
         votingDurationMicros = _pendingConfig.votingDurationMicros;
+        executionDelayMicros = _pendingConfig.executionDelayMicros;
+        executionWindowMicros = _pendingConfig.executionWindowMicros;
 
         hasPendingConfig = false;
 
@@ -171,12 +205,32 @@ contract GovernanceConfig {
     // ========================================================================
 
     /// @notice Validate configuration parameters
+    /// @param _minVotingThreshold Minimum votes for quorum
+    /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting duration
+    /// @param _executionDelayMicros Execution delay (timelock) duration
+    /// @param _executionWindowMicros Execution window duration
     function _validateConfig(
-        uint64 _votingDurationMicros
+        uint128 _minVotingThreshold,
+        uint256 _requiredProposerStake,
+        uint64 _votingDurationMicros,
+        uint64 _executionDelayMicros,
+        uint64 _executionWindowMicros
     ) internal pure {
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
+        }
+        if (_executionDelayMicros == 0) {
+            revert Errors.InvalidExecutionDelay();
+        }
+        if (_minVotingThreshold == 0) {
+            revert Errors.InvalidVotingThreshold();
+        }
+        if (_requiredProposerStake == 0) {
+            revert Errors.InvalidProposerStake();
+        }
+        if (_executionWindowMicros == 0) {
+            revert Errors.InvalidExecutionWindow();
         }
     }
 

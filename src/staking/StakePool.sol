@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IStakePool } from "./IStakePool.sol";
 import { IValidatorManagement } from "./IValidatorManagement.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { ReentrancyGuard } from "@openzeppelin/utils/ReentrancyGuard.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorStatus } from "../foundation/Types.sol";
@@ -25,10 +26,16 @@ import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 ///      - withdrawAvailable() claims all pending where (now > lockedUntil + unbondingDelay)
 ///      - unstakeAndWithdraw() helper combines both operations
 ///      - Voting power = activeStake + effective pending (via O(log n) binary search)
-contract StakePool is IStakePool, Ownable2Step {
+contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ========================================================================
     // IMMUTABLES
     // ========================================================================
+
+    /// @notice Maximum lockup duration (4 years in microseconds)
+    uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000;
+
+    /// @notice Maximum number of pending withdrawal buckets
+    uint256 public constant MAX_PENDING_BUCKETS = 1000;
 
     /// @notice Address of the Staking factory that created this pool
     address public immutable FACTORY;
@@ -230,6 +237,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setOperator(
         address newOperator
     ) external onlyOwner {
+        if (newOperator == address(0)) revert Errors.ZeroAddress();
         address oldOperator = operator;
         operator = newOperator;
         emit OperatorChanged(address(this), oldOperator, newOperator);
@@ -239,6 +247,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setVoter(
         address newVoter
     ) external onlyOwner {
+        if (newVoter == address(0)) revert Errors.ZeroAddress();
         address oldVoter = voter;
         voter = newVoter;
         emit VoterChanged(address(this), oldVoter, newVoter);
@@ -248,6 +257,7 @@ contract StakePool is IStakePool, Ownable2Step {
     function setStaker(
         address newStaker
     ) external onlyOwner {
+        if (newStaker == address(0)) revert Errors.ZeroAddress();
         address oldStaker = staker;
         staker = newStaker;
         emit StakerChanged(address(this), oldStaker, newStaker);
@@ -268,6 +278,11 @@ contract StakePool is IStakePool, Ownable2Step {
         // Extend lockup if needed: lockedUntil = max(current, now + minLockupDuration)
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
         uint64 minLockup = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
+
+        // Overflow check: ensure now_ + minLockup does not overflow uint64
+        if (now_ > type(uint64).max - minLockup) {
+            revert Errors.ExcessiveLockupDuration(minLockup, MAX_LOCKUP_DURATION);
+        }
         uint64 newLockedUntil = now_ + minLockup;
 
         if (newLockedUntil > lockedUntil) {
@@ -287,7 +302,7 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function withdrawAvailable(
         address recipient
-    ) external onlyStaker whenNotReconfiguring returns (uint256 amount) {
+    ) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 amount) {
         amount = _withdrawAvailable(recipient);
     }
 
@@ -307,7 +322,10 @@ contract StakePool is IStakePool, Ownable2Step {
     function renewLockUntil(
         uint64 durationMicros
     ) external onlyStaker whenNotReconfiguring {
-        // TODO(yxia): overlock protection check.
+        // Max lockup protection
+        if (durationMicros > MAX_LOCKUP_DURATION) {
+            revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION);
+        }
 
         // Check for overflow
         uint64 newLockedUntil = lockedUntil + durationMicros;
@@ -434,6 +452,9 @@ contract StakePool is IStakePool, Ownable2Step {
                 lastBucket.cumulativeAmount += amount;
             } else if (lastBucket.lockedUntil < bucketLockedUntil) {
                 // Append new bucket (strictly increasing lockedUntil)
+                if (len >= MAX_PENDING_BUCKETS) {
+                    revert Errors.TooManyPendingBuckets(len, MAX_PENDING_BUCKETS);
+                }
                 uint256 newCumulative = lastBucket.cumulativeAmount + amount;
                 _pendingBuckets.push(PendingBucket({ lockedUntil: bucketLockedUntil, cumulativeAmount: newCumulative }));
             } else {

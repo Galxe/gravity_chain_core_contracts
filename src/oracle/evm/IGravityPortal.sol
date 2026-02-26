@@ -47,6 +47,12 @@ interface IGravityPortal {
     /// @notice No fees available to withdraw
     error NoFeesToWithdraw();
 
+    /// @notice Fee refund to sender failed
+    error RefundFailed();
+
+    /// @notice Fee transfer to recipient failed
+    error TransferFailed();
+
     // ========================================================================
     // MESSAGE BRIDGING
     // ========================================================================

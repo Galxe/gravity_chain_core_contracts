@@ -47,7 +47,9 @@ interface IGovernance {
     /// @param executor Address that executed the proposal
     /// @param targets Contracts that were called
     /// @param datas Calldata that was sent to each target
-    event ProposalExecuted(uint64 indexed proposalId, address indexed executor, address[] targets, bytes[] datas);
+    event ProposalExecuted(
+        uint64 indexed proposalId, address indexed executor, address[] targets, bytes[] datas
+    );
 
     /// @notice Emitted when an executor is added
     /// @param executor Address of the added executor
@@ -70,7 +72,7 @@ interface IGovernance {
 
     /// @notice Get the current state of a proposal
     /// @param proposalId ID of the proposal
-    /// @return Current state (PENDING, SUCCEEDED, FAILED, EXECUTED, CANCELLED)
+    /// @return Current state (PENDING, SUCCEEDED, FAILED, EXECUTED)
     function getProposalState(
         uint64 proposalId
     ) external view returns (ProposalState);
@@ -121,6 +123,20 @@ interface IGovernance {
     /// @param proposalId ID of the proposal
     /// @return The timestamp of the last vote (0 if no votes cast)
     function getLastVoteTime(
+        uint64 proposalId
+    ) external view returns (uint64);
+
+    /// @notice Get the earliest time a proposal can be executed (after timelock)
+    /// @param proposalId ID of the proposal
+    /// @return Earliest execution timestamp in microseconds (0 if not yet resolved)
+    function getEarliestExecutionTime(
+        uint64 proposalId
+    ) external view returns (uint64);
+
+    /// @notice Get the latest time a proposal can be executed (after which it expires)
+    /// @param proposalId ID of the proposal
+    /// @return Latest execution timestamp in microseconds (0 if not yet resolved)
+    function getLatestExecutionTime(
         uint64 proposalId
     ) external view returns (uint64);
 
@@ -184,12 +200,12 @@ interface IGovernance {
     ///      If votingPower exceeds remaining power for a pool, uses all remaining power.
     /// @param stakePools Array of stake pool addresses to vote with
     /// @param proposalId ID of the proposal to vote on
-    /// @param votingPower Amount of voting power to use from each pool
+    /// @param votingPowers Amount of voting power to use from each pool (must match stakePools length)
     /// @param support True to vote yes, false to vote no
     function batchPartialVote(
         address[] calldata stakePools,
         uint64 proposalId,
-        uint128 votingPower,
+        uint128[] calldata votingPowers,
         bool support
     ) external;
 

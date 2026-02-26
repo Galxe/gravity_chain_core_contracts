@@ -18,6 +18,7 @@ import { ExecutionConfig } from "../runtime/ExecutionConfig.sol";
 import { ValidatorConfig } from "../runtime/ValidatorConfig.sol";
 import { VersionConfig } from "../runtime/VersionConfig.sol";
 import { GovernanceConfig } from "../runtime/GovernanceConfig.sol";
+import { StakingConfig } from "../runtime/StakingConfig.sol";
 
 /// @title Reconfiguration
 /// @author Gravity Team
@@ -264,6 +265,7 @@ contract Reconfiguration is IReconfiguration {
         ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
         VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
         GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
+        StakingConfig(SystemAddresses.STAKE_CONFIG).applyPendingConfig();
         EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
         // 2. Auto-evict underperforming validators based on completed epoch's performance data

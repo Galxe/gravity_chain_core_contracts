@@ -125,42 +125,69 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 totalPower = 0;
 
         for (uint256 i = 0; i < length; i++) {
-            GenesisValidator calldata v = validators[i];
-
-            // Validate moniker length
-            if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
-                revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
-            }
-
-            // Create validator record
-            ValidatorRecord storage record = _validators[v.stakePool];
-            record.validator = v.stakePool;
-            record.moniker = v.moniker;
-            record.stakingPool = v.stakePool;
-            record.status = ValidatorStatus.ACTIVE;
-            record.bond = v.votingPower;
-            record.consensusPubkey = v.consensusPubkey;
-            record.consensusPop = v.consensusPop;
-
-            // Register pubkey in the mapping
-            _pubkeyToValidator[keccak256(v.consensusPubkey)] = v.stakePool;
-            record.networkAddresses = v.networkAddresses;
-            record.fullnodeAddresses = v.fullnodeAddresses;
-            record.feeRecipient = v.feeRecipient;
-            record.validatorIndex = uint64(i);
-
-            // Add to active validators
-            _activeValidators.push(v.stakePool);
-            totalPower += v.votingPower;
-
-            emit ValidatorRegistered(v.stakePool, v.moniker);
-            emit ValidatorActivated(v.stakePool, uint64(i), v.votingPower);
+            totalPower += _initializeGenesisValidator(validators[i], uint64(i));
         }
 
         totalVotingPower = totalPower;
         _initialized = true;
 
         emit ValidatorManagementInitialized(length, totalPower);
+    }
+
+    /// @notice Initialize a single genesis validator record
+    /// @dev Extracted to avoid stack-too-deep in initialize() loop.
+    ///      NOTE: Full BLS proof-of-possession verification via the precompile is intentionally
+    ///      skipped during genesis because the precompile may not be available in the genesis
+    ///      execution environment. Genesis validator keys are trusted as they come from the
+    ///      genesis configuration managed by chain operators. Post-genesis registration
+    ///      via registerValidator() performs full PoP verification.
+    /// @param v The genesis validator data
+    /// @param index The validator index in the active set
+    /// @return votingPower The validator's voting power
+    function _initializeGenesisValidator(
+        GenesisValidator calldata v,
+        uint64 index
+    ) internal returns (uint256 votingPower) {
+        // Validate moniker length
+        if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
+            revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
+        }
+
+        // Validate consensus key length (PoP precompile not available at genesis)
+        if (v.consensusPubkey.length != BLS12381_PUBKEY_LENGTH) {
+            revert Errors.InvalidConsensusPubkeyLength(BLS12381_PUBKEY_LENGTH, v.consensusPubkey.length);
+        }
+        if (v.consensusPop.length == 0) {
+            revert Errors.InvalidConsensusPopLength();
+        }
+
+        // Cache stakePool to reduce stack pressure
+        address pool = v.stakePool;
+
+        // Create validator record
+        ValidatorRecord storage record = _validators[pool];
+        record.validator = pool;
+        record.moniker = v.moniker;
+        record.stakingPool = pool;
+        record.status = ValidatorStatus.ACTIVE;
+        record.bond = v.votingPower;
+        record.consensusPubkey = v.consensusPubkey;
+        record.consensusPop = v.consensusPop;
+
+        // Register pubkey in the mapping
+        _pubkeyToValidator[keccak256(v.consensusPubkey)] = pool;
+        record.networkAddresses = v.networkAddresses;
+        record.fullnodeAddresses = v.fullnodeAddresses;
+        record.feeRecipient = pool;
+        record.validatorIndex = index;
+
+        // Add to active validators
+        _activeValidators.push(pool);
+
+        emit ValidatorRegistered(pool, v.moniker);
+        emit ValidatorActivated(pool, index, v.votingPower);
+
+        return v.votingPower;
     }
 
     /// @inheritdoc IValidatorManagement
@@ -215,11 +242,18 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) external {
+        // GCC-041: Check that validator set changes are allowed
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            revert Errors.ValidatorSetChangesDisabled();
+        }
+
         // Validate inputs and get required data
         _validateRegistration(stakePool, moniker);
 
         // Create validator record
-        _createValidatorRecord(stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses);
+        _createValidatorRecord(
+            stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses
+        );
 
         emit ValidatorRegistered(stakePool, moniker);
     }
@@ -298,8 +332,8 @@ contract ValidatorManagement is IValidatorManagement {
         record.moniker = moniker;
         record.stakingPool = stakePool;
 
-        // Set fee recipient from staking contract
-        record.feeRecipient = IStaking(SystemAddresses.STAKING).getPoolOwner(stakePool); // TODO(yxia): the fee recipient should be a parameter.
+        // Default fee recipient to the caller (operator)
+        record.feeRecipient = msg.sender;
 
         // Set status and bond
         record.status = ValidatorStatus.INACTIVE;
@@ -385,8 +419,10 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
         }
 
-        // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length == 1) {
+        // GRAV-005: Prevent removing the last active validator (would halt consensus).
+        // Must count by status, not array length, because _activeValidators still
+        // contains PENDING_INACTIVE validators until the next epoch boundary.
+        if (_countActiveValidators() <= 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
@@ -418,8 +454,10 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.ACTIVE), uint8(validator.status));
         }
 
-        // Unlike voluntary leave, governance CAN remove the last validator
-        // (emergency scenario where even consensus halt is acceptable)
+        // Prevent removing the last active validator (would halt consensus)
+        if (_activeValidators.length <= 1) {
+            revert Errors.CannotRemoveLastValidator();
+        }
 
         // Change status to PENDING_INACTIVE
         validator.status = ValidatorStatus.PENDING_INACTIVE;
@@ -443,22 +481,24 @@ contract ValidatorManagement is IValidatorManagement {
 
         ValidatorRecord storage validator = _validators[stakePool];
 
-        // Check new pubkey is unique
+        // Check new pubkey is unique (against both active and pending keys)
         bytes32 newKeyHash = keccak256(newPubkey);
         if (_pubkeyToValidator[newKeyHash] != address(0)) {
             revert Errors.DuplicateConsensusPubkey(newPubkey);
         }
 
-        // Clear old pubkey from mapping and register new one
-        bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
-        delete _pubkeyToValidator[oldKeyHash];
+        // If there was a previous pending rotation, free that key from the mapping
+        if (validator.pendingConsensusPubkey.length > 0) {
+            bytes32 oldPendingKeyHash = keccak256(validator.pendingConsensusPubkey);
+            delete _pubkeyToValidator[oldPendingKeyHash];
+        }
+
+        // Reserve the new key in the mapping immediately to prevent duplicates
         _pubkeyToValidator[newKeyHash] = stakePool;
 
-        // TODO(yxia): it wont take effect immediately i think, it has to wait until the next epoch.
-        // check if aptos has some fancy way to make it take effect immediately.
-        // Update consensus key material (takes effect immediately)
-        validator.consensusPubkey = newPubkey;
-        validator.consensusPop = newPop;
+        // Store as pending — applied at next epoch boundary
+        validator.pendingConsensusPubkey = newPubkey;
+        validator.pendingConsensusPop = newPop;
 
         emit ConsensusKeyRotated(stakePool, newPubkey);
     }
@@ -509,14 +549,17 @@ contract ValidatorManagement is IValidatorManagement {
         // 7. Auto-renew lockups for active validators (Aptos-style)
         _renewActiveValidatorLockups();
 
-        // 8. Apply pending fee recipient changes for all active validators
+        // 8. Apply pending consensus key rotations for all active validators
+        _applyPendingConsensusKeys();
+
+        // 9. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 9. Update bond (voting power) for all active validators
-        //    This captures post-lockup-renewal voting power
+        // 10. Update bond (voting power) for all active validators
+        //     This captures post-lockup-renewal voting power
         _syncValidatorBonds();
 
-        // 10. Update total voting power
+        // 11. Update total voting power
         //     Note: Epoch is managed by Reconfiguration contract (single source of truth)
         totalVotingPower = _calculateTotalVotingPower();
 
@@ -565,11 +608,21 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 activeLen = _activeValidators.length;
         uint256 perfLen = perfs.length;
 
-        // Safety: perf array length should match active validator count.
-        // Use min to avoid out-of-bounds if there's a mismatch.
-        uint256 checkLen = activeLen < perfLen ? activeLen : perfLen;
+        // Strict equality check: perf array length must match active validator count.
+        if (activeLen != perfLen) {
+            emit PerformanceLengthMismatch(activeLen, perfLen);
+            return;
+        }
 
-        for (uint256 i = 0; i < checkLen; i++) {
+        // GCC-035: Initialize counter once and decrement per eviction instead of O(n) inner loop
+        uint256 remainingActive = 0;
+        for (uint256 i = 0; i < activeLen; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                remainingActive++;
+            }
+        }
+
+        for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
             ValidatorRecord storage validator = _validators[pool];
 
@@ -581,13 +634,6 @@ contract ValidatorManagement is IValidatorManagement {
             // Check if validator meets eviction criteria
             if (perfs[i].successfulProposals <= threshold) {
                 // Preserve liveness: never evict the last active validator
-                // Count remaining active validators (those not already pending inactive)
-                uint256 remainingActive = 0;
-                for (uint256 j = 0; j < activeLen; j++) {
-                    if (_validators[_activeValidators[j]].status == ValidatorStatus.ACTIVE) {
-                        remainingActive++;
-                    }
-                }
                 if (remainingActive <= 1) {
                     // Cannot evict the last active validator — would halt consensus
                     break;
@@ -596,6 +642,7 @@ contract ValidatorManagement is IValidatorManagement {
                 // Mark as PENDING_INACTIVE for processing by onNewEpoch()
                 validator.status = ValidatorStatus.PENDING_INACTIVE;
                 _pendingInactive.push(pool);
+                remainingActive--;
 
                 emit ValidatorAutoEvicted(pool, perfs[i].successfulProposals);
             }
@@ -648,6 +695,7 @@ contract ValidatorManagement is IValidatorManagement {
     ) internal {
         for (uint256 i = 0; i < count; i++) {
             _validators[validators[i]].status = ValidatorStatus.INACTIVE;
+            emit ValidatorRevertedInactive(validators[i]);
         }
     }
 
@@ -695,14 +743,40 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
+    /// @notice Apply pending consensus key rotations at epoch boundary
+    /// @dev Frees the old active key from the pubkey mapping and promotes the pending key.
+    function _applyPendingConsensusKeys() internal {
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+            if (validator.pendingConsensusPubkey.length > 0) {
+                // Free the old active key from the uniqueness mapping
+                bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
+                delete _pubkeyToValidator[oldKeyHash];
+
+                // Promote pending to active
+                validator.consensusPubkey = validator.pendingConsensusPubkey;
+                validator.consensusPop = validator.pendingConsensusPop;
+
+                // Clear pending
+                delete validator.pendingConsensusPubkey;
+                delete validator.pendingConsensusPop;
+            }
+        }
+    }
+
     /// @notice Apply pending fee recipient changes
     function _applyPendingFeeRecipients() internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
-            ValidatorRecord storage validator = _validators[_activeValidators[i]];
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
             if (validator.pendingFeeRecipient != address(0)) {
+                address oldRecipient = validator.feeRecipient;
                 validator.feeRecipient = validator.pendingFeeRecipient;
                 validator.pendingFeeRecipient = address(0);
+                emit FeeRecipientApplied(pool, oldRecipient, validator.feeRecipient);
             }
         }
     }
@@ -734,6 +808,20 @@ contract ValidatorManagement is IValidatorManagement {
                 return;
             }
         }
+    }
+
+    /// @notice Count validators with ACTIVE status in the current active set
+    /// @dev GRAV-005: _activeValidators.length includes PENDING_INACTIVE validators
+    ///      that haven't been removed yet. This function counts only truly ACTIVE ones.
+    function _countActiveValidators() internal view returns (uint256) {
+        uint256 count = 0;
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// @notice Calculate total voting power of active validators
@@ -782,9 +870,10 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Step 2: Count staying active validators (active minus pending_inactive)
+        // GCC-034: Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
         uint256 stayingActiveCount = 0;
         for (uint256 i = 0; i < activeLen; i++) {
-            if (!_isInPendingInactive(_activeValidators[i])) {
+            if (_validators[_activeValidators[i]].status != ValidatorStatus.PENDING_INACTIVE) {
                 stayingActiveCount++;
             }
         }
@@ -829,7 +918,7 @@ contract ValidatorManagement is IValidatorManagement {
         // Add staying active validators (excluding pending_inactive)
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
-            if (!_isInPendingInactive(pool)) {
+            if (_validators[pool].status != ValidatorStatus.PENDING_INACTIVE) {
                 ValidatorRecord storage validator = _validators[pool];
                 result.validators[idx] = ValidatorConsensusInfo({
                     validator: pool,

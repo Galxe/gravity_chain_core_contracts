@@ -17,7 +17,7 @@ interface IOracleTaskConfig {
     struct OracleTask {
         /// @notice Task configuration bytes (interpretation depends on sourceType)
         bytes config;
-        /// @notice Timestamp when this task was last updated
+        /// @notice Timestamp when this task was last updated (block.timestamp in seconds, NOT microseconds)
         uint64 updatedAt;
     }
 

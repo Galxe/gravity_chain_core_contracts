@@ -74,6 +74,11 @@ struct ValidatorRecord {
     bytes networkAddresses;
     /// @notice Fullnode addresses
     bytes fullnodeAddresses;
+    // === Pending Consensus Key Rotation (applied next epoch) ===
+    /// @notice Pending BLS consensus public key (empty if no rotation pending)
+    bytes pendingConsensusPubkey;
+    /// @notice Pending proof of possession (empty if no rotation pending)
+    bytes pendingConsensusPop;
     // === Fee Distribution ===
     /// @notice Current fee recipient address
     address feeRecipient;
@@ -96,8 +101,7 @@ enum ProposalState {
     PENDING, // 0: Voting active
     SUCCEEDED, // 1: Passed, ready to execute
     FAILED, // 2: Did not pass
-    EXECUTED, // 3: Already executed
-    CANCELLED // 4: Cancelled
+    EXECUTED // 3: Already executed
 }
 
 /// @notice Governance proposal

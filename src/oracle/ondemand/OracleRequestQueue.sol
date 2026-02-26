@@ -13,6 +13,11 @@ import { Errors } from "../../foundation/Errors.sol";
 /// @dev Validators monitor this contract to fulfill requests.
 ///      Fees are held until fulfillment, then sent to treasury.
 ///      Unfulfilled requests can be refunded after expiration.
+///
+///      NOTE ON TIMESTAMPS: This contract intentionally uses `block.timestamp` (seconds) rather than
+///      the Gravity system's microsecond `Timestamp` contract. This is because on-demand oracle requests
+///      operate on EVM block boundaries, and expiration/grace periods are denominated in seconds.
+///      All timestamp fields (requestedAt, expiresAt, FULFILLMENT_GRACE_PERIOD) are in seconds.
 contract OracleRequestQueue is IOracleRequestQueue {
     // ========================================================================
     // ERRORS
@@ -43,6 +48,14 @@ contract OracleRequestQueue is IOracleRequestQueue {
     error TransferFailed();
 
     // ========================================================================
+    // CONSTANTS
+    // ========================================================================
+
+    /// @notice Grace period after expiration during which SYSTEM_CALLER can still fulfill
+    /// @dev Value is in seconds (block.timestamp units), NOT microseconds
+    uint64 public constant FULFILLMENT_GRACE_PERIOD = 300; // 5 minutes in seconds
+
+    // ========================================================================
     // STATE
     // ========================================================================
 
@@ -55,7 +68,7 @@ contract OracleRequestQueue is IOracleRequestQueue {
     /// @notice Fee per source type in wei
     mapping(uint32 => uint256) private _fees;
 
-    /// @notice Expiration duration per source type in seconds
+    /// @notice Expiration duration per source type in seconds (block.timestamp units, NOT microseconds)
     mapping(uint32 => uint64) private _expirationDurations;
 
     /// @notice Treasury address for fee collection
@@ -104,27 +117,34 @@ contract OracleRequestQueue is IOracleRequestQueue {
             revert InsufficientFee(requiredFee, msg.value);
         }
 
-        // Calculate expiration
+        // Calculate expiration (using block.timestamp in seconds, NOT microseconds)
         uint64 duration = _expirationDurations[sourceType];
         uint64 expiresAt = uint64(block.timestamp) + duration;
 
         // Assign request ID
         requestId = _nextRequestId++;
 
-        // Store request
+        // Store request (only the required fee, not the full msg.value)
         _requests[requestId] = OracleRequest({
             sourceType: sourceType,
             sourceId: sourceId,
             requester: msg.sender,
             requestData: requestData,
-            fee: msg.value,
+            fee: requiredFee,
             requestedAt: uint64(block.timestamp),
             expiresAt: expiresAt,
             fulfilled: false,
             refunded: false
         });
 
-        emit RequestSubmitted(requestId, sourceType, sourceId, msg.sender, requestData, msg.value, expiresAt);
+        // Refund excess fee to sender
+        uint256 excess = msg.value - requiredFee;
+        if (excess > 0) {
+            (bool success,) = msg.sender.call{ value: excess }("");
+            if (!success) revert TransferFailed();
+        }
+
+        emit RequestSubmitted(requestId, sourceType, sourceId, msg.sender, requestData, requiredFee, expiresAt);
     }
 
     // ========================================================================
@@ -190,9 +210,10 @@ contract OracleRequestQueue is IOracleRequestQueue {
             revert AlreadyRefunded(requestId);
         }
 
-        // Validate expired
-        if (block.timestamp < req.expiresAt) {
-            revert NotExpired(requestId, req.expiresAt, uint64(block.timestamp));
+        // Validate expired (with grace period for fulfillment)
+        uint64 effectiveExpiration = req.expiresAt + FULFILLMENT_GRACE_PERIOD;
+        if (block.timestamp < effectiveExpiration) {
+            revert NotExpired(requestId, effectiveExpiration, uint64(block.timestamp));
         }
 
         // Mark as refunded (CEI pattern)

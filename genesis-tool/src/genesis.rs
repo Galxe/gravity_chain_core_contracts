@@ -64,6 +64,10 @@ pub struct GenesisConfig {
     pub jwk_config: JWKInitParams,
 
     pub validators: Vec<InitialValidator>,
+
+    /// Lockup expiration timestamp for initial validator stake pools (microseconds)
+    #[serde(rename = "initialLockedUntilMicros")]
+    pub initial_locked_until_micros: u64,
 }
 
 fn default_chain_id() -> u64 {
@@ -122,6 +126,12 @@ pub struct GovernanceConfigParams {
 
     #[serde(rename = "votingDurationMicros")]
     pub voting_duration_micros: u64,
+
+    #[serde(rename = "executionDelayMicros")]
+    pub execution_delay_micros: u64,
+
+    #[serde(rename = "executionWindowMicros")]
+    pub execution_window_micros: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -188,6 +198,9 @@ pub struct BridgeConfig {
 
     #[serde(rename = "trustedBridge")]
     pub trusted_bridge: String, // address
+
+    #[serde(rename = "trustedSourceId", default)]
+    pub trusted_source_id: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -258,6 +271,8 @@ sol! {
         uint128 minVotingThreshold;
         uint256 requiredProposerStake;
         uint64 votingDurationMicros;
+        uint64 executionDelayMicros;
+        uint64 executionWindowMicros;
     }
 
     struct SolConfigV2Data {
@@ -281,6 +296,7 @@ sol! {
     struct SolBridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct SolOracleInitParams {
@@ -327,6 +343,7 @@ sol! {
         SolOracleInitParams oracleConfig;
         SolJWKInitParams jwkConfig;
         SolInitialValidator[] validators;
+        uint64 initialLockedUntilMicros;
     }
 
     contract Genesis {
@@ -397,6 +414,8 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         minVotingThreshold: parse_u128(&config.governance_config.min_voting_threshold),
         requiredProposerStake: parse_u256(&config.governance_config.required_proposer_stake),
         votingDurationMicros: config.governance_config.voting_duration_micros,
+        executionDelayMicros: config.governance_config.execution_delay_micros,
+        executionWindowMicros: config.governance_config.execution_window_micros,
     };
 
     // Convert RandomnessConfig
@@ -460,6 +479,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
             } else {
                 parse_address(&config.oracle_config.bridge_config.trusted_bridge)
             },
+            trustedSourceId: U256::from(config.oracle_config.bridge_config.trusted_source_id),
         },
     };
 
@@ -520,6 +540,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         oracleConfig: oracle_config,
         jwkConfig: jwk_config,
         validators,
+        initialLockedUntilMicros: config.initial_locked_until_micros,
     }
 }
 
