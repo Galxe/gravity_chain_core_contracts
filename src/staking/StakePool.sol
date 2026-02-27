@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IStakePool } from "./IStakePool.sol";
 import { IValidatorManagement } from "./IValidatorManagement.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { ReentrancyGuard } from "@openzeppelin/utils/ReentrancyGuard.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { ValidatorStatus } from "../foundation/Types.sol";
@@ -25,7 +26,7 @@ import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 ///      - withdrawAvailable() claims all pending where (now > lockedUntil + unbondingDelay)
 ///      - unstakeAndWithdraw() helper combines both operations
 ///      - Voting power = activeStake + effective pending (via O(log n) binary search)
-contract StakePool is IStakePool, Ownable2Step {
+contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ========================================================================
     // CONSTANTS
     // ========================================================================
@@ -302,7 +303,7 @@ contract StakePool is IStakePool, Ownable2Step {
     /// @inheritdoc IStakePool
     function withdrawAvailable(
         address recipient
-    ) external onlyStaker whenNotReconfiguring returns (uint256 amount) {
+    ) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 amount) {
         amount = _withdrawAvailable(recipient);
     }
 

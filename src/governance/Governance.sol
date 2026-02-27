@@ -66,6 +66,16 @@ contract Governance is IGovernance, Ownable2Step {
     }
 
     // ========================================================================
+    // OWNERSHIP OVERRIDES
+    // ========================================================================
+
+    /// @notice Prevent ownership renunciation
+    /// @dev Governance must always have an owner for executor management
+    function renounceOwnership() public pure override {
+        revert Errors.OperationNotSupported();
+    }
+
+    // ========================================================================
     // INTERNAL HELPERS
     // ========================================================================
 

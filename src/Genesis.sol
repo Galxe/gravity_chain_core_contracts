@@ -154,7 +154,8 @@ contract Genesis {
         _initializeOracles(params.oracleConfig, params.jwkConfig);
 
         // 3. Create Stake Pools & Prepare Validator Data
-        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(params.validators, params.initialLockedUntilMicros);
+        GenesisValidator[] memory genesisValidators =
+            _createPoolsAndValidators(params.validators, params.initialLockedUntilMicros);
 
         // 4. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);

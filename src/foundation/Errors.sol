@@ -383,9 +383,12 @@ library Errors {
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array
+    /// @param blockNumbersLength Length of blockNumbers array
     /// @param payloadsLength Length of payloads array
     /// @param gasLimitsLength Length of callbackGasLimits array
-    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+    error OracleBatchArrayLengthMismatch(
+        uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
+    );
 
     // ========================================================================
     // VERSION CONFIG ERRORS
@@ -482,5 +485,12 @@ library Errors {
     /// @param index The requested index
     /// @param count The total number of providers
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
+
+    // ========================================================================
+    // GENERAL ERRORS
+    // ========================================================================
+
+    /// @notice Operation is not supported
+    error OperationNotSupported();
 }
 

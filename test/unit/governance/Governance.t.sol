@@ -737,6 +737,16 @@ contract GovernanceTest is Test {
     }
 
     // ========================================================================
+    // OWNERSHIP OVERRIDE TESTS
+    // ========================================================================
+
+    function test_RevertWhen_RenounceOwnership() public {
+        vm.prank(owner);
+        vm.expectRevert(Errors.OperationNotSupported.selector);
+        governance.renounceOwnership();
+    }
+
+    // ========================================================================
     // EXECUTOR MANAGEMENT TESTS
     // ========================================================================
 

@@ -114,8 +114,10 @@ contract NativeOracle is INativeOracle {
         if (length == 0) return;
 
         // Validate array lengths match
-        if (length != payloads.length || length != callbackGasLimits.length) {
-            revert Errors.OracleBatchArrayLengthMismatch(length, payloads.length, callbackGasLimits.length);
+        if (length != blockNumbers.length || length != payloads.length || length != callbackGasLimits.length) {
+            revert Errors.OracleBatchArrayLengthMismatch(
+                length, blockNumbers.length, payloads.length, callbackGasLimits.length
+            );
         }
 
         // Record all data entries with individual nonce validation
