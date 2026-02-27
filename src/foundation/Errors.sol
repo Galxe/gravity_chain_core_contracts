@@ -326,6 +326,15 @@ library Errors {
     /// @notice Minimum bond must be greater than zero
     error InvalidMinimumBond();
 
+    /// @notice Minimum stake must be greater than zero
+    error InvalidMinimumStake();
+
+    /// @notice Minimum proposal stake must be greater than zero
+    error InvalidMinimumProposalStake();
+
+    /// @notice Staking config has not been initialized
+    error StakingConfigNotInitialized();
+
     /// @notice Voting power increase limit out of range (1-50)
     /// @param value The invalid value provided
     error InvalidVotingPowerIncreaseLimit(uint64 value);
