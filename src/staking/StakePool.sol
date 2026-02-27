@@ -322,8 +322,6 @@ contract StakePool is IStakePool, Ownable2Step {
     function renewLockUntil(
         uint64 durationMicros
     ) external onlyStaker whenNotReconfiguring {
-        // TODO(yxia): overlock protection check.
-
         // Check for overflow
         uint64 newLockedUntil = lockedUntil + durationMicros;
         if (newLockedUntil <= lockedUntil) {

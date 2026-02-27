@@ -88,6 +88,16 @@ interface IValidatorManagement {
     /// @param totalVotingPower Total voting power of genesis validators
     event ValidatorManagementInitialized(uint256 validatorCount, uint256 totalVotingPower);
 
+    /// @notice Emitted when a pending fee recipient change is applied at epoch boundary
+    /// @param stakePool Address of the validator's stake pool
+    /// @param oldRecipient Previous fee recipient address
+    /// @param newRecipient New fee recipient address
+    event FeeRecipientApplied(address indexed stakePool, address oldRecipient, address newRecipient);
+
+    /// @notice Emitted when a validator is reverted to inactive due to insufficient bond
+    /// @param stakePool Address of the validator's stake pool
+    event ValidatorRevertedInactive(address indexed stakePool);
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================

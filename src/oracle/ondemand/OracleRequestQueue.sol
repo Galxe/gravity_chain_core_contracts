@@ -13,6 +13,11 @@ import { Errors } from "../../foundation/Errors.sol";
 /// @dev Validators monitor this contract to fulfill requests.
 ///      Fees are held until fulfillment, then sent to treasury.
 ///      Unfulfilled requests can be refunded after expiration.
+///
+///      NOTE ON TIMESTAMPS: This contract intentionally uses `block.timestamp` (seconds) rather than
+///      the Gravity system's microsecond `Timestamp` contract. This is because on-demand oracle requests
+///      operate on EVM block boundaries, and expiration/grace periods are denominated in seconds.
+///      All timestamp fields (requestedAt, expiresAt, FULFILLMENT_GRACE_PERIOD) are in seconds.
 contract OracleRequestQueue is IOracleRequestQueue {
     // ========================================================================
     // ERRORS
@@ -55,7 +60,7 @@ contract OracleRequestQueue is IOracleRequestQueue {
     /// @notice Fee per source type in wei
     mapping(uint32 => uint256) private _fees;
 
-    /// @notice Expiration duration per source type in seconds
+    /// @notice Expiration duration per source type in seconds (block.timestamp units, NOT microseconds)
     mapping(uint32 => uint64) private _expirationDurations;
 
     /// @notice Treasury address for fee collection
@@ -104,7 +109,7 @@ contract OracleRequestQueue is IOracleRequestQueue {
             revert InsufficientFee(requiredFee, msg.value);
         }
 
-        // Calculate expiration
+        // Calculate expiration (using block.timestamp in seconds, NOT microseconds)
         uint64 duration = _expirationDurations[sourceType];
         uint64 expiresAt = uint64(block.timestamp) + duration;
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
+import { Errors } from "../foundation/Errors.sol";
 import { ITimestampWriter } from "../runtime/ITimestampWriter.sol";
 import { IReconfiguration } from "./IReconfiguration.sol";
 import { IValidatorPerformanceTracker } from "./IValidatorPerformanceTracker.sol";
@@ -56,7 +57,7 @@ contract Blocker {
         requireAllowed(SystemAddresses.GENESIS);
 
         if (_initialized) {
-            revert AlreadyInitialized();
+            revert Errors.AlreadyInitialized();
         }
 
         _initialized = true;
@@ -145,12 +146,4 @@ contract Blocker {
     function isInitialized() external view returns (bool) {
         return _initialized;
     }
-
-    // ========================================================================
-    // ERRORS
-    // ========================================================================
-
-    /// @notice Contract has already been initialized
-    error AlreadyInitialized();
 }
-

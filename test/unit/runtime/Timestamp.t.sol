@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { Test } from "forge-std/Test.sol";
+import { Test, Vm } from "forge-std/Test.sol";
 import { Timestamp } from "../../../src/runtime/Timestamp.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
@@ -223,16 +223,23 @@ contract TimestampTest is Test {
         timestamp.updateGlobalTime(PROPOSER, INITIAL_TIME);
     }
 
-    function test_Event_GlobalTimeUpdated_NilBlock() public {
+    function test_Event_GlobalTimeUpdated_NilBlock_NoEvent() public {
         // Set initial time
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(PROPOSER, INITIAL_TIME);
 
-        // NIL block should also emit event
+        // NIL block should NOT emit event (GCC-027: only emit when timestamp changes)
         vm.prank(SystemAddresses.BLOCK);
-        vm.expectEmit(true, false, false, true);
-        emit Timestamp.GlobalTimeUpdated(SystemAddresses.SYSTEM_CALLER, INITIAL_TIME, INITIAL_TIME);
+        vm.recordLogs();
         timestamp.updateGlobalTime(SystemAddresses.SYSTEM_CALLER, INITIAL_TIME);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != keccak256("GlobalTimeUpdated(address,uint64,uint64)"),
+                "Should not emit GlobalTimeUpdated for NIL blocks"
+            );
+        }
     }
 
     function test_Event_GlobalTimeUpdated_Sequence() public {
