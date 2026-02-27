@@ -598,6 +598,14 @@ contract ValidatorManagement is IValidatorManagement {
         // Use min to avoid out-of-bounds if there's a mismatch.
         uint256 checkLen = activeLen < perfLen ? activeLen : perfLen;
 
+        // GCC-035: Initialize counter once and decrement per eviction instead of O(n) inner loop
+        uint256 remainingActive = 0;
+        for (uint256 i = 0; i < activeLen; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                remainingActive++;
+            }
+        }
+
         for (uint256 i = 0; i < checkLen; i++) {
             address pool = _activeValidators[i];
             ValidatorRecord storage validator = _validators[pool];
@@ -610,13 +618,6 @@ contract ValidatorManagement is IValidatorManagement {
             // Check if validator meets eviction criteria
             if (perfs[i].successfulProposals <= threshold) {
                 // Preserve liveness: never evict the last active validator
-                // Count remaining active validators (those not already pending inactive)
-                uint256 remainingActive = 0;
-                for (uint256 j = 0; j < activeLen; j++) {
-                    if (_validators[_activeValidators[j]].status == ValidatorStatus.ACTIVE) {
-                        remainingActive++;
-                    }
-                }
                 if (remainingActive <= 1) {
                     // Cannot evict the last active validator — would halt consensus
                     break;
@@ -625,6 +626,7 @@ contract ValidatorManagement is IValidatorManagement {
                 // Mark as PENDING_INACTIVE for processing by onNewEpoch()
                 validator.status = ValidatorStatus.PENDING_INACTIVE;
                 _pendingInactive.push(pool);
+                remainingActive--;
 
                 emit ValidatorAutoEvicted(pool, perfs[i].successfulProposals);
             }
@@ -815,9 +817,10 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Step 2: Count staying active validators (active minus pending_inactive)
+        // GCC-034: Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
         uint256 stayingActiveCount = 0;
         for (uint256 i = 0; i < activeLen; i++) {
-            if (!_isInPendingInactive(_activeValidators[i])) {
+            if (_validators[_activeValidators[i]].status != ValidatorStatus.PENDING_INACTIVE) {
                 stayingActiveCount++;
             }
         }
@@ -862,7 +865,7 @@ contract ValidatorManagement is IValidatorManagement {
         // Add staying active validators (excluding pending_inactive)
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
-            if (!_isInPendingInactive(pool)) {
+            if (_validators[pool].status != ValidatorStatus.PENDING_INACTIVE) {
                 ValidatorRecord storage validator = _validators[pool];
                 result.validators[idx] = ValidatorConsensusInfo({
                     validator: pool,

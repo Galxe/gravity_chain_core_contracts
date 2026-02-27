@@ -311,8 +311,8 @@ contract StakingConfigTest is Test {
         uint64 unbondingDelay,
         uint256 minProposalStake
     ) public {
-        vm.assume(lockupDuration > 0);
-        vm.assume(unbondingDelay > 0);
+        vm.assume(lockupDuration > 0 && lockupDuration <= config.MAX_LOCKUP_DURATION());
+        vm.assume(unbondingDelay > 0 && unbondingDelay <= config.MAX_UNBONDING_DELAY());
 
         vm.prank(SystemAddresses.GENESIS);
         config.initialize(minStake, lockupDuration, unbondingDelay, minProposalStake);
@@ -337,7 +337,7 @@ contract StakingConfigTest is Test {
     function testFuzz_SetLockupDurationMicros(
         uint64 newValue
     ) public {
-        vm.assume(newValue > 0);
+        vm.assume(newValue > 0 && newValue <= config.MAX_LOCKUP_DURATION());
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
@@ -349,7 +349,7 @@ contract StakingConfigTest is Test {
     function testFuzz_SetUnbondingDelayMicros(
         uint64 newValue
     ) public {
-        vm.assume(newValue > 0);
+        vm.assume(newValue > 0 && newValue <= config.MAX_UNBONDING_DELAY());
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
@@ -367,6 +367,26 @@ contract StakingConfigTest is Test {
         config.setMinimumProposalStake(newValue);
 
         assertEq(config.minimumProposalStake(), newValue);
+    }
+
+    // ========================================================================
+    // EXCESSIVE DURATION TESTS
+    // ========================================================================
+
+    function test_RevertWhen_Initialize_ExcessiveLockupDuration() public {
+        uint64 maxLockup = config.MAX_LOCKUP_DURATION();
+        uint64 excessiveLockup = maxLockup + 1;
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveLockup, maxLockup));
+        config.initialize(MIN_STAKE, excessiveLockup, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
+    }
+
+    function test_RevertWhen_Initialize_ExcessiveUnbondingDelay() public {
+        uint64 maxUnbonding = config.MAX_UNBONDING_DELAY();
+        uint64 excessiveUnbonding = maxUnbonding + 1;
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveUnbonding, maxUnbonding));
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, excessiveUnbonding, MIN_PROPOSAL_STAKE);
     }
 
     // ========================================================================

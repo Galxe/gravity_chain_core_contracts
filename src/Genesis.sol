@@ -108,6 +108,8 @@ contract Genesis {
         OracleInitParams oracleConfig;
         JWKInitParams jwkConfig;
         InitialValidator[] validators;
+        /// @notice Lockup expiration timestamp for initial validator stake pools (microseconds)
+        uint64 initialLockedUntilMicros;
     }
 
     // ========================================================================
@@ -152,7 +154,8 @@ contract Genesis {
         _initializeOracles(params.oracleConfig, params.jwkConfig);
 
         // 3. Create Stake Pools & Prepare Validator Data
-        GenesisValidator[] memory genesisValidators = _createPoolsAndValidators(params.validators);
+        GenesisValidator[] memory genesisValidators =
+            _createPoolsAndValidators(params.validators, params.initialLockedUntilMicros);
 
         // 4. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);
@@ -260,28 +263,11 @@ contract Genesis {
     }
 
     function _createPoolsAndValidators(
-        InitialValidator[] calldata validators
+        InitialValidator[] calldata validators,
+        uint64 initialLockedUntilMicros
     ) internal returns (GenesisValidator[] memory) {
         uint256 len = validators.length;
         GenesisValidator[] memory genesisValidators = new GenesisValidator[](len);
-
-        uint64 lockupDuration = StakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros();
-        // Initial lockedUntil implies genesis timestamp is 0 or handled by Staking contract?
-        // Staking.createPool takes lockedUntil.
-        // We assume genesis timestamp is effectively 0 (or whatever block.timestamp is).
-        // Since we are at genesis, we should probably set lockedUntil based on current block timestamp + duration.
-        // However, Blocker initializes timestamp to 0.
-        // We'll use block.timestamp which should be the genesis block time.
-        // Note: Blocker.initialize logic calls updateGlobalTime(0, 0).
-        // But Staking.createPool uses Timestamp contract? No, it takes lockedUntil as arg.
-        // We can just use a fixed offset?
-        // Actually, we should probably rely on the implementation details.
-        // Let's use 0 + lockupDuration for simplicity as this effectively starts from time 0.
-        // Or better, query Timestamp? Timestamp is not initialized yet (Blocker init comes last).
-        // So we assume genesis time is 0.
-        // lockedUntil must be in the future relative to block.timestamp
-        // 2027-01-01 00:00:00 UTC = 1798761600 seconds
-        uint64 initialLockedUntil = uint64(1798761600 * 1_000_000) + lockupDuration;
 
         for (uint256 i; i < len;) {
             InitialValidator calldata v = validators[i];
@@ -300,7 +286,7 @@ contract Genesis {
                 v.owner, // staker (initially same as owner)
                 v.operator, // operator
                 v.owner, // voter (initially same as owner)
-                initialLockedUntil
+                initialLockedUntilMicros
             );
 
             // Construct GenesisValidator struct

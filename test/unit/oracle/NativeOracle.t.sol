@@ -237,7 +237,7 @@ contract NativeOracleTest is Test {
         payloads[0] = abi.encode("event0");
         payloads[1] = abi.encode("event1");
 
-        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 2, 3));
+        vm.expectRevert(abi.encodeWithSelector(Errors.OracleBatchArrayLengthMismatch.selector, 3, 3, 2, 3));
         vm.prank(systemCaller);
         oracle.recordBatch(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, nonces, blockNumbers, payloads, gasLimits);
     }

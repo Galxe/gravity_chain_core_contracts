@@ -116,20 +116,27 @@ contract OracleRequestQueue is IOracleRequestQueue {
         // Assign request ID
         requestId = _nextRequestId++;
 
-        // Store request
+        // Store request (only the required fee, not the full msg.value)
         _requests[requestId] = OracleRequest({
             sourceType: sourceType,
             sourceId: sourceId,
             requester: msg.sender,
             requestData: requestData,
-            fee: msg.value,
+            fee: requiredFee,
             requestedAt: uint64(block.timestamp),
             expiresAt: expiresAt,
             fulfilled: false,
             refunded: false
         });
 
-        emit RequestSubmitted(requestId, sourceType, sourceId, msg.sender, requestData, msg.value, expiresAt);
+        // Refund excess fee to sender
+        uint256 excess = msg.value - requiredFee;
+        if (excess > 0) {
+            (bool success,) = msg.sender.call{ value: excess }("");
+            if (!success) revert TransferFailed();
+        }
+
+        emit RequestSubmitted(requestId, sourceType, sourceId, msg.sender, requestData, requiredFee, expiresAt);
     }
 
     // ========================================================================

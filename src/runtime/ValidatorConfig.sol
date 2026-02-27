@@ -22,6 +22,9 @@ contract ValidatorConfig {
     /// @notice Maximum allowed validator set size
     uint256 public constant MAX_VALIDATOR_SET_SIZE = 65536;
 
+    /// @notice Maximum unbonding delay: 1 year in microseconds
+    uint64 public constant MAX_UNBONDING_DELAY = uint64(365 days) * 1_000_000;
+
     // ========================================================================
     // TYPES
     // ========================================================================
@@ -267,6 +270,9 @@ contract ValidatorConfig {
             revert Errors.InvalidUnbondingDelay();
         }
 
+        if (_unbondingDelayMicros > MAX_UNBONDING_DELAY) {
+            revert Errors.ExcessiveDuration(_unbondingDelayMicros, MAX_UNBONDING_DELAY);
+        }
         if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) {
             revert Errors.InvalidVotingPowerIncreaseLimit(_votingPowerIncreaseLimitPct);
         }

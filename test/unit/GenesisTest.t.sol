@@ -109,6 +109,9 @@ contract GenesisTest is Test {
         });
         params.validators = validators;
 
+        // Initial lockup expiration for genesis validators (microseconds)
+        params.initialLockedUntilMicros = 1798848000000000; // ~2027-01-01 in microseconds
+
         // Oracle Config
         uint32[] memory sourceTypes = new uint32[](1);
         sourceTypes[0] = 1;

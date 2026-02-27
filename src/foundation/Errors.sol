@@ -94,6 +94,11 @@ library Errors {
     /// @param maximum Maximum allowed duration (microseconds)
     error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
 
+    /// @notice Duration exceeds the maximum allowed value
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveDuration(uint64 provided, uint64 maximum);
+
     /// @notice LockedUntil decreased unexpectedly (should never happen in normal operation)
     /// @param current Current lockedUntil
     /// @param proposed Proposed lockedUntil that is lower
@@ -378,9 +383,12 @@ library Errors {
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array
+    /// @param blockNumbersLength Length of blockNumbers array
     /// @param payloadsLength Length of payloads array
     /// @param gasLimitsLength Length of callbackGasLimits array
-    error OracleBatchArrayLengthMismatch(uint256 noncesLength, uint256 payloadsLength, uint256 gasLimitsLength);
+    error OracleBatchArrayLengthMismatch(
+        uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
+    );
 
     // ========================================================================
     // VERSION CONFIG ERRORS
@@ -477,5 +485,12 @@ library Errors {
     /// @param index The requested index
     /// @param count The total number of providers
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
+
+    // ========================================================================
+    // GENERAL ERRORS
+    // ========================================================================
+
+    /// @notice Operation is not supported
+    error OperationNotSupported();
 }
 
