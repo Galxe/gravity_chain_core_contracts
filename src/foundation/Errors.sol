@@ -175,6 +175,9 @@ library Errors {
     /// @notice Consensus public key proof-of-possession verification failed
     error InvalidConsensusPopVerification();
 
+    /// @notice Consensus proof-of-possession is empty
+    error InvalidConsensusPopLength();
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================
