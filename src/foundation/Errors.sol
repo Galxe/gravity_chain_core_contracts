@@ -52,6 +52,9 @@ library Errors {
     /// @notice Amount cannot be zero
     error ZeroAmount();
 
+    /// @notice Address cannot be zero
+    error ZeroAddress();
+
     /// @notice Staker has no stake position (legacy, kept for compatibility)
     /// @param staker Address that has no stake
     error NoStakePosition(address staker);
@@ -85,6 +88,11 @@ library Errors {
 
     /// @notice Native token transfer failed
     error TransferFailed();
+
+    /// @notice Lockup duration exceeds the maximum allowed value
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
 
     /// @notice LockedUntil decreased unexpectedly (should never happen in normal operation)
     /// @param current Current lockedUntil

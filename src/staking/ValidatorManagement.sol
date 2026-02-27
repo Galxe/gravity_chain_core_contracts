@@ -239,6 +239,11 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) external {
+        // GCC-041: Check that validator set changes are allowed
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            revert Errors.ValidatorSetChangesDisabled();
+        }
+
         // Validate inputs and get required data
         _validateRegistration(stakePool, moniker);
 

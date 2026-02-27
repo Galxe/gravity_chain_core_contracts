@@ -250,6 +250,25 @@ contract ValidatorManagementTest is Test {
         );
     }
 
+    /// @notice Test revert when validator set changes are disabled (GCC-041)
+    function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
+        // Disable validator set changes via pending pattern
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
     // ========================================================================
     // JOIN VALIDATOR SET TESTS
     // ========================================================================
