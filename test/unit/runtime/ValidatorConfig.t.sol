@@ -353,7 +353,7 @@ contract ValidatorConfigTest is Test {
         // Bound inputs to valid ranges
         minBond = bound(minBond, 1, type(uint128).max);
         maxBond = bound(maxBond, minBond, type(uint128).max);
-        vm.assume(unbondingDelay > 0);
+        unbondingDelay = uint64(bound(unbondingDelay, 1, config.MAX_UNBONDING_DELAY()));
         votingPowerLimit = uint64(bound(votingPowerLimit, 1, 50));
         maxValidators = bound(maxValidators, 1, 65536);
 
@@ -381,7 +381,7 @@ contract ValidatorConfigTest is Test {
         // Bound inputs to valid ranges
         minBond = bound(minBond, 1, type(uint128).max);
         maxBond = bound(maxBond, minBond, type(uint128).max);
-        vm.assume(unbondingDelay > 0);
+        unbondingDelay = uint64(bound(unbondingDelay, 1, config.MAX_UNBONDING_DELAY()));
         votingPowerLimit = uint64(bound(votingPowerLimit, 1, 50));
         maxValidators = bound(maxValidators, 1, 65536);
 
@@ -402,6 +402,16 @@ contract ValidatorConfigTest is Test {
         assertEq(config.votingPowerIncreaseLimitPct(), votingPowerLimit);
         assertEq(config.maxValidatorSetSize(), maxValidators);
         assertFalse(config.hasPendingConfig());
+    }
+
+    function test_RevertWhen_Initialize_ExcessiveUnbondingDelay() public {
+        uint64 maxUnbonding = config.MAX_UNBONDING_DELAY();
+        uint64 excessiveUnbonding = maxUnbonding + 1;
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveUnbonding, maxUnbonding));
+        config.initialize(
+            MIN_BOND, MAX_BOND, excessiveUnbonding, ALLOW_CHANGES, VOTING_POWER_LIMIT, MAX_VALIDATORS, false, 0
+        );
     }
 
     // ========================================================================

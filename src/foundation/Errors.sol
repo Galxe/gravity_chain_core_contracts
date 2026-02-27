@@ -94,6 +94,11 @@ library Errors {
     /// @param maximum Maximum allowed duration (microseconds)
     error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
 
+    /// @notice Duration exceeds the maximum allowed value
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error ExcessiveDuration(uint64 provided, uint64 maximum);
+
     /// @notice LockedUntil decreased unexpectedly (should never happen in normal operation)
     /// @param current Current lockedUntil
     /// @param proposed Proposed lockedUntil that is lower

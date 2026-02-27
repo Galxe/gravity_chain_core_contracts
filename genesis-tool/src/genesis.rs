@@ -64,6 +64,10 @@ pub struct GenesisConfig {
     pub jwk_config: JWKInitParams,
 
     pub validators: Vec<InitialValidator>,
+
+    /// Lockup expiration timestamp for initial validator stake pools (microseconds)
+    #[serde(rename = "initialLockedUntilMicros")]
+    pub initial_locked_until_micros: u64,
 }
 
 fn default_chain_id() -> u64 {
@@ -327,6 +331,7 @@ sol! {
         SolOracleInitParams oracleConfig;
         SolJWKInitParams jwkConfig;
         SolInitialValidator[] validators;
+        uint64 initialLockedUntilMicros;
     }
 
     contract Genesis {
@@ -520,6 +525,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         oracleConfig: oracle_config,
         jwkConfig: jwk_config,
         validators,
+        initialLockedUntilMicros: config.initial_locked_until_micros,
     }
 }
 
