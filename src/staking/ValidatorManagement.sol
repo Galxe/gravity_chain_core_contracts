@@ -677,6 +677,7 @@ contract ValidatorManagement is IValidatorManagement {
     ) internal {
         for (uint256 i = 0; i < count; i++) {
             _validators[validators[i]].status = ValidatorStatus.INACTIVE;
+            emit ValidatorRevertedInactive(validators[i]);
         }
     }
 
@@ -728,10 +729,13 @@ contract ValidatorManagement is IValidatorManagement {
     function _applyPendingFeeRecipients() internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
-            ValidatorRecord storage validator = _validators[_activeValidators[i]];
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
             if (validator.pendingFeeRecipient != address(0)) {
+                address oldRecipient = validator.feeRecipient;
                 validator.feeRecipient = validator.pendingFeeRecipient;
                 validator.pendingFeeRecipient = address(0);
+                emit FeeRecipientApplied(pool, oldRecipient, validator.feeRecipient);
             }
         }
     }

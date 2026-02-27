@@ -77,15 +77,15 @@ contract Timestamp is ITimestamp, ITimestampWriter {
             if (timestamp != current) {
                 revert Errors.TimestampMustEqual(timestamp, current);
             }
+            // No state change for NIL blocks, skip event emission
         } else {
             // Normal block: time must advance
             if (timestamp <= current) {
                 revert Errors.TimestampMustAdvance(timestamp, current);
             }
             microseconds = timestamp;
+            emit GlobalTimeUpdated(proposer, current, timestamp);
         }
-
-        emit GlobalTimeUpdated(proposer, current, timestamp);
     }
 }
 
