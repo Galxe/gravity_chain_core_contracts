@@ -125,42 +125,66 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 totalPower = 0;
 
         for (uint256 i = 0; i < length; i++) {
-            GenesisValidator calldata v = validators[i];
-
-            // Validate moniker length
-            if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
-                revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
-            }
-
-            // Create validator record
-            ValidatorRecord storage record = _validators[v.stakePool];
-            record.validator = v.stakePool;
-            record.moniker = v.moniker;
-            record.stakingPool = v.stakePool;
-            record.status = ValidatorStatus.ACTIVE;
-            record.bond = v.votingPower;
-            record.consensusPubkey = v.consensusPubkey;
-            record.consensusPop = v.consensusPop;
-
-            // Register pubkey in the mapping
-            _pubkeyToValidator[keccak256(v.consensusPubkey)] = v.stakePool;
-            record.networkAddresses = v.networkAddresses;
-            record.fullnodeAddresses = v.fullnodeAddresses;
-            record.feeRecipient = v.feeRecipient;
-            record.validatorIndex = uint64(i);
-
-            // Add to active validators
-            _activeValidators.push(v.stakePool);
-            totalPower += v.votingPower;
-
-            emit ValidatorRegistered(v.stakePool, v.moniker);
-            emit ValidatorActivated(v.stakePool, uint64(i), v.votingPower);
+            totalPower += _initializeGenesisValidator(validators[i], uint64(i));
         }
 
         totalVotingPower = totalPower;
         _initialized = true;
 
         emit ValidatorManagementInitialized(length, totalPower);
+    }
+
+    /// @notice Initialize a single genesis validator record
+    /// @dev Extracted to avoid stack-too-deep in initialize() loop.
+    ///      NOTE: Full BLS proof-of-possession verification via the precompile is intentionally
+    ///      skipped during genesis because the precompile may not be available in the genesis
+    ///      execution environment. Genesis validator keys are trusted as they come from the
+    ///      genesis configuration managed by chain operators. Post-genesis registration
+    ///      via registerValidator() performs full PoP verification.
+    /// @param v The genesis validator data
+    /// @param index The validator index in the active set
+    /// @return votingPower The validator's voting power
+    function _initializeGenesisValidator(
+        GenesisValidator calldata v,
+        uint64 index
+    ) internal returns (uint256 votingPower) {
+        // Validate moniker length
+        if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) {
+            revert Errors.MonikerTooLong(MAX_MONIKER_LENGTH, bytes(v.moniker).length);
+        }
+
+        // Validate consensus key length (PoP precompile not available at genesis)
+        if (v.consensusPubkey.length != BLS12381_PUBKEY_LENGTH) {
+            revert Errors.InvalidConsensusPubkeyLength(BLS12381_PUBKEY_LENGTH, v.consensusPubkey.length);
+        }
+        if (v.consensusPop.length == 0) {
+            revert Errors.InvalidConsensusPopLength();
+        }
+
+        // Create validator record
+        ValidatorRecord storage record = _validators[v.stakePool];
+        record.validator = v.stakePool;
+        record.moniker = v.moniker;
+        record.stakingPool = v.stakePool;
+        record.status = ValidatorStatus.ACTIVE;
+        record.bond = v.votingPower;
+        record.consensusPubkey = v.consensusPubkey;
+        record.consensusPop = v.consensusPop;
+
+        // Register pubkey in the mapping
+        _pubkeyToValidator[keccak256(v.consensusPubkey)] = v.stakePool;
+        record.networkAddresses = v.networkAddresses;
+        record.fullnodeAddresses = v.fullnodeAddresses;
+        record.feeRecipient = v.feeRecipient;
+        record.validatorIndex = index;
+
+        // Add to active validators
+        _activeValidators.push(v.stakePool);
+
+        emit ValidatorRegistered(v.stakePool, v.moniker);
+        emit ValidatorActivated(v.stakePool, index, v.votingPower);
+
+        return v.votingPower;
     }
 
     /// @inheritdoc IValidatorManagement
@@ -215,6 +239,11 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) external {
+        // GCC-041: Check that validator set changes are allowed
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            revert Errors.ValidatorSetChangesDisabled();
+        }
+
         // Validate inputs and get required data
         _validateRegistration(stakePool, moniker);
 

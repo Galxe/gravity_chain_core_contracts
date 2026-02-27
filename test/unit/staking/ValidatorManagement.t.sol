@@ -250,6 +250,25 @@ contract ValidatorManagementTest is Test {
         );
     }
 
+    /// @notice Test revert when validator set changes are disabled (GCC-041)
+    function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
+        // Disable validator set changes via pending pattern
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ValidatorSetChangesDisabled.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
     // ========================================================================
     // JOIN VALIDATOR SET TESTS
     // ========================================================================
@@ -1850,6 +1869,96 @@ contract ValidatorManagementTest is Test {
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.MonikerTooLong.selector, 31, 32));
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when consensus pubkey has invalid length (too short)
+    function test_RevertWhen_initialize_invalidConsensusPubkeyLength_tooShort() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: hex"1234", // Only 2 bytes, expected 48
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConsensusPubkeyLength.selector, 48, 2));
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when consensus pubkey has invalid length (too long)
+    function test_RevertWhen_initialize_invalidConsensusPubkeyLength_tooLong() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        // 49 bytes (one more than expected 48)
+        bytes memory longPubkey = new bytes(49);
+        for (uint256 i = 0; i < 49; i++) {
+            longPubkey[i] = 0xAB;
+        }
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: longPubkey,
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConsensusPubkeyLength.selector, 48, 49));
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when consensus pubkey is empty
+    function test_RevertWhen_initialize_emptyConsensusPubkey() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: hex"", // Empty
+            consensusPop: CONSENSUS_POP,
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidConsensusPubkeyLength.selector, 48, 0));
+        freshManager.initialize(genesisValidators);
+    }
+
+    /// @notice Test revert when consensus PoP is empty
+    function test_RevertWhen_initialize_emptyConsensusPop() public {
+        ValidatorManagement freshManager = new ValidatorManagement();
+
+        GenesisValidator[] memory genesisValidators = new GenesisValidator[](1);
+        genesisValidators[0] = GenesisValidator({
+            stakePool: alice,
+            moniker: "genesis-alice",
+            consensusPubkey: CONSENSUS_PUBKEY,
+            consensusPop: hex"", // Empty PoP
+            networkAddresses: NETWORK_ADDRESSES,
+            fullnodeAddresses: FULLNODE_ADDRESSES,
+            feeRecipient: alice,
+            votingPower: 100 ether
+        });
+
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.InvalidConsensusPopLength.selector);
         freshManager.initialize(genesisValidators);
     }
 

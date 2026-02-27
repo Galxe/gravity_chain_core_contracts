@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IGBridgeReceiver, INativeMintPrecompile } from "./IGBridgeReceiver.sol";
 import { BlockchainEventHandler } from "../BlockchainEventHandler.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title GBridgeReceiver
 /// @author Gravity Team
@@ -35,6 +36,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     constructor(
         address trustedBridge_
     ) {
+        if (trustedBridge_ == address(0)) revert Errors.ZeroAddress();
         trustedBridge = trustedBridge_;
     }
 
