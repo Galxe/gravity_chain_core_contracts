@@ -248,10 +248,10 @@ contract NativeOracle is INativeOracle {
     // ========================================================================
 
     /// @notice Update nonce for a source
-    /// @dev Validates that nonce is strictly increasing (and >= 1 for first record)
+    /// @dev Validates that nonce is sequential (currentNonce defaults to 0, so first nonce must be 1)
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param nonce The new nonce (must be > current nonce)
+    /// @param nonce The new nonce (must be currentNonce + 1)
     function _updateNonce(
         uint32 sourceType,
         uint256 sourceId,
@@ -259,9 +259,9 @@ contract NativeOracle is INativeOracle {
     ) internal {
         uint128 currentNonce = _nonces[sourceType][sourceId];
 
-        // Nonce must be strictly increasing (currentNonce defaults to 0, so first nonce must be >= 1)
-        if (nonce <= currentNonce) {
-            revert Errors.NonceNotIncreasing(sourceType, sourceId, currentNonce, nonce);
+        // Nonce must be sequential (currentNonce defaults to 0, so first nonce must be 1)
+        if (nonce != currentNonce + 1) {
+            revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);
         }
 
         _nonces[sourceType][sourceId] = nonce;

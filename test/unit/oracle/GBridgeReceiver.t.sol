@@ -53,7 +53,7 @@ contract GBridgeReceiverTest is Test {
         vm.mockCall(SystemAddresses.NATIVE_MINT_PRECOMPILE, emptyData, successReturn);
 
         // Deploy receiver with trusted bridge
-        receiver = new GBridgeReceiver(trustedBridge);
+        receiver = new GBridgeReceiver(trustedBridge, ETHEREUM_SOURCE_ID);
     }
 
     // ========================================================================
@@ -81,7 +81,7 @@ contract GBridgeReceiverTest is Test {
 
     function test_Constructor_RevertWhenZeroTrustedBridge() public {
         vm.expectRevert(Errors.ZeroAddress.selector);
-        new GBridgeReceiver(address(0));
+        new GBridgeReceiver(address(0), ETHEREUM_SOURCE_ID);
     }
 
     // ========================================================================

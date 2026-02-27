@@ -393,13 +393,13 @@ library Errors {
     // NATIVE ORACLE ERRORS
     // ========================================================================
 
-    /// @notice Nonce must be strictly increasing for each source
-    /// @dev For the first record, latestNonce is 0, so nonce must be >= 1
+    /// @notice Nonce must be sequential for each source (no gaps allowed)
+    /// @dev For the first record, latestNonce is 0, so nonce must be 1
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param currentNonce The current nonce for this source
-    /// @param providedNonce The provided nonce that is not greater
-    error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
+    /// @param expectedNonce The expected next nonce (currentNonce + 1)
+    /// @param providedNonce The provided nonce that doesn't match expected
+    error NonceNotSequential(uint32 sourceType, uint256 sourceId, uint128 expectedNonce, uint128 providedNonce);
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array

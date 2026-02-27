@@ -559,16 +559,15 @@ contract JWKManagerTest is Test {
     // ========================================================================
 
     function testFuzz_RecordJWKs(
-        uint64 version,
-        uint128 nonce
+        uint64 version
     ) public {
         vm.assume(version > 0);
-        vm.assume(nonce > 0);
 
         IJWKManager.RSA_JWK[] memory jwks = new IJWKManager.RSA_JWK[](1);
         jwks[0] = _createSampleJWK("key1");
 
-        _recordJWK(GOOGLE_ISSUER, version, jwks, nonce);
+        // Sequential nonce: first record must use nonce 1
+        _recordJWK(GOOGLE_ISSUER, version, jwks, 1);
 
         assertTrue(jwkManager.hasJWK(GOOGLE_ISSUER, "key1"));
     }

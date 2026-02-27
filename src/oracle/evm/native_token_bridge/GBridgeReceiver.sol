@@ -20,6 +20,9 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     /// @dev Only messages from this sender are processed
     address public immutable trustedBridge;
 
+    /// @notice Trusted source chain ID (e.g., Ethereum mainnet = 1)
+    uint256 public immutable trustedSourceId;
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -33,11 +36,14 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
 
     /// @notice Deploy the GBridgeReceiver
     /// @param trustedBridge_ The trusted GBridgeSender address on Ethereum
+    /// @param trustedSourceId_ The trusted source chain ID (e.g., 1 for Ethereum mainnet)
     constructor(
-        address trustedBridge_
+        address trustedBridge_,
+        uint256 trustedSourceId_
     ) {
         if (trustedBridge_ == address(0)) revert Errors.ZeroAddress();
         trustedBridge = trustedBridge_;
+        trustedSourceId = trustedSourceId_;
     }
 
     // ========================================================================
@@ -47,7 +53,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     /// @notice Handle a parsed portal message from BlockchainEventHandler
     /// @dev Called after BlockchainEventHandler parses the oracle payload
     /// @param sourceType The source type from NativeOracle (unused, for future extensibility)
-    /// @param sourceId The source identifier (chain ID, unused)
+    /// @param sourceId The source identifier (chain ID, validated against trustedSourceId)
     /// @param oracleNonce The oracle nonce for this record (unused)
     /// @param sender The sender address on Ethereum (must be trusted bridge)
     /// @param messageNonce The message nonce from the source chain
@@ -62,7 +68,12 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         bytes memory message
     ) internal override returns (bool shouldStore) {
         // Silence unused variable warnings - these are for future extensibility
-        (sourceType, sourceId, oracleNonce);
+        (sourceType, oracleNonce);
+
+        // Verify source chain ID
+        if (sourceId != trustedSourceId) {
+            revert InvalidSourceChain(sourceId, trustedSourceId);
+        }
 
         // Verify sender is the trusted bridge (defense in depth)
         if (sender != trustedBridge) {

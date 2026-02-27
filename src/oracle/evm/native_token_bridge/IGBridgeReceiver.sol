@@ -36,6 +36,11 @@ interface IGBridgeReceiver {
     /// @param amount The amount that failed to mint
     error MintFailed(address recipient, uint256 amount);
 
+    /// @notice Source chain ID does not match trusted source
+    /// @param provided The provided source chain ID
+    /// @param expected The expected trusted source chain ID
+    error InvalidSourceChain(uint256 provided, uint256 expected);
+
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
@@ -50,6 +55,10 @@ interface IGBridgeReceiver {
     /// @notice Get the trusted bridge address on Ethereum
     /// @return The trusted GBridgeSender address
     function trustedBridge() external view returns (address);
+
+    /// @notice Get the trusted source chain ID
+    /// @return The trusted source chain ID
+    function trustedSourceId() external view returns (uint256);
 }
 
 /// @title INativeMintPrecompile

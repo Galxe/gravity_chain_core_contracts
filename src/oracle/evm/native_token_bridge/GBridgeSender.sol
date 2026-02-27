@@ -26,6 +26,12 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     /// @notice The GravityPortal contract
     address public immutable gravityPortal;
 
+    /// @notice Timestamp after which emergency withdrawal is allowed
+    uint256 public emergencyUnlockTime;
+
+    /// @notice Timelock duration for emergency withdrawal (7 days)
+    uint256 public constant EMERGENCY_TIMELOCK = 7 days;
+
     // ========================================================================
     // CONSTRUCTOR
     // ========================================================================
@@ -97,6 +103,34 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
         messageNonce = IGravityPortal(gravityPortal).send{ value: msg.value }(message);
 
         emit TokensLocked(msg.sender, recipient, amount, messageNonce);
+    }
+
+    // ========================================================================
+    // EMERGENCY FUNCTIONS (Owner Only)
+    // ========================================================================
+
+    /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
+    /// @dev Only callable by contract owner
+    function initiateEmergencyWithdraw() external onlyOwner {
+        emergencyUnlockTime = block.timestamp + EMERGENCY_TIMELOCK;
+        emit EmergencyWithdrawInitiated(emergencyUnlockTime);
+    }
+
+    /// @notice Execute emergency withdrawal after timelock expires
+    /// @dev Only callable by contract owner after timelock period
+    /// @param recipient Address to receive the tokens
+    /// @param amount Amount of G tokens to withdraw
+    function emergencyWithdraw(
+        address recipient,
+        uint256 amount
+    ) external onlyOwner {
+        if (emergencyUnlockTime == 0) revert EmergencyNotInitiated();
+        if (block.timestamp < emergencyUnlockTime) revert EmergencyTimelockNotExpired(emergencyUnlockTime);
+        if (recipient == address(0)) revert ZeroRecipient();
+
+        emergencyUnlockTime = 0;
+        IERC20(gToken).safeTransfer(recipient, amount);
+        emit EmergencyWithdraw(recipient, amount);
     }
 
     // ========================================================================
