@@ -75,6 +75,18 @@ contract GovernanceConfigTest is Test {
         config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
     }
 
+    function test_RevertWhen_InitializeZeroVotingThreshold() public {
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.InvalidVotingThreshold.selector);
+        config.initialize(0, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+    }
+
+    function test_RevertWhen_InitializeZeroProposerStake() public {
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.InvalidProposerStake.selector);
+        config.initialize(MIN_VOTING_THRESHOLD, 0, VOTING_DURATION_MICROS);
+    }
+
     // ========================================================================
     // SETTER TESTS - setForNextEpoch
     // ========================================================================
@@ -106,6 +118,22 @@ contract GovernanceConfigTest is Test {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert(Errors.InvalidVotingDuration.selector);
         config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
+    }
+
+    function test_RevertWhen_SetForNextEpoch_ZeroVotingThreshold() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidVotingThreshold.selector);
+        config.setForNextEpoch(0, REQUIRED_PROPOSER_STAKE, VOTING_DURATION_MICROS);
+    }
+
+    function test_RevertWhen_SetForNextEpoch_ZeroProposerStake() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidProposerStake.selector);
+        config.setForNextEpoch(MIN_VOTING_THRESHOLD, 0, VOTING_DURATION_MICROS);
     }
 
     function test_RevertWhen_SetForNextEpoch_NotInitialized() public {
@@ -235,6 +263,8 @@ contract GovernanceConfigTest is Test {
         uint256 requiredProposerStake,
         uint64 votingDurationMicros
     ) public {
+        vm.assume(minVotingThreshold > 0);
+        vm.assume(requiredProposerStake > 0);
         vm.assume(votingDurationMicros > 0);
 
         vm.prank(SystemAddresses.GENESIS);
@@ -252,6 +282,8 @@ contract GovernanceConfigTest is Test {
     ) public {
         _initializeConfig();
 
+        vm.assume(minVotingThreshold > 0);
+        vm.assume(requiredProposerStake > 0);
         vm.assume(votingDurationMicros > 0);
 
         vm.prank(SystemAddresses.GOVERNANCE);

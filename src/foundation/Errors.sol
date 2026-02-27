@@ -271,6 +271,12 @@ library Errors {
     /// @notice Voting duration must be greater than zero
     error InvalidVotingDuration();
 
+    /// @notice Minimum voting threshold must be greater than zero
+    error InvalidVotingThreshold();
+
+    /// @notice Required proposer stake must be greater than zero
+    error InvalidProposerStake();
+
     /// @notice Proposal execution failed
     /// @param proposalId ID of the proposal
     error ExecutionFailed(uint64 proposalId);
