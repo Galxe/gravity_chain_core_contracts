@@ -94,6 +94,11 @@ library Errors {
     /// @param maximum Maximum allowed duration (microseconds)
     error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
 
+    /// @notice Too many pending withdrawal buckets
+    /// @param current Current number of buckets
+    /// @param maximum Maximum allowed buckets
+    error TooManyPendingBuckets(uint256 current, uint256 maximum);
+
     /// @notice Duration exceeds the maximum allowed value
     /// @param provided Duration provided (microseconds)
     /// @param maximum Maximum allowed duration (microseconds)

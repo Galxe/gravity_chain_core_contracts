@@ -1584,9 +1584,9 @@ contract ValidatorManagementTest is Test {
         validatorManager.forceLeaveValidatorSet(pool1);
     }
 
-    /// @notice Test that governance CAN force remove the last active validator (unlike voluntary leave)
-    /// @dev This is an emergency capability - governance can force even the last validator to leave
-    function test_forceLeaveValidatorSet_canRemoveLastValidator() public {
+    /// @notice Test that governance CANNOT force remove the last active validator (GCC-015)
+    /// @dev Prevents consensus halt; both voluntary and governance force leave are blocked
+    function test_forceLeaveValidatorSet_cannotRemoveLastValidator() public {
         address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         _processEpoch();
 
@@ -1597,16 +1597,14 @@ contract ValidatorManagementTest is Test {
         vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
         validatorManager.leaveValidatorSet(pool);
 
-        // But governance force leave should succeed
+        // Governance force leave should also fail with CannotRemoveLastValidator
         vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.CannotRemoveLastValidator.selector);
         validatorManager.forceLeaveValidatorSet(pool);
 
-        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_INACTIVE));
-
-        // After epoch, validator becomes inactive and set is empty
-        _processEpoch();
-        assertEq(validatorManager.getActiveValidatorCount(), 0, "Validator set should be empty");
-        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.INACTIVE));
+        // Validator should still be active
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.ACTIVE));
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
     }
 
     /// @notice Test forceLeaveValidatorSet takes effect at next epoch (not immediately)
