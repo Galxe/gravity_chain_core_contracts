@@ -78,7 +78,7 @@ contract GovernanceConfig {
         }
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(_minVotingThreshold, _requiredProposerStake, _votingDurationMicros);
 
         minVotingThreshold = _minVotingThreshold;
         requiredProposerStake = _requiredProposerStake;
@@ -125,7 +125,7 @@ contract GovernanceConfig {
         _requireInitialized();
 
         // Validate parameters
-        _validateConfig(_votingDurationMicros);
+        _validateConfig(_minVotingThreshold, _requiredProposerStake, _votingDurationMicros);
 
         _pendingConfig = PendingConfig({
             minVotingThreshold: _minVotingThreshold,
@@ -171,10 +171,20 @@ contract GovernanceConfig {
     // ========================================================================
 
     /// @notice Validate configuration parameters
+    /// @param _minVotingThreshold Minimum votes for quorum
+    /// @param _requiredProposerStake Minimum stake to create proposal
     /// @param _votingDurationMicros Voting duration
     function _validateConfig(
+        uint128 _minVotingThreshold,
+        uint256 _requiredProposerStake,
         uint64 _votingDurationMicros
     ) internal pure {
+        if (_minVotingThreshold == 0) {
+            revert Errors.InvalidVotingThreshold();
+        }
+        if (_requiredProposerStake == 0) {
+            revert Errors.InvalidProposerStake();
+        }
         if (_votingDurationMicros == 0) {
             revert Errors.InvalidVotingDuration();
         }

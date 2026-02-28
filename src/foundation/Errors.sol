@@ -94,6 +94,11 @@ library Errors {
     /// @param maximum Maximum allowed duration (microseconds)
     error ExcessiveLockupDuration(uint64 provided, uint64 maximum);
 
+    /// @notice Too many pending withdrawal buckets
+    /// @param current Current number of buckets
+    /// @param maximum Maximum allowed buckets
+    error TooManyPendingBuckets(uint256 current, uint256 maximum);
+
     /// @notice Duration exceeds the maximum allowed value
     /// @param provided Duration provided (microseconds)
     /// @param maximum Maximum allowed duration (microseconds)
@@ -271,6 +276,12 @@ library Errors {
     /// @notice Voting duration must be greater than zero
     error InvalidVotingDuration();
 
+    /// @notice Minimum voting threshold must be greater than zero
+    error InvalidVotingThreshold();
+
+    /// @notice Required proposer stake must be greater than zero
+    error InvalidProposerStake();
+
     /// @notice Proposal execution failed
     /// @param proposalId ID of the proposal
     error ExecutionFailed(uint64 proposalId);
@@ -382,13 +393,13 @@ library Errors {
     // NATIVE ORACLE ERRORS
     // ========================================================================
 
-    /// @notice Nonce must be strictly increasing for each source
-    /// @dev For the first record, latestNonce is 0, so nonce must be >= 1
+    /// @notice Nonce must be sequential for each source (no gaps allowed)
+    /// @dev For the first record, latestNonce is 0, so nonce must be 1
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param currentNonce The current nonce for this source
-    /// @param providedNonce The provided nonce that is not greater
-    error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
+    /// @param expectedNonce The expected next nonce (currentNonce + 1)
+    /// @param providedNonce The provided nonce that doesn't match expected
+    error NonceNotSequential(uint32 sourceType, uint256 sourceId, uint128 expectedNonce, uint128 providedNonce);
 
     /// @notice Batch arrays have mismatched lengths
     /// @param noncesLength Length of nonces array

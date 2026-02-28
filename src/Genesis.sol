@@ -70,6 +70,7 @@ contract Genesis {
     struct BridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct OracleInitParams {
@@ -228,7 +229,8 @@ contract Genesis {
 
         if (oracleConfig.bridgeConfig.deploy) {
             // Deploy GBridgeReceiver
-            GBridgeReceiver receiver = new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge);
+            GBridgeReceiver receiver =
+                new GBridgeReceiver(oracleConfig.bridgeConfig.trustedBridge, oracleConfig.bridgeConfig.trustedSourceId);
 
             // Construct new arrays with extra slot for GBridgeReceiver (sourceType=0)
             sourceTypes = new uint32[](length + 1);

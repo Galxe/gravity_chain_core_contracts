@@ -49,7 +49,7 @@
   "oracleConfig": {
     "_comment": "NativeOracle.initialize - sourceType 1 = JWK",
     "sourceTypes": [1],
-    "callbacks": ["0x00000000000000000000000000000001625F2018"]
+    "callbacks": ["0x00000000000000000000000000000001625F4001"]
   },
 
   "jwkConfig": {

@@ -31,6 +31,22 @@ interface IGBridgeSender {
     /// @notice Cannot bridge to zero address
     error ZeroRecipient();
 
+    /// @notice Emergency withdrawal has not been initiated
+    error EmergencyNotInitiated();
+
+    /// @notice Emergency timelock has not expired
+    /// @param unlockTime The timestamp when emergency withdrawal becomes available
+    error EmergencyTimelockNotExpired(uint256 unlockTime);
+
+    /// @notice Emitted when emergency withdrawal is initiated
+    /// @param unlockTime The timestamp when emergency withdrawal becomes available
+    event EmergencyWithdrawInitiated(uint256 unlockTime);
+
+    /// @notice Emitted when emergency withdrawal is executed
+    /// @param recipient The address receiving the tokens
+    /// @param amount The amount of tokens withdrawn
+    event EmergencyWithdraw(address indexed recipient, uint256 amount);
+
     // ========================================================================
     // BRIDGE FUNCTIONS
     // ========================================================================
@@ -88,5 +104,30 @@ interface IGBridgeSender {
         uint256 amount,
         address recipient
     ) external view returns (uint256 requiredFee);
+
+    // ========================================================================
+    // EMERGENCY FUNCTIONS
+    // ========================================================================
+
+    /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
+    /// @dev Only callable by contract owner
+    function initiateEmergencyWithdraw() external;
+
+    /// @notice Execute emergency withdrawal after timelock expires
+    /// @dev Only callable by contract owner after timelock period
+    /// @param recipient Address to receive the tokens
+    /// @param amount Amount of G tokens to withdraw
+    function emergencyWithdraw(
+        address recipient,
+        uint256 amount
+    ) external;
+
+    /// @notice Get the emergency unlock time (0 if not initiated)
+    /// @return The timestamp when emergency withdrawal becomes available
+    function emergencyUnlockTime() external view returns (uint256);
+
+    /// @notice Get the emergency timelock duration
+    /// @return The timelock duration in seconds (7 days)
+    function EMERGENCY_TIMELOCK() external view returns (uint256);
 }
 

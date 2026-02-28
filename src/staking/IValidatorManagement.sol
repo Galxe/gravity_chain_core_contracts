@@ -67,6 +67,9 @@ interface IValidatorManagement {
     /// @param successfulProposals Number of successful proposals the validator had
     event ValidatorAutoEvicted(address indexed stakePool, uint256 successfulProposals);
 
+    /// @notice Emitted when performance data array length doesn't match active validator count
+    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
+
     /// @notice Emitted when a validator's consensus key is rotated
     /// @param stakePool Address of the validator's stake pool
     /// @param newPubkey New BLS public key
