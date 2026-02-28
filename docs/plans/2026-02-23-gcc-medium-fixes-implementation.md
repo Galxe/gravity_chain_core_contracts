@@ -259,155 +259,21 @@ Run: `/home/zz/.foundry/bin/forge build --force && /home/zz/.foundry/bin/forge t
 
 ---
 
-### Task 9: GCC-010 — Snapshot-Based Voting Power
+### Task 9: GCC-010 — Snapshot-Based Voting Power — **NOT NEEDED (Removed)**
 
-**Files:**
-- Modify: `src/governance/Governance.sol:157-174,284-294,362-421`
-
-**Step 1: Change voting power evaluation time**
-
-In `getRemainingVotingPower()` (line 167), change:
-```solidity
-// Before: uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
-uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.creationTime);
-```
-
-In `createProposal()` (line 290), change:
-```solidity
-// Before: uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime);
-uint256 votingPower = _staking().getPoolVotingPower(stakePool, now_);
-```
-
-**Step 2: Build and test**
-
-Run: `/home/zz/.foundry/bin/forge build --force && /home/zz/.foundry/bin/forge test`
+> Snapshot-based voting power is not needed at this time. Voting power continues to be evaluated at `expirationTime`. No changes required.
 
 ---
 
-### Task 10: GCC-008 — Proposal Cancellation
+### Task 10: GCC-008 — Proposal Cancellation — **NOT NEEDED (Removed)**
 
-**Files:**
-- Modify: `src/governance/Governance.sol` (add cancel function)
-- Modify: `src/governance/IGovernance.sol` (add cancel signature + event)
-- Modify: `src/foundation/Errors.sol`
-
-**Step 1: Add error**
-
-```solidity
-error NotAuthorizedToCancel(address caller);
-```
-
-**Step 2: Add cancelled mapping and event to Governance.sol**
-
-```solidity
-mapping(uint64 => bool) public cancelled;
-```
-
-Add event to IGovernance.sol:
-```solidity
-event ProposalCancelled(uint64 indexed proposalId);
-```
-
-**Step 3: Add cancel function**
-
-```solidity
-function cancel(uint64 proposalId) external {
-    Proposal storage p = _proposals[proposalId];
-    if (p.id == 0) revert Errors.ProposalNotFound(proposalId);
-    if (p.isResolved) revert Errors.ProposalAlreadyResolved(proposalId);
-    if (executed[proposalId]) revert Errors.ProposalAlreadyExecuted(proposalId);
-    if (msg.sender != p.proposer) revert Errors.NotAuthorizedToCancel(msg.sender);
-
-    uint64 now_ = _now();
-    if (now_ >= p.expirationTime) revert Errors.VotingPeriodEnded(p.expirationTime);
-
-    cancelled[proposalId] = true;
-    p.isResolved = true;
-    p.resolutionTime = now_;
-
-    emit ProposalCancelled(proposalId);
-}
-```
-
-**Step 4: Update getProposalState**
-
-In `getProposalState()`, after the `executed` check, add:
-```solidity
-if (cancelled[proposalId]) {
-    return ProposalState.CANCELLED;
-}
-```
-
-**Step 5: Add interface declaration**
-
-In IGovernance.sol, add:
-```solidity
-function cancel(uint64 proposalId) external;
-```
-
-**Step 6: Build and test**
-
-Run: `/home/zz/.foundry/bin/forge build --force && /home/zz/.foundry/bin/forge test`
+> Proposal cancellation is not needed at this time. No changes required.
 
 ---
 
-### Task 11: GCC-009 — Execution Expiration Window
+### Task 11: GCC-009 — Execution Expiration Window — **NOT NEEDED (Removed)**
 
-**Files:**
-- Modify: `src/runtime/GovernanceConfig.sol` (add executionWindowMicros)
-- Modify: `src/governance/Governance.sol` (add expiration check in execute)
-- Modify: `src/governance/IGovernance.sol`
-- Modify: `src/foundation/Errors.sol`
-- Modify: `src/Genesis.sol` (add parameter)
-- Modify: `genesis-tool/src/genesis.rs`
-- Modify: `genesis-tool/config/genesis_config.json` + `genesis_config_single.json`
-- Modify: test files for GovernanceConfig, Governance, Genesis
-
-**Step 1: Add error**
-
-```solidity
-error ProposalExecutionExpired(uint64 proposalId);
-error InvalidExecutionWindow();
-```
-
-**Step 2: Add executionWindowMicros to GovernanceConfig**
-
-Add state variable:
-```solidity
-uint64 public executionWindowMicros;
-```
-
-Add to PendingConfig struct:
-```solidity
-uint64 executionWindowMicros;
-```
-
-Update `initialize()`, `setForNextEpoch()`, `applyPendingConfig()`, `_validateConfig()` to handle the new field. Validate `_executionWindowMicros != 0`.
-
-**Step 3: Add expiration check in Governance.execute()**
-
-After the execution delay check, add:
-```solidity
-uint64 executionWindow = _config().executionWindowMicros();
-uint64 latestExecution = earliestExecution + executionWindow;
-if (now_ > latestExecution) {
-    revert Errors.ProposalExecutionExpired(proposalId);
-}
-```
-
-**Step 4: Update Genesis.sol, genesis-tool, and configs**
-
-Add `executionWindowMicros` parameter to GovernanceConfig.initialize() call in Genesis.sol. Default: `604_800_000_000` (7 days in microseconds).
-
-Update genesis-tool Rust struct and config JSONs.
-
-**Step 5: Update all affected tests**
-
-Add the new parameter everywhere GovernanceConfig is initialized or setForNextEpoch is called.
-
-**Step 6: Build and test**
-
-Run: `/home/zz/.foundry/bin/forge build --force && /home/zz/.foundry/bin/forge test`
+> Execution expiration window is not needed at this time. No changes required.
 
 ---
 
