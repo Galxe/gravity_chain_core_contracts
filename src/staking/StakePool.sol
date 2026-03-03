@@ -233,6 +233,11 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         return _getClaimableAmount();
     }
 
+    /// @inheritdoc IStakePool
+    function getRewardBalance() external view returns (uint256) {
+        return _getRewardBalance();
+    }
+
     // ========================================================================
     // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
@@ -348,6 +353,22 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         lockedUntil = newLockedUntil;
 
         emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);
+    }
+
+    /// @inheritdoc IStakePool
+    function withdrawRewards(
+        address recipient
+    ) external onlyStaker nonReentrant returns (uint256 amount) {
+        amount = _getRewardBalance();
+        if (amount == 0) {
+            return 0;
+        }
+
+        emit RewardsWithdrawn(address(this), amount, recipient);
+
+        // Transfer rewards to recipient
+        (bool success,) = payable(recipient).call{ value: amount }("");
+        if (!success) revert Errors.TransferFailed();
     }
 
     // ========================================================================
@@ -586,5 +607,21 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         }
 
         return claimableCumulative - claimedAmount;
+    }
+
+    /// @notice Calculate the reward balance (contract balance exceeding tracked stake)
+    /// @dev Rewards = address(this).balance - activeStake - unclaimedPending
+    /// @return Reward balance available for withdrawal
+    function _getRewardBalance() internal view returns (uint256) {
+        uint256 unclaimedPending;
+        if (_pendingBuckets.length > 0) {
+            unclaimedPending = _pendingBuckets[_pendingBuckets.length - 1].cumulativeAmount - claimedAmount;
+        }
+        uint256 trackedBalance = activeStake + unclaimedPending;
+        uint256 actualBalance = address(this).balance;
+        if (actualBalance <= trackedBalance) {
+            return 0;
+        }
+        return actualBalance - trackedBalance;
     }
 }
