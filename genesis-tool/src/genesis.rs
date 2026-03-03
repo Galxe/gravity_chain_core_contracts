@@ -192,6 +192,9 @@ pub struct BridgeConfig {
 
     #[serde(rename = "trustedBridge")]
     pub trusted_bridge: String, // address
+
+    #[serde(rename = "trustedSourceId", default)]
+    pub trusted_source_id: String, // uint256
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -285,6 +288,7 @@ sol! {
     struct SolBridgeConfig {
         bool deploy;
         address trustedBridge;
+        uint256 trustedSourceId;
     }
 
     struct SolOracleInitParams {
@@ -464,6 +468,11 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
                 Address::ZERO
             } else {
                 parse_address(&config.oracle_config.bridge_config.trusted_bridge)
+            },
+            trustedSourceId: if config.oracle_config.bridge_config.trusted_source_id.is_empty() {
+                U256::ZERO
+            } else {
+                parse_u256(&config.oracle_config.bridge_config.trusted_source_id)
             },
         },
     };

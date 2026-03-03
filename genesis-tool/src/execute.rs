@@ -44,10 +44,14 @@ fn deploy_bsc_style(byte_code_dir: &str, total_stake: U256) -> InMemoryDB {
             U256::ZERO
         };
 
+        let bytecode = Bytecode::new_raw(Bytes::from(runtime_bytecode));
+        let code_hash = bytecode.hash_slow();
+
         db.insert_account_info(
             target_address,
             AccountInfo {
-                code: Some(Bytecode::new_raw(Bytes::from(runtime_bytecode))),
+                code: Some(bytecode),
+                code_hash,
                 balance,
                 ..AccountInfo::default()
             },
