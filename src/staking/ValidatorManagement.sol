@@ -499,6 +499,9 @@ contract ValidatorManagement is IValidatorManagement {
         address stakePool,
         address newRecipient
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
+        // GCC-R2-013: Prevent setting fee recipient to zero address (would burn fees)
+        if (newRecipient == address(0)) revert Errors.ZeroAddress();
+
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Set pending fee recipient (will take effect at next epoch)

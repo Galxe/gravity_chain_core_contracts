@@ -180,6 +180,7 @@ contract GBridgeReceiverTest is Test {
         uint128 messageNonce
     ) public {
         vm.assume(recipient != address(0));
+        vm.assume(amount > 0); // GCC-R2-002: amount=0 now reverts
         vm.assume(!receiver.isProcessed(messageNonce));
 
         bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, amount, recipient);

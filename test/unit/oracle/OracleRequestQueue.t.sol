@@ -191,9 +191,7 @@ contract OracleRequestQueueTest is Test {
         // Do NOT configure expiration for this source type
         bytes memory requestData = abi.encode("custom data");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(OracleRequestQueue.ExpirationNotConfigured.selector, customSourceType)
-        );
+        vm.expectRevert(abi.encodeWithSelector(OracleRequestQueue.ExpirationNotConfigured.selector, customSourceType));
         vm.prank(alice);
         requestQueue.request{ value: 0 }(customSourceType, customSourceId, requestData);
     }
