@@ -179,6 +179,8 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Get voting power at proposal's expiration time
         uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
+        // GCC-R2-006: Clamp to uint128 max to prevent silent truncation
+        if (poolPower > type(uint128).max) poolPower = type(uint128).max;
         uint128 used = usedVotingPower[stakePool][proposalId];
 
         if (poolPower <= used) {
