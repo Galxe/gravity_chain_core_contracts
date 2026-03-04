@@ -74,6 +74,12 @@ interface IStakePool {
     /// @param newStaker New staker address
     event StakerChanged(address indexed pool, address oldStaker, address newStaker);
 
+    /// @notice Emitted when rewards are withdrawn
+    /// @param pool Address of this pool
+    /// @param amount Amount of rewards withdrawn
+    /// @param recipient Address that received the rewards
+    event RewardsWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
+
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
@@ -152,6 +158,11 @@ interface IStakePool {
     /// @return Amount available for withdrawal in wei
     function getClaimableAmount() external view returns (uint256);
 
+    /// @notice Get the accumulated reward balance (not part of stake or pending)
+    /// @dev Reward = address(this).balance - activeStake - unclaimedPending
+    /// @return Reward balance available for withdrawal in wei
+    function getRewardBalance() external view returns (uint256);
+
     // ========================================================================
     // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
@@ -225,6 +236,15 @@ interface IStakePool {
     function renewLockUntil(
         uint64 durationMicros
     ) external;
+
+    /// @notice Withdraw accumulated rewards (balance exceeding tracked stake)
+    /// @dev Only callable by staker. No lockup or unbonding delay applies to rewards.
+    ///      Rewards = address(this).balance - activeStake - unclaimedPending
+    /// @param recipient Address to receive the rewards
+    /// @return amount Amount of rewards withdrawn
+    function withdrawRewards(
+        address recipient
+    ) external returns (uint256 amount);
 
     // ========================================================================
     // SYSTEM FUNCTIONS
