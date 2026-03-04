@@ -9,6 +9,7 @@ import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStakingConfig } from "../runtime/IStakingConfig.sol";
+import { IReconfiguration } from "../blocker/IReconfiguration.sol";
 
 /// @title Staking
 /// @author Gravity Team
@@ -181,6 +182,11 @@ contract Staking is IStaking {
         address voter,
         uint64 lockedUntil
     ) external payable returns (address pool) {
+        // GCC-R2-007: Block pool creation during epoch transition (consistent with Aptos reference)
+        if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) {
+            revert Errors.ReconfigurationInProgress();
+        }
+
         // Validate critical addresses are not zero
         if (owner == address(0)) revert Errors.ZeroAddress();
         if (staker == address(0)) revert Errors.ZeroAddress();
