@@ -12,7 +12,7 @@ Date: 2026-03-02
 
 **Files:** NativeOracle.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Adding a NatSpec comment to clarify the timestamp convention is sufficient. No code change needed.
 
 ### GCC-R2-010: Genesis._isInitialized Set Inside Sub-function
 
@@ -22,7 +22,7 @@ Date: 2026-03-02
 
 **Files:** Genesis.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Improving code clarity by moving the initialization flag to the top-level function is a clean refactor.
 
 ## Category B — Spurious Events (1 fix)
 
@@ -34,7 +34,7 @@ Date: 2026-03-02
 
 **Files:** StakePool.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Eliminating spurious events for off-chain indexers is worthwhile.
 
 ## Category C — Data Structure (1 fix)
 
@@ -46,7 +46,7 @@ Date: 2026-03-02
 
 **Files:** StakePool.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: Reject; comments: Known limitation.
 
 ## Category D — Missing Input Validation (1 fix)
 
@@ -58,7 +58,7 @@ Date: 2026-03-02
 
 **Files:** ValidatorManagement.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Simple zero-address validation at setter time is a low-cost fix that prevents fee burning.
 
 ## Category E — Edge Cases (2 fixes)
 
@@ -70,7 +70,7 @@ Date: 2026-03-02
 
 **Files:** GravityPortal.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: reject; comments: Known limitation.
 
 ### GCC-R2-015: Governance.execute Cannot Forward ETH
 
@@ -80,4 +80,4 @@ Date: 2026-03-02
 
 **Files:** Governance.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: reject; comments: Known limitation.
