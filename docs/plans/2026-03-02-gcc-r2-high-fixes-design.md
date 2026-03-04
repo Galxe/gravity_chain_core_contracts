@@ -10,7 +10,7 @@ Date: 2026-03-02
 
 **Files:** ValidatorManagement.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: pending; comments: forceLeaveValidatorSet only marks the validator as PENDING_INACTIVE — the actual deactivation happens at the next epoch boundary in onNewEpoch(). Also, _countActiveValidators() does not exist in the codebase; both leaveValidatorSet and forceLeaveValidatorSet use _activeValidators.length. The real question is whether PENDING_ACTIVE validators joining at the same epoch boundary compensate for the removed ones. The risk is mitigated by governance prudence, but needs further analysis on whether the fix is warranted given the epoch-boundary semantics.
 
 ## GCC-R2-002: GBridgeReceiver Missing Decoded Data Validation
 
@@ -20,4 +20,4 @@ Date: 2026-03-02
 
 **Files:** GBridgeReceiver.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Valid finding. If _handlePortalMessage reverts (e.g., due to zero amount or zero recipient), the revert is caught by NativeOracle._invokeCallback's try/catch, which emits a CallbackFailed event and returns true — so the oracle data is still stored for auditability. Adding input validation after abi.decode is a reasonable defence-in-depth measure.
