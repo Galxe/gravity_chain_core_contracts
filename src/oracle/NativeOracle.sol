@@ -93,8 +93,11 @@ contract NativeOracle is INativeOracle {
 
         // Conditionally store record based on callback result
         if (shouldStore) {
-            _records[sourceType][sourceId][nonce] =
-                DataRecord({ recordedAt: uint64(block.timestamp), blockNumber: blockNumber, data: payload });
+            _records[sourceType][sourceId][nonce] = DataRecord({
+                recordedAt: uint64(block.timestamp), // NOTE: EVM seconds, NOT Gravity microseconds
+                blockNumber: blockNumber,
+                data: payload
+            });
             emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }
@@ -156,8 +159,11 @@ contract NativeOracle is INativeOracle {
 
         // Conditionally store record based on callback result
         if (shouldStore) {
-            _records[sourceType][sourceId][nonce] =
-                DataRecord({ recordedAt: uint64(block.timestamp), blockNumber: blockNumber, data: payload });
+            _records[sourceType][sourceId][nonce] = DataRecord({
+                recordedAt: uint64(block.timestamp), // NOTE: EVM seconds, NOT Gravity microseconds
+                blockNumber: blockNumber,
+                data: payload
+            });
             emit DataRecorded(sourceType, sourceId, nonce, payload.length);
         }
     }

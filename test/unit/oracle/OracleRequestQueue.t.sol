@@ -167,6 +167,10 @@ contract OracleRequestQueueTest is Test {
         vm.prank(governance);
         taskConfig.setTaskType(customSourceType, customSourceId, abi.encode("custom config"));
 
+        // Configure expiration for this source type (GCC-R2-005 requires it)
+        vm.prank(governance);
+        requestQueue.setExpiration(customSourceType, DEFAULT_EXPIRATION);
+
         // Fee defaults to 0 for this new source type
         bytes memory requestData = abi.encode("custom data");
 
@@ -174,6 +178,22 @@ contract OracleRequestQueueTest is Test {
         uint256 requestId = requestQueue.request{ value: 0 }(customSourceType, customSourceId, requestData);
 
         assertEq(requestId, 1);
+    }
+
+    function test_Request_RevertWhenExpirationNotConfigured() public {
+        // GCC-R2-005: Source type without expiration configured should revert
+        uint32 customSourceType = 100;
+        uint256 customSourceId = 1;
+
+        vm.prank(governance);
+        taskConfig.setTaskType(customSourceType, customSourceId, abi.encode("custom config"));
+
+        // Do NOT configure expiration for this source type
+        bytes memory requestData = abi.encode("custom data");
+
+        vm.expectRevert(abi.encodeWithSelector(OracleRequestQueue.ExpirationNotConfigured.selector, customSourceType));
+        vm.prank(alice);
+        requestQueue.request{ value: 0 }(customSourceType, customSourceId, requestData);
     }
 
     // ========================================================================

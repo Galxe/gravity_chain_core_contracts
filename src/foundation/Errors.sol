@@ -302,6 +302,9 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
+    /// @notice Proposal ID is invalid (sentinel value 0)
+    error InvalidProposalId();
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================

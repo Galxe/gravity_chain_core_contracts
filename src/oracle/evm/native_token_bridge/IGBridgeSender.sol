@@ -38,6 +38,9 @@ interface IGBridgeSender {
     /// @param unlockTime The timestamp when emergency withdrawal becomes available
     error EmergencyTimelockNotExpired(uint256 unlockTime);
 
+    /// @notice Emergency withdrawal has already been used
+    error EmergencyAlreadyUsed();
+
     /// @notice Emitted when emergency withdrawal is initiated
     /// @param unlockTime The timestamp when emergency withdrawal becomes available
     event EmergencyWithdrawInitiated(uint256 unlockTime);
@@ -129,5 +132,9 @@ interface IGBridgeSender {
     /// @notice Get the emergency timelock duration
     /// @return The timelock duration in seconds (7 days)
     function EMERGENCY_TIMELOCK() external view returns (uint256);
+
+    /// @notice Whether emergency withdrawal has already been used
+    /// @return True if emergency withdrawal was already executed
+    function emergencyUsed() external view returns (bool);
 }
 

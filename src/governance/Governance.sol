@@ -25,6 +25,10 @@ contract Governance is IGovernance, Ownable2Step {
     // ========================================================================
 
     /// @notice Next proposal ID to be assigned
+    /// @dev SENTINEL CONVENTION: Proposal ID 0 is reserved as a sentinel value meaning "not found".
+    ///      nextProposalId starts at 1 and only increments, so ID 0 is never assigned.
+    ///      All lookup functions (getProposal, getProposalState, vote, etc.) check `p.id == 0`
+    ///      to detect non-existent proposals. This invariant MUST be preserved across upgrades.
     uint64 public nextProposalId = 1;
 
     /// @notice Mapping of proposal ID to Proposal struct
@@ -175,6 +179,8 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Get voting power at proposal's expiration time
         uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
+        // GCC-R2-006: Clamp to uint128 max to prevent silent truncation
+        if (poolPower > type(uint128).max) poolPower = type(uint128).max;
         uint128 used = usedVotingPower[stakePool][proposalId];
 
         if (poolPower <= used) {
@@ -296,6 +302,9 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Compute execution hash from batch arrays
         bytes32 executionHash = keccak256(abi.encode(targets, datas));
+
+        // GCC-R2-004: Defence-in-depth — nextProposalId must never be 0 (sentinel value)
+        if (nextProposalId == 0) revert Errors.InvalidProposalId();
 
         // Create proposal
         proposalId = nextProposalId++;

@@ -247,6 +247,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         address newOperator
     ) external onlyOwner {
         if (newOperator == address(0)) revert Errors.ZeroAddress();
+        if (newOperator == operator) return; // GCC-R2-011: Skip no-op
         address oldOperator = operator;
         operator = newOperator;
         emit OperatorChanged(address(this), oldOperator, newOperator);
@@ -257,6 +258,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         address newVoter
     ) external onlyOwner {
         if (newVoter == address(0)) revert Errors.ZeroAddress();
+        if (newVoter == voter) return; // GCC-R2-011: Skip no-op
         address oldVoter = voter;
         voter = newVoter;
         emit VoterChanged(address(this), oldVoter, newVoter);
@@ -267,6 +269,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         address newStaker
     ) external onlyOwner {
         if (newStaker == address(0)) revert Errors.ZeroAddress();
+        if (newStaker == staker) return; // GCC-R2-011: Skip no-op
         address oldStaker = staker;
         staker = newStaker;
         emit StakerChanged(address(this), oldStaker, newStaker);
