@@ -12,7 +12,7 @@ Date: 2026-03-02
 
 **Files:** StakePool.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: reject; comments: If the staker provides a wrong recipient address (including zero address) during withdrawal, that is the staker's own responsibility. The onlyStaker modifier already restricts callers. Not worth adding extra gas cost for this edge case.
 
 ### GCC-R2-005: OracleRequestQueue Zero-Duration and Zero-Fee Defaults
 
@@ -22,7 +22,7 @@ Date: 2026-03-02
 
 **Files:** OracleRequestQueue.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Reasonable defence-in-depth. This contract is not yet deployed, so adding the validation has no migration concern.
 
 ## Group B: Governance
 
@@ -34,7 +34,7 @@ Date: 2026-03-02
 
 **Files:** Governance.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Agreed. Adding documentation and a defence-in-depth assertion is low-cost and improves code clarity.
 
 ### GCC-R2-006: Voting Power Truncation Risk in getRemainingVotingPower
 
@@ -44,7 +44,7 @@ Date: 2026-03-02
 
 **Files:** Governance.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: The truncation risk is reasonable to address. The entire voting system uses uint128 for voting power (usedVotingPower, yesVotes, noVotes, _voteInternal params), likely for storage packing. Adding a clamp before the cast is a simple and correct fix.
 
 ## Group C: System Consistency
 
@@ -56,7 +56,7 @@ Date: 2026-03-02
 
 **Files:** Staking.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Consistent with the Aptos reference which blocks all staking mutations during reconfiguration. createPool should follow the same pattern.
 
 ### GCC-R2-008: GBridgeSender.emergencyWithdraw Allows Repeated Use After Re-initiation
 
@@ -66,4 +66,4 @@ Date: 2026-03-02
 
 **Files:** GBridgeSender.sol
 
-**Review Comments** reviewer: ; state: ; comments: 
+**Review Comments** reviewer: AlexYue; state: accept; comments: Making emergencyWithdraw a one-shot mechanism is a good defence-in-depth against compromised owner keys.
