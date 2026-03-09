@@ -114,7 +114,7 @@ contract OracleRequestQueue is IOracleRequestQueue {
 
         // Calculate expiration (using block.timestamp in seconds, NOT microseconds)
         uint64 duration = _expirationDurations[sourceType];
-        // GCC-R2-005: Ensure expiration duration has been configured
+        // Ensure expiration duration has been configured
         if (duration == 0) revert ExpirationNotConfigured(sourceType);
         uint64 expiresAt = uint64(block.timestamp) + duration;
 

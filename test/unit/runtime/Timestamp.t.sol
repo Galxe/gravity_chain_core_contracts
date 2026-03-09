@@ -228,7 +228,7 @@ contract TimestampTest is Test {
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(PROPOSER, INITIAL_TIME);
 
-        // NIL block should NOT emit event (GCC-027: only emit when timestamp changes)
+        // NIL block should NOT emit event (only emit when timestamp changes)
         vm.prank(SystemAddresses.BLOCK);
         vm.recordLogs();
         timestamp.updateGlobalTime(SystemAddresses.SYSTEM_CALLER, INITIAL_TIME);

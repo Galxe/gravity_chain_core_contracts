@@ -317,7 +317,7 @@ contract ConsensusEngineFlowTest is Test {
         _createRegisterAndJoin(bob, MIN_BOND, "bob");
         _processEpoch();
 
-        // GCC-R2-007: createPool is now also blocked during reconfig,
+        // createPool is now also blocked during reconfig,
         // so create and register Charlie's pool BEFORE reconfiguration starts
         address pool3 = _createAndRegisterValidator(charlie, MIN_BOND, "charlie");
 

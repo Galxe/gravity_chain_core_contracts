@@ -95,7 +95,7 @@ contract GovernanceTest is Test {
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
 
         // Deploy mock Reconfiguration - returns false for isTransitionInProgress()
-        // Required by GCC-R2-007: Staking.createPool now checks reconfiguration status
+        // Staking.createPool now checks reconfiguration status
         vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration()).code);
 
         // Deploy GovernanceConfig

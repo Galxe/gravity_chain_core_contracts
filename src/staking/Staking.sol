@@ -182,7 +182,7 @@ contract Staking is IStaking {
         address voter,
         uint64 lockedUntil
     ) external payable returns (address pool) {
-        // GCC-R2-007: Block pool creation during epoch transition (consistent with Aptos reference)
+        // Block pool creation during epoch transition (consistent with Aptos reference)
         if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) {
             revert Errors.ReconfigurationInProgress();
         }

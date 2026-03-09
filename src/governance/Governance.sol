@@ -179,7 +179,7 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Get voting power at proposal's expiration time
         uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime);
-        // GCC-R2-006: Clamp to uint128 max to prevent silent truncation
+        // Clamp to uint128 max to prevent silent truncation
         if (poolPower > type(uint128).max) poolPower = type(uint128).max;
         uint128 used = usedVotingPower[stakePool][proposalId];
 
@@ -303,7 +303,7 @@ contract Governance is IGovernance, Ownable2Step {
         // Compute execution hash from batch arrays
         bytes32 executionHash = keccak256(abi.encode(targets, datas));
 
-        // GCC-R2-004: Defence-in-depth — nextProposalId must never be 0 (sentinel value)
+        // Defence-in-depth — nextProposalId must never be 0 (sentinel value)
         if (nextProposalId == 0) revert Errors.InvalidProposalId();
 
         // Create proposal

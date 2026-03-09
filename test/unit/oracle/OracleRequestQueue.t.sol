@@ -167,7 +167,7 @@ contract OracleRequestQueueTest is Test {
         vm.prank(governance);
         taskConfig.setTaskType(customSourceType, customSourceId, abi.encode("custom config"));
 
-        // Configure expiration for this source type (GCC-R2-005 requires it)
+        // Configure expiration for this source type
         vm.prank(governance);
         requestQueue.setExpiration(customSourceType, DEFAULT_EXPIRATION);
 
@@ -181,7 +181,7 @@ contract OracleRequestQueueTest is Test {
     }
 
     function test_Request_RevertWhenExpirationNotConfigured() public {
-        // GCC-R2-005: Source type without expiration configured should revert
+        // Source type without expiration configured should revert
         uint32 customSourceType = 100;
         uint256 customSourceId = 1;
 

@@ -30,7 +30,7 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     uint256 public emergencyUnlockTime;
 
     /// @notice Whether emergency withdrawal has been used (one-shot mechanism)
-    /// @dev GCC-R2-008: Prevents re-initiation after first use
+    /// @dev Prevents re-initiation after first use
     bool public emergencyUsed;
 
     /// @notice Timelock duration for emergency withdrawal (7 days)
