@@ -250,7 +250,7 @@ contract ValidatorManagementTest is Test {
         );
     }
 
-    /// @notice Test revert when validator set changes are disabled (GCC-041)
+    /// @notice Test revert when validator set changes are disabled
     function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
         // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
@@ -1584,7 +1584,7 @@ contract ValidatorManagementTest is Test {
         validatorManager.forceLeaveValidatorSet(pool1);
     }
 
-    /// @notice Test that governance CANNOT force remove the last active validator (GCC-015)
+    /// @notice Test that governance CANNOT force remove the last active validator
     /// @dev Prevents consensus halt; both voluntary and governance force leave are blocked
     function test_forceLeaveValidatorSet_cannotRemoveLastValidator() public {
         address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");

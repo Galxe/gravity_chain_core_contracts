@@ -30,6 +30,17 @@ contract MockValidatorManagement {
     }
 }
 
+/// @notice Mock Reconfiguration for testing - always returns not in progress
+contract MockReconfiguration {
+    function isTransitionInProgress() external pure returns (bool) {
+        return false;
+    }
+
+    function currentEpoch() external pure returns (uint64) {
+        return 1;
+    }
+}
+
 /// @title GovernanceTest
 /// @notice Unit tests for Governance contract
 contract GovernanceTest is Test {
@@ -82,6 +93,10 @@ contract GovernanceTest is Test {
 
         // Deploy mock ValidatorManagement - returns false for isValidator()
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
+
+        // Deploy mock Reconfiguration - returns false for isTransitionInProgress()
+        // Staking.createPool now checks reconfiguration status
+        vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration()).code);
 
         // Deploy GovernanceConfig
         vm.etch(SystemAddresses.GOVERNANCE_CONFIG, address(new GovernanceConfig()).code);

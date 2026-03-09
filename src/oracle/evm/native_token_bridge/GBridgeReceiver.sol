@@ -88,6 +88,10 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         // Decode message: (amount, recipient)
         (uint256 amount, address recipient) = abi.decode(message, (uint256, address));
 
+        // Validate decoded data to prevent no-op mints and burns to address(0)
+        if (amount == 0) revert Errors.ZeroAmount();
+        if (recipient == address(0)) revert Errors.ZeroAddress();
+
         // Mark nonce as processed BEFORE minting (CEI pattern)
         _processedNonces[messageNonce] = true;
 

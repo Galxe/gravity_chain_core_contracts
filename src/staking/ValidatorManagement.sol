@@ -239,7 +239,7 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
     ) external {
-        // GCC-041: Check that validator set changes are allowed
+        // Check that validator set changes are allowed
         if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
             revert Errors.ValidatorSetChangesDisabled();
         }
@@ -499,6 +499,9 @@ contract ValidatorManagement is IValidatorManagement {
         address stakePool,
         address newRecipient
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
+        // Prevent setting fee recipient to zero address (would burn fees)
+        if (newRecipient == address(0)) revert Errors.ZeroAddress();
+
         ValidatorRecord storage validator = _validators[stakePool];
 
         // Set pending fee recipient (will take effect at next epoch)
@@ -602,7 +605,7 @@ contract ValidatorManagement is IValidatorManagement {
             return;
         }
 
-        // GCC-035: Initialize counter once and decrement per eviction instead of O(n) inner loop
+        // Initialize counter once and decrement per eviction instead of O(n) inner loop
         uint256 remainingActive = 0;
         for (uint256 i = 0; i < activeLen; i++) {
             if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
@@ -821,7 +824,7 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Step 2: Count staying active validators (active minus pending_inactive)
-        // GCC-034: Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
+        // Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
         uint256 stayingActiveCount = 0;
         for (uint256 i = 0; i < activeLen; i++) {
             if (_validators[_activeValidators[i]].status != ValidatorStatus.PENDING_INACTIVE) {

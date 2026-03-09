@@ -47,6 +47,9 @@ contract OracleRequestQueue is IOracleRequestQueue {
     /// @notice Transfer failed
     error TransferFailed();
 
+    /// @notice Expiration duration not configured for source type
+    error ExpirationNotConfigured(uint32 sourceType);
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -111,6 +114,8 @@ contract OracleRequestQueue is IOracleRequestQueue {
 
         // Calculate expiration (using block.timestamp in seconds, NOT microseconds)
         uint64 duration = _expirationDurations[sourceType];
+        // Ensure expiration duration has been configured
+        if (duration == 0) revert ExpirationNotConfigured(sourceType);
         uint64 expiresAt = uint64(block.timestamp) + duration;
 
         // Assign request ID

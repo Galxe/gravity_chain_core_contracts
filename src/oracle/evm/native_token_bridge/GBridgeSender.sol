@@ -29,6 +29,10 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     /// @notice Timestamp after which emergency withdrawal is allowed
     uint256 public emergencyUnlockTime;
 
+    /// @notice Whether emergency withdrawal has been used (one-shot mechanism)
+    /// @dev Prevents re-initiation after first use
+    bool public emergencyUsed;
+
     /// @notice Timelock duration for emergency withdrawal (7 days)
     uint256 public constant EMERGENCY_TIMELOCK = 7 days;
 
@@ -112,6 +116,7 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
     /// @dev Only callable by contract owner
     function initiateEmergencyWithdraw() external onlyOwner {
+        if (emergencyUsed) revert EmergencyAlreadyUsed();
         emergencyUnlockTime = block.timestamp + EMERGENCY_TIMELOCK;
         emit EmergencyWithdrawInitiated(emergencyUnlockTime);
     }
@@ -129,6 +134,7 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
         if (recipient == address(0)) revert ZeroRecipient();
 
         emergencyUnlockTime = 0;
+        emergencyUsed = true;
         IERC20(gToken).safeTransfer(recipient, amount);
         emit EmergencyWithdraw(recipient, amount);
     }

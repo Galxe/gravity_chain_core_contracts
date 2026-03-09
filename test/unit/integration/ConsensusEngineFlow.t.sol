@@ -317,6 +317,10 @@ contract ConsensusEngineFlowTest is Test {
         _createRegisterAndJoin(bob, MIN_BOND, "bob");
         _processEpoch();
 
+        // createPool is now also blocked during reconfig,
+        // so create and register Charlie's pool BEFORE reconfiguration starts
+        address pool3 = _createAndRegisterValidator(charlie, MIN_BOND, "charlie");
+
         // Start reconfiguration
         _advanceTime(TWO_HOURS + 1);
         _simulateBlockPrologue();
@@ -326,7 +330,6 @@ contract ConsensusEngineFlowTest is Test {
         ValidatorConsensusInfo[] memory validatorsBefore = validatorManager.getActiveValidators();
 
         // Try to join during reconfiguration - should revert
-        address pool3 = _createAndRegisterValidator(charlie, MIN_BOND, "charlie");
         vm.prank(charlie);
         vm.expectRevert(Errors.ReconfigurationInProgress.selector);
         validatorManager.joinValidatorSet(pool3);
