@@ -540,6 +540,14 @@ contract ValidatorManagement is IValidatorManagement {
         //    This ensures _activeValidators matches exactly what getNextValidatorConsensusInfos() returned
         _setActiveValidators(nextSet.validators);
 
+        // 6a. Emit ValidatorActivated for newly activated validators
+        //     Done here (after _setActiveValidators) so validatorIndex and bond are correct.
+        for (uint256 i = 0; i < nextSet.activateCount; i++) {
+            address pool = nextSet.toActivate[i];
+            ValidatorRecord storage v = _validators[pool];
+            emit ValidatorActivated(pool, v.validatorIndex, v.bond);
+        }
+
         // 7. Auto-renew lockups for active validators (Aptos-style)
         _renewActiveValidatorLockups();
 
@@ -668,9 +676,8 @@ contract ValidatorManagement is IValidatorManagement {
             ValidatorRecord storage validator = _validators[pool];
 
             validator.status = ValidatorStatus.ACTIVE;
-            // Note: bond and validatorIndex will be set in _setActiveValidators
-
-            emit ValidatorActivated(pool, 0, _getValidatorVotingPower(pool));
+            // Note: bond, validatorIndex, and ValidatorActivated event are handled
+            // after _setActiveValidators() in onNewEpoch() where the correct values are available.
         }
     }
 
