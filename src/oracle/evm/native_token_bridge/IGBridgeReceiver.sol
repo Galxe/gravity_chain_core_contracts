@@ -6,7 +6,7 @@ pragma solidity ^0.8.30;
 /// @notice Interface for the GBridgeReceiver contract on Gravity
 /// @dev Mints native G tokens when bridge messages are received from GBridgeSender.
 ///      Inherits from BlockchainEventHandler to receive routed messages from NativeOracle.
-///      Uses a system precompile to mint native tokens.
+///      Uses NativeMintWrapper to mint native tokens via the system precompile.
 interface IGBridgeReceiver {
     // ========================================================================
     // EVENTS
@@ -31,11 +31,6 @@ interface IGBridgeReceiver {
     /// @param nonce The duplicate nonce
     error AlreadyProcessed(uint128 nonce);
 
-    /// @notice Native token mint via precompile failed
-    /// @param recipient The intended recipient
-    /// @param amount The amount that failed to mint
-    error MintFailed(address recipient, uint256 amount);
-
     /// @notice Source chain ID does not match trusted source
     /// @param provided The provided source chain ID
     /// @param expected The expected trusted source chain ID
@@ -59,19 +54,5 @@ interface IGBridgeReceiver {
     /// @notice Get the trusted source chain ID
     /// @return The trusted source chain ID
     function trustedSourceId() external view returns (uint256);
-}
-
-/// @title INativeMintPrecompile
-/// @author Gravity Team
-/// @notice Interface for the system precompile that mints native tokens
-/// @dev This is a privileged precompile that only authorized contracts can call
-interface INativeMintPrecompile {
-    /// @notice Mint native tokens to a recipient
-    /// @param recipient The address to receive the tokens
-    /// @param amount The amount to mint (in wei)
-    function mint(
-        address recipient,
-        uint256 amount
-    ) external;
 }
 

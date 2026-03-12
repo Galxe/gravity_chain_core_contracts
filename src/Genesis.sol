@@ -26,6 +26,7 @@ import { NativeOracle } from "./oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "./oracle/jwk/JWKManager.sol";
 import { OracleTaskConfig } from "./oracle/OracleTaskConfig.sol";
 import { GBridgeReceiver } from "./oracle/evm/native_token_bridge/GBridgeReceiver.sol";
+import { NativeMintWrapper } from "./oracle/evm/native_token_bridge/NativeMintWrapper.sol";
 
 /// @title Genesis
 /// @author Gravity Team
@@ -243,6 +244,13 @@ contract Genesis {
 
             sourceTypes[length] = 0; // Blockchain Events
             callbacks[length] = address(receiver);
+
+            // Initialize NativeMintWrapper with SYSTEM_CALLER as owner
+            // and the newly deployed GBridgeReceiver as initial minter
+            address[] memory initialMinters = new address[](1);
+            initialMinters[0] = address(receiver);
+            NativeMintWrapper(SystemAddresses.NATIVE_MINT_WRAPPER)
+                .initialize(SystemAddresses.SYSTEM_CALLER, initialMinters);
         } else {
             sourceTypes = oracleConfig.sourceTypes;
             callbacks = oracleConfig.callbacks;
