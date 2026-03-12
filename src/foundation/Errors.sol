@@ -504,7 +504,6 @@ library Errors {
     // JWK MANAGER ERRORS
     // ========================================================================
 
-
     /// @notice JWK version must be strictly increasing
     /// @param issuer The issuer URL
     /// @param currentVersion Current version for this issuer

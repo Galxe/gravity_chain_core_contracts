@@ -125,7 +125,12 @@ contract ValidatorConfig {
 
         // Validate parameters
         _validateConfig(
-            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize, _autoEvictThreshold
+            _minimumBond,
+            _maximumBond,
+            _unbondingDelayMicros,
+            _votingPowerIncreaseLimitPct,
+            _maxValidatorSetSize,
+            _autoEvictThreshold
         );
 
         minimumBond = _minimumBond;
@@ -189,7 +194,12 @@ contract ValidatorConfig {
 
         // Validate parameters
         _validateConfig(
-            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize, _autoEvictThreshold
+            _minimumBond,
+            _maximumBond,
+            _unbondingDelayMicros,
+            _votingPowerIncreaseLimitPct,
+            _maxValidatorSetSize,
+            _autoEvictThreshold
         );
 
         _pendingConfig = PendingConfig({

@@ -286,7 +286,9 @@ contract GovernanceConfigTest is Test {
 
         vm.assume(minVotingThreshold > 0 && minVotingThreshold < type(uint128).max);
         vm.assume(requiredProposerStake > 0 && requiredProposerStake < type(uint256).max);
-        vm.assume(votingDurationMicros >= config.MIN_VOTING_DURATION() && votingDurationMicros <= config.MAX_VOTING_DURATION());
+        vm.assume(
+            votingDurationMicros >= config.MIN_VOTING_DURATION() && votingDurationMicros <= config.MAX_VOTING_DURATION()
+        );
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(minVotingThreshold, requiredProposerStake, votingDurationMicros);

@@ -392,9 +392,7 @@ contract GravityPortalTest is Test {
         uint256 excessiveValue = 2 * fee + 1;
 
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(IGravityPortal.ExcessiveFee.selector, fee, excessiveValue)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.ExcessiveFee.selector, fee, excessiveValue));
         portal.send{ value: excessiveValue }(message);
     }
 
