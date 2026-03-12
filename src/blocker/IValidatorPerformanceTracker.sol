@@ -24,8 +24,15 @@ interface IValidatorPerformanceTracker {
 
     /// @notice Emitted when performance statistics are updated
     /// @param proposerIndex The index of the proposer (type(uint64).max for NIL)
-    /// @param failedCount Number of failed proposer indices recorded
-    event PerformanceUpdated(uint64 indexed proposerIndex, uint256 failedCount);
+    /// @param failedCount Number of failed proposer indices provided
+    /// @param skippedProposer True if proposerIndex was non-NIL but out of bounds (silently skipped)
+    /// @param skippedFailedCount Number of failed indices that were out of bounds (silently skipped)
+    event PerformanceUpdated(
+        uint64 indexed proposerIndex,
+        uint256 failedCount,
+        bool skippedProposer,
+        uint256 skippedFailedCount
+    );
 
     /// @notice Emitted when performance counters are reset for a new epoch
     /// @param epoch The new epoch number
