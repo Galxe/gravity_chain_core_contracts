@@ -115,6 +115,8 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
 
     /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
     /// @dev Only callable by contract owner
+    /// 直接提供emergencyWithdraw. owner的多签合约那里提供timelock
+    /// recover_token or recover_erc20_token
     function initiateEmergencyWithdraw() external onlyOwner {
         if (emergencyUsed) revert EmergencyAlreadyUsed();
         emergencyUnlockTime = block.timestamp + EMERGENCY_TIMELOCK;
