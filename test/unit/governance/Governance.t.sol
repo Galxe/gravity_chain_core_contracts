@@ -651,8 +651,9 @@ contract GovernanceTest is Test {
         _advanceTime(VOTING_DURATION_MICROS + 1);
         governance.resolve(proposalId);
 
-        // Execute should fail
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        // Execute should fail and bubble up the revert reason
+        bytes memory expectedReason = abi.encodeWithSignature("Error(string)", "MockTarget: always reverts");
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId, expectedReason));
         governance.execute(proposalId, targets, datas);
     }
 
@@ -1570,7 +1571,8 @@ contract GovernanceTest is Test {
         governance.resolve(proposalId);
 
         // Execute should fail and revert all changes atomically
-        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId));
+        bytes memory expectedReason = abi.encodeWithSignature("Error(string)", "MockTarget: always reverts");
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExecutionFailed.selector, proposalId, expectedReason));
         governance.execute(proposalId, targets, datas);
 
         // Verify first call was rolled back (value should still be 0)

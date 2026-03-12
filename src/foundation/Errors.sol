@@ -284,7 +284,8 @@ library Errors {
 
     /// @notice Proposal execution failed
     /// @param proposalId ID of the proposal
-    error ExecutionFailed(uint64 proposalId);
+    /// @param reason The revert data from the failed call
+    error ExecutionFailed(uint64 proposalId, bytes reason);
 
     /// @notice Caller is not an authorized executor
     /// @param caller The unauthorized caller address
