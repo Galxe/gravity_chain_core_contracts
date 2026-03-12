@@ -454,6 +454,22 @@ library Errors {
     /// @notice Governance config has not been initialized
     error GovernanceConfigNotInitialized();
 
+    /// @notice Min voting threshold is unreasonably high (would make quorum unreachable)
+    error ExcessiveMinVotingThreshold();
+
+    /// @notice Required proposer stake is unreasonably high (would prevent any proposal creation)
+    error ExcessiveRequiredProposerStake();
+
+    /// @notice Voting duration is too short for meaningful participation
+    /// @param provided Duration provided (microseconds)
+    /// @param minimum Minimum required duration (microseconds)
+    error VotingDurationTooShort(uint64 provided, uint64 minimum);
+
+    /// @notice Voting duration exceeds maximum allowed
+    /// @param provided Duration provided (microseconds)
+    /// @param maximum Maximum allowed duration (microseconds)
+    error VotingDurationTooLong(uint64 provided, uint64 maximum);
+
     // ========================================================================
     // EPOCH CONFIG ERRORS
     // ========================================================================
