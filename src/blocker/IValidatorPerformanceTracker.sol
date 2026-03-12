@@ -28,10 +28,7 @@ interface IValidatorPerformanceTracker {
     /// @param skippedProposer True if proposerIndex was non-NIL but out of bounds (silently skipped)
     /// @param skippedFailedCount Number of failed indices that were out of bounds (silently skipped)
     event PerformanceUpdated(
-        uint64 indexed proposerIndex,
-        uint256 failedCount,
-        bool skippedProposer,
-        uint256 skippedFailedCount
+        uint64 indexed proposerIndex, uint256 failedCount, bool skippedProposer, uint256 skippedFailedCount
     );
 
     /// @notice Emitted when performance counters are reset for a new epoch
@@ -70,6 +67,19 @@ interface IValidatorPerformanceTracker {
     /// @notice Reset performance counters for a new epoch
     /// @dev Called by Reconfiguration._applyReconfiguration() during epoch transitions.
     ///      Clears all existing counters and re-initializes for the new validator set.
+    ///
+    ///      ORDERING INVARIANT: This function destructively erases all performance data.
+    ///      Callers MUST ensure that any consumers of performance data (e.g.,
+    ///      ValidatorManagement.evictUnderperformingValidators() which reads
+    ///      getAllPerformances()) have been invoked BEFORE calling this function.
+    ///      Violating this ordering will permanently lose the epoch's performance
+    ///      records, silently disabling performance-based eviction and any future
+    ///      reward distribution logic.
+    ///
+    ///      Current call order in Reconfiguration._applyReconfiguration():
+    ///        1. evictUnderperformingValidators()  — reads perf data
+    ///        2. ValidatorManagement.onNewEpoch()  — processes validator set changes
+    ///        3. PerformanceTracker.onNewEpoch()   — destroys perf data (this function)
     /// @param activeValidatorCount Number of active validators in the new epoch
     function onNewEpoch(
         uint256 activeValidatorCount

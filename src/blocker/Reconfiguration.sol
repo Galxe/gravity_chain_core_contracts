@@ -282,8 +282,12 @@ contract Reconfiguration is IReconfiguration {
         IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
 
         // 4. Reset performance tracker for the new epoch
-        //    Must happen AFTER ValidatorManagement.onNewEpoch() so that perf data
-        //    is available for future rewards distribution.
+        //    ORDERING INVARIANT: This call destructively erases all epoch performance data.
+        //    It MUST be the last consumer-dependent step — specifically AFTER:
+        //      - evictUnderperformingValidators() (step 2), which reads getAllPerformances()
+        //      - ValidatorManagement.onNewEpoch() (step 3), which processes validator changes
+        //    Reordering this before step 2 will silently zero out performance records,
+        //    disabling eviction and any future reward distribution logic.
         //    Following Aptos pattern: validator_perf.validators is reset and
         //    re-populated with zeros after on_new_epoch() processes rewards.
         uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();
