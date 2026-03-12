@@ -4,9 +4,9 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { GBridgeReceiver } from "@src/oracle/evm/native_token_bridge/GBridgeReceiver.sol";
 import { IGBridgeReceiver, INativeMintPrecompile } from "@src/oracle/evm/native_token_bridge/IGBridgeReceiver.sol";
-import { BlockchainEventHandler } from "@src/oracle/evm/BlockchainEventHandler.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { NotAllowed } from "@src/foundation/SystemAccessControl.sol";
 import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title MockNativeMintPrecompile
@@ -106,7 +106,7 @@ contract GBridgeReceiverTest is Test {
         bytes memory payload = _createOraclePayload(trustedBridge, 0, 100, alice);
 
         vm.prank(alice);
-        vm.expectRevert(BlockchainEventHandler.OnlyNativeOracle.selector);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, alice, SystemAddresses.NATIVE_ORACLE));
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
     }
 

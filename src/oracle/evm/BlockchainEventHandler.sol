@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { IOracleCallback } from "../INativeOracle.sol";
 import { PortalMessage } from "./PortalMessage.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
+import { requireAllowed } from "@src/foundation/SystemAccessControl.sol";
 
 /// @title BlockchainEventHandler
 /// @author Gravity Team
@@ -13,13 +14,6 @@ import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
 ///      Each handler is registered directly as a callback in NativeOracle for specific
 ///      (sourceType, sourceId) pairs.
 abstract contract BlockchainEventHandler is IOracleCallback {
-    // ========================================================================
-    // ERRORS
-    // ========================================================================
-
-    /// @notice Only NativeOracle can call onOracleEvent
-    error OnlyNativeOracle();
-
     // ========================================================================
     // ORACLE CALLBACK
     // ========================================================================
@@ -38,9 +32,7 @@ abstract contract BlockchainEventHandler is IOracleCallback {
         bytes calldata payload
     ) external override returns (bool shouldStore) {
         // Only NativeOracle can call this
-        if (msg.sender != SystemAddresses.NATIVE_ORACLE) {
-            revert OnlyNativeOracle();
-        }
+        requireAllowed(SystemAddresses.NATIVE_ORACLE);
 
         // Decode portal message payload: (sender, messageNonce, message)
         (address sender, uint128 messageNonce, bytes memory message) = PortalMessage.decode(payload);

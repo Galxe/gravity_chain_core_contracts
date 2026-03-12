@@ -504,8 +504,6 @@ library Errors {
     // JWK MANAGER ERRORS
     // ========================================================================
 
-    /// @notice Only NativeOracle can call JWKManager callback
-    error JWKOnlyNativeOracle();
 
     /// @notice JWK version must be strictly increasing
     /// @param issuer The issuer URL
