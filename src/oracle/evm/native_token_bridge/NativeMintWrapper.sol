@@ -55,7 +55,10 @@ contract NativeMintWrapper is INativeMintWrapper {
     ///      bytecode injection (BSC-style), not via CREATE.
     /// @param owner_ The owner address (manages minter list)
     /// @param initialMinters The initial set of authorized minters
-    function initialize(address owner_, address[] calldata initialMinters) external {
+    function initialize(
+        address owner_,
+        address[] calldata initialMinters
+    ) external {
         requireAllowed(SystemAddresses.GENESIS);
         if (_initialized) revert Errors.AlreadyInitialized();
         if (owner_ == address(0)) revert Errors.ZeroAddress();
@@ -75,14 +78,18 @@ contract NativeMintWrapper is INativeMintWrapper {
     // ========================================================================
 
     /// @inheritdoc INativeMintWrapper
-    function addMinter(address minter) external onlyOwner {
+    function addMinter(
+        address minter
+    ) external onlyOwner {
         if (minter == address(0)) revert Errors.ZeroAddress();
         _minters[minter] = true;
         emit MinterAdded(minter);
     }
 
     /// @inheritdoc INativeMintWrapper
-    function removeMinter(address minter) external onlyOwner {
+    function removeMinter(
+        address minter
+    ) external onlyOwner {
         _minters[minter] = false;
         emit MinterRemoved(minter);
     }
@@ -92,7 +99,10 @@ contract NativeMintWrapper is INativeMintWrapper {
     // ========================================================================
 
     /// @inheritdoc INativeMintWrapper
-    function mint(address recipient, uint256 amount) external onlyMinter {
+    function mint(
+        address recipient,
+        uint256 amount
+    ) external onlyMinter {
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (amount == 0) revert Errors.ZeroAmount();
 
@@ -108,7 +118,9 @@ contract NativeMintWrapper is INativeMintWrapper {
     // ========================================================================
 
     /// @inheritdoc INativeMintWrapper
-    function isMinter(address account) external view returns (bool) {
+    function isMinter(
+        address account
+    ) external view returns (bool) {
         return _minters[account];
     }
 

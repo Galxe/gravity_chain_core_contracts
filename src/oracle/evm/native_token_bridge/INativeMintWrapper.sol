@@ -43,12 +43,16 @@ interface INativeMintWrapper {
     /// @notice Add an authorized minter
     /// @dev Only callable by the owner
     /// @param minter The address to authorize
-    function addMinter(address minter) external;
+    function addMinter(
+        address minter
+    ) external;
 
     /// @notice Remove an authorized minter
     /// @dev Only callable by the owner
     /// @param minter The address to deauthorize
-    function removeMinter(address minter) external;
+    function removeMinter(
+        address minter
+    ) external;
 
     // ========================================================================
     // MINT
@@ -58,7 +62,10 @@ interface INativeMintWrapper {
     /// @dev Only callable by authorized minters
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to mint (in wei)
-    function mint(address recipient, uint256 amount) external;
+    function mint(
+        address recipient,
+        uint256 amount
+    ) external;
 
     // ========================================================================
     // VIEW FUNCTIONS
@@ -67,7 +74,9 @@ interface INativeMintWrapper {
     /// @notice Check if an address is an authorized minter
     /// @param account The address to check
     /// @return True if the address is an authorized minter
-    function isMinter(address account) external view returns (bool);
+    function isMinter(
+        address account
+    ) external view returns (bool);
 
     /// @notice Get the owner address
     /// @return The owner address

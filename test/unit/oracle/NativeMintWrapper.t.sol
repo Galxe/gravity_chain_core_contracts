@@ -208,7 +208,11 @@ contract NativeMintWrapperTest is Test {
     // FUZZ TESTS
     // ========================================================================
 
-    function testFuzz_AddAndMint(address minter, address recipient, uint256 amount) public {
+    function testFuzz_AddAndMint(
+        address minter,
+        address recipient,
+        uint256 amount
+    ) public {
         vm.assume(minter != address(0));
         vm.assume(recipient != address(0));
         vm.assume(amount > 0);
