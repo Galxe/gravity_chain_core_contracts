@@ -98,6 +98,10 @@ pub const JWK_MANAGER_ADDR: Address = address!("00000000000000000000000000000001
 /// Oracle request queue contract
 pub const ORACLE_REQUEST_QUEUE_ADDR: Address = address!("00000000000000000000000000000001625F4002");
 
+/// Native mint wrapper contract
+/// Wraps native mint precompile with access control for multiple callers
+pub const NATIVE_MINT_WRAPPER_ADDR: Address = address!("00000000000000000000000000000001625F4003");
+
 // Precompiles (0x1625F5xxx)
 /// Native mint precompile
 pub const NATIVE_MINT_PRECOMPILE_ADDR: Address = address!("00000000000000000000000000000001625F5000");
@@ -107,7 +111,7 @@ pub const NATIVE_MINT_PRECOMPILE_ADDR: Address = address!("000000000000000000000
 // Note: StakePool is created dynamically during Genesis.initialize, not pre-deployed
 // ============================================================================
 
-pub const CONTRACTS: [(&str, Address); 21] = [
+pub const CONTRACTS: [(&str, Address); 22] = [
     ("Genesis", GENESIS_ADDR),
     ("Reconfiguration", RECONFIGURATION_ADDR),
     ("StakingConfig", STAKE_CONFIG_ADDR),
@@ -129,6 +133,7 @@ pub const CONTRACTS: [(&str, Address); 21] = [
     ("ExecutionConfig", EXECUTION_CONFIG_ADDR),
     ("OracleTaskConfig", ORACLE_TASK_CONFIG_ADDR),
     ("OnDemandOracleTaskConfig", ON_DEMAND_ORACLE_TASK_CONFIG_ADDR),
+    ("NativeMintWrapper", NATIVE_MINT_WRAPPER_ADDR),
 ];
 
 pub const SYSTEM_ACCOUNT_INFO: AccountInfo = AccountInfo {

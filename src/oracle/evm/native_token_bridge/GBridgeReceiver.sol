@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { IGBridgeReceiver, INativeMintPrecompile } from "./IGBridgeReceiver.sol";
+import { IGBridgeReceiver } from "./IGBridgeReceiver.sol";
+import { INativeMintWrapper } from "./INativeMintWrapper.sol";
 import { BlockchainEventHandler } from "../BlockchainEventHandler.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
 import { Errors } from "@src/foundation/Errors.sol";
@@ -95,12 +96,8 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         // Mark nonce as processed BEFORE minting (CEI pattern)
         _processedNonces[messageNonce] = true;
 
-        // Mint native tokens via precompile (precompile never reverts)
-        bytes memory callData = abi.encodePacked(uint8(0x01), recipient, amount);
-        (bool transferSuccess,) = SystemAddresses.NATIVE_MINT_PRECOMPILE.call(callData);
-        if (!transferSuccess) {
-            revert MintFailed(recipient, amount);
-        }
+        // Mint native tokens via wrapper (wrapper calls precompile)
+        INativeMintWrapper(SystemAddresses.NATIVE_MINT_WRAPPER).mint(recipient, amount);
 
         emit NativeMinted(recipient, amount, messageNonce);
 
