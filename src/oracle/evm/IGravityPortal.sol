@@ -47,8 +47,10 @@ interface IGravityPortal {
     /// @notice No fees available to withdraw
     error NoFeesToWithdraw();
 
-    /// @notice Fee refund to sender failed
-    error RefundFailed();
+    /// @notice Fee provided exceeds the maximum allowed (2x required fee)
+    /// @param required The required fee amount
+    /// @param provided The provided fee amount
+    error ExcessiveFee(uint256 required, uint256 provided);
 
     /// @notice Fee transfer to recipient failed
     error TransferFailed();

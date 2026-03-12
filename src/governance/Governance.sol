@@ -511,9 +511,9 @@ contract Governance is IGovernance, Ownable2Step {
         // Execute all calls atomically
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
-            (bool success,) = targets[i].call(datas[i]);
+            (bool success, bytes memory returnData) = targets[i].call(datas[i]);
             if (!success) {
-                revert Errors.ExecutionFailed(proposalId);
+                revert Errors.ExecutionFailed(proposalId, returnData);
             }
         }
 

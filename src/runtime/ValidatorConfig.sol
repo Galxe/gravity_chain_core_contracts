@@ -125,7 +125,12 @@ contract ValidatorConfig {
 
         // Validate parameters
         _validateConfig(
-            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize
+            _minimumBond,
+            _maximumBond,
+            _unbondingDelayMicros,
+            _votingPowerIncreaseLimitPct,
+            _maxValidatorSetSize,
+            _autoEvictThreshold
         );
 
         minimumBond = _minimumBond;
@@ -189,7 +194,12 @@ contract ValidatorConfig {
 
         // Validate parameters
         _validateConfig(
-            _minimumBond, _maximumBond, _unbondingDelayMicros, _votingPowerIncreaseLimitPct, _maxValidatorSetSize
+            _minimumBond,
+            _maximumBond,
+            _unbondingDelayMicros,
+            _votingPowerIncreaseLimitPct,
+            _maxValidatorSetSize,
+            _autoEvictThreshold
         );
 
         _pendingConfig = PendingConfig({
@@ -251,12 +261,14 @@ contract ValidatorConfig {
     /// @param _unbondingDelayMicros Unbonding delay
     /// @param _votingPowerIncreaseLimitPct Voting power increase limit
     /// @param _maxValidatorSetSize Max validator set size
+    /// @param _autoEvictThreshold Auto-eviction threshold
     function _validateConfig(
         uint256 _minimumBond,
         uint256 _maximumBond,
         uint64 _unbondingDelayMicros,
         uint64 _votingPowerIncreaseLimitPct,
-        uint256 _maxValidatorSetSize
+        uint256 _maxValidatorSetSize,
+        uint256 _autoEvictThreshold
     ) internal pure {
         if (_minimumBond == 0) {
             revert Errors.InvalidMinimumBond();
@@ -279,6 +291,12 @@ contract ValidatorConfig {
 
         if (_maxValidatorSetSize == 0 || _maxValidatorSetSize > MAX_VALIDATOR_SET_SIZE) {
             revert Errors.InvalidValidatorSetSize(_maxValidatorSetSize);
+        }
+
+        // autoEvictThreshold must fit in uint64 since successfulProposals is uint64.
+        // A threshold of type(uint256).max would cause every validator to be evicted.
+        if (_autoEvictThreshold > type(uint64).max) {
+            revert Errors.InvalidAutoEvictThreshold(_autoEvictThreshold, type(uint64).max);
         }
     }
 

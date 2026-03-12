@@ -16,6 +16,8 @@ contract GovernanceConfigTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 1000 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 100 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days in microseconds
+    uint64 constant GOV_MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000;
+    uint64 constant GOV_MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;
 
     function setUp() public {
         // Deploy config at the expected system address
@@ -71,7 +73,7 @@ contract GovernanceConfigTest is Test {
 
     function test_RevertWhen_InitializeZeroVotingDuration() public {
         vm.prank(SystemAddresses.GENESIS);
-        vm.expectRevert(Errors.InvalidVotingDuration.selector);
+        vm.expectRevert(abi.encodeWithSelector(Errors.VotingDurationTooShort.selector, 0, GOV_MIN_VOTING_DURATION));
         config.initialize(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
     }
 
@@ -116,7 +118,7 @@ contract GovernanceConfigTest is Test {
         _initializeConfig();
 
         vm.prank(SystemAddresses.GOVERNANCE);
-        vm.expectRevert(Errors.InvalidVotingDuration.selector);
+        vm.expectRevert(abi.encodeWithSelector(Errors.VotingDurationTooShort.selector, 0, GOV_MIN_VOTING_DURATION));
         config.setForNextEpoch(MIN_VOTING_THRESHOLD, REQUIRED_PROPOSER_STAKE, 0);
     }
 
@@ -263,9 +265,9 @@ contract GovernanceConfigTest is Test {
         uint256 requiredProposerStake,
         uint64 votingDurationMicros
     ) public {
-        vm.assume(minVotingThreshold > 0);
-        vm.assume(requiredProposerStake > 0);
-        vm.assume(votingDurationMicros > 0);
+        vm.assume(minVotingThreshold > 0 && minVotingThreshold < type(uint128).max);
+        vm.assume(requiredProposerStake > 0 && requiredProposerStake < type(uint256).max);
+        vm.assume(votingDurationMicros >= GOV_MIN_VOTING_DURATION && votingDurationMicros <= GOV_MAX_VOTING_DURATION);
 
         vm.prank(SystemAddresses.GENESIS);
         config.initialize(minVotingThreshold, requiredProposerStake, votingDurationMicros);
@@ -282,9 +284,11 @@ contract GovernanceConfigTest is Test {
     ) public {
         _initializeConfig();
 
-        vm.assume(minVotingThreshold > 0);
-        vm.assume(requiredProposerStake > 0);
-        vm.assume(votingDurationMicros > 0);
+        vm.assume(minVotingThreshold > 0 && minVotingThreshold < type(uint128).max);
+        vm.assume(requiredProposerStake > 0 && requiredProposerStake < type(uint256).max);
+        vm.assume(
+            votingDurationMicros >= config.MIN_VOTING_DURATION() && votingDurationMicros <= config.MAX_VOTING_DURATION()
+        );
 
         vm.prank(SystemAddresses.GOVERNANCE);
         config.setForNextEpoch(minVotingThreshold, requiredProposerStake, votingDurationMicros);

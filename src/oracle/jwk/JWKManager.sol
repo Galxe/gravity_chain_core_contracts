@@ -121,9 +121,7 @@ contract JWKManager is IJWKManager, IOracleCallback {
         bytes calldata payload
     ) external override returns (bool shouldStore) {
         // Only NativeOracle can call this
-        if (msg.sender != SystemAddresses.NATIVE_ORACLE) {
-            revert Errors.JWKOnlyNativeOracle();
-        }
+        requireAllowed(SystemAddresses.NATIVE_ORACLE);
 
         // Silence unused variable warnings
         (sourceType, sourceId, nonce);

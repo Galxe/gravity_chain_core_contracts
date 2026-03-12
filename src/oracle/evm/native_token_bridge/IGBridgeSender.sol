@@ -31,24 +31,16 @@ interface IGBridgeSender {
     /// @notice Cannot bridge to zero address
     error ZeroRecipient();
 
-    /// @notice Emergency withdrawal has not been initiated
-    error EmergencyNotInitiated();
-
-    /// @notice Emergency timelock has not expired
-    /// @param unlockTime The timestamp when emergency withdrawal becomes available
-    error EmergencyTimelockNotExpired(uint256 unlockTime);
-
-    /// @notice Emergency withdrawal has already been used
-    error EmergencyAlreadyUsed();
-
-    /// @notice Emitted when emergency withdrawal is initiated
-    /// @param unlockTime The timestamp when emergency withdrawal becomes available
-    event EmergencyWithdrawInitiated(uint256 unlockTime);
-
-    /// @notice Emitted when emergency withdrawal is executed
+    /// @notice Emitted when emergency withdrawal of G tokens is executed
     /// @param recipient The address receiving the tokens
     /// @param amount The amount of tokens withdrawn
     event EmergencyWithdraw(address indexed recipient, uint256 amount);
+
+    /// @notice Emitted when stuck ERC20 tokens are recovered
+    /// @param token The ERC20 token address
+    /// @param recipient The address receiving the tokens
+    /// @param amount The amount of tokens recovered
+    event ERC20Recovered(address indexed token, address indexed recipient, uint256 amount);
 
     // ========================================================================
     // BRIDGE FUNCTIONS
@@ -109,32 +101,28 @@ interface IGBridgeSender {
     ) external view returns (uint256 requiredFee);
 
     // ========================================================================
-    // EMERGENCY FUNCTIONS
+    // EMERGENCY FUNCTIONS (Owner Only)
     // ========================================================================
 
-    /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
-    /// @dev Only callable by contract owner
-    function initiateEmergencyWithdraw() external;
-
-    /// @notice Execute emergency withdrawal after timelock expires
-    /// @dev Only callable by contract owner after timelock period
-    /// @param recipient Address to receive the tokens
+    /// @notice Withdraw locked G tokens in case of emergency
+    /// @dev Only callable by contract owner. Timelock and multi-sig logic
+    ///      should be implemented in the owner contract.
+    /// @param recipient Address to receive the G tokens
     /// @param amount Amount of G tokens to withdraw
     function emergencyWithdraw(
         address recipient,
         uint256 amount
     ) external;
 
-    /// @notice Get the emergency unlock time (0 if not initiated)
-    /// @return The timestamp when emergency withdrawal becomes available
-    function emergencyUnlockTime() external view returns (uint256);
-
-    /// @notice Get the emergency timelock duration
-    /// @return The timelock duration in seconds (7 days)
-    function EMERGENCY_TIMELOCK() external view returns (uint256);
-
-    /// @notice Whether emergency withdrawal has already been used
-    /// @return True if emergency withdrawal was already executed
-    function emergencyUsed() external view returns (bool);
+    /// @notice Recover arbitrary ERC20 tokens accidentally sent to this contract
+    /// @dev Only callable by contract owner. Cannot recover G tokens (use emergencyWithdraw).
+    /// @param token The ERC20 token address to recover
+    /// @param recipient Address to receive the tokens
+    /// @param amount Amount of tokens to recover
+    function recoverERC20(
+        address token,
+        address recipient,
+        uint256 amount
+    ) external;
 }
 
