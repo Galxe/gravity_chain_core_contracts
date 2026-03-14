@@ -12,17 +12,6 @@ import { Errors } from "../foundation/Errors.sol";
 ///      Uses pending config pattern: changes are queued and applied at epoch boundaries.
 contract GovernanceConfig {
     // ========================================================================
-    // CONSTANTS
-    // ========================================================================
-
-    /// @notice Minimum voting duration: 1 hour in microseconds
-    /// @dev Prevents setting a voting window too short for meaningful participation
-    uint64 public constant MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000;
-
-    /// @notice Maximum voting duration: 1 year in microseconds
-    uint64 public constant MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;
-
-    // ========================================================================
     // TYPES
     // ========================================================================
 
@@ -193,22 +182,11 @@ contract GovernanceConfig {
         if (_minVotingThreshold == 0) {
             revert Errors.InvalidVotingThreshold();
         }
-        // Prevent setting quorum to type(uint128).max which would make it unreachable
-        if (_minVotingThreshold == type(uint128).max) {
-            revert Errors.ExcessiveMinVotingThreshold();
-        }
         if (_requiredProposerStake == 0) {
             revert Errors.InvalidProposerStake();
         }
-        // Prevent setting proposer stake to type(uint256).max which would block all proposals
-        if (_requiredProposerStake == type(uint256).max) {
-            revert Errors.ExcessiveRequiredProposerStake();
-        }
-        if (_votingDurationMicros < MIN_VOTING_DURATION) {
-            revert Errors.VotingDurationTooShort(_votingDurationMicros, MIN_VOTING_DURATION);
-        }
-        if (_votingDurationMicros > MAX_VOTING_DURATION) {
-            revert Errors.VotingDurationTooLong(_votingDurationMicros, MAX_VOTING_DURATION);
+        if (_votingDurationMicros == 0) {
+            revert Errors.InvalidVotingDuration();
         }
     }
 

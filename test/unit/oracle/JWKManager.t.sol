@@ -7,7 +7,6 @@ import { IJWKManager } from "../../../src/oracle/jwk/IJWKManager.sol";
 import { NativeOracle } from "../../../src/oracle/NativeOracle.sol";
 import { INativeOracle } from "../../../src/oracle/INativeOracle.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
-import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 
 /// @title JWKManagerTest
@@ -124,7 +123,7 @@ contract JWKManagerTest is Test {
         jwks[0] = _createSampleJWK("key1");
         bytes memory payload = _createPayload(GOOGLE_ISSUER, 1, jwks);
 
-        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, alice, SystemAddresses.NATIVE_ORACLE));
+        vm.expectRevert(Errors.JWKOnlyNativeOracle.selector);
         vm.prank(alice);
         jwkManager.onOracleEvent(SOURCE_TYPE_JWK, 1, 1, payload);
     }
