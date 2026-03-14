@@ -72,10 +72,11 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
             revert InsufficientFee(requiredFee, msg.value);
         }
 
-        // Revert if overpayment is excessive (more than 2x required fee)
-        // Small overpayments are absorbed as additional fees
-        if (msg.value > 2 * requiredFee) {
-            revert ExcessiveFee(requiredFee, msg.value);
+        // Refund excess fee to sender
+        if (msg.value > requiredFee) {
+            uint256 refundAmount = msg.value - requiredFee;
+            (bool success,) = msg.sender.call{ value: refundAmount }("");
+            if (!success) revert RefundFailed();
         }
 
         // Emit event for consensus engine to monitor
