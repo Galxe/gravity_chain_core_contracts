@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import { GammaHardforkBase } from "./GammaHardforkBase.t.sol";
+import { HardforkRegistry } from "./HardforkRegistry.sol";
 import { IStakePool } from "../../src/staking/IStakePool.sol";
 import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../src/foundation/Errors.sol";
@@ -36,7 +37,7 @@ contract StakePoolUpgradeTest is GammaHardforkBase {
 
     /// @notice Verify ReentrancyGuard slot is initialized after hardfork
     function test_reentrancyGuard_slotInitialized() public view {
-        bytes32 slot = vm.load(pool1, REENTRANCY_GUARD_SLOT);
+        bytes32 slot = vm.load(pool1, HardforkRegistry.REENTRANCY_GUARD_SLOT);
         assertEq(uint256(slot), 1, "ReentrancyGuard should be NOT_ENTERED (1)");
     }
 

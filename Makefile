@@ -1,4 +1,5 @@
-.PHONY: help format format-check lint lint-fix slither mythril 4naly3er aderyn audit cleanup-demo
+SHELL := /bin/bash
+.PHONY: help format format-check lint lint-fix slither mythril 4naly3er aderyn audit cleanup-demo test
 
 # Set default target to help
 .DEFAULT_GOAL := help
@@ -8,7 +9,7 @@ SOL_FILES = 'src/**/*.sol'
 
 help: ## Display help information
 	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
 lint: ## Check Solidity code with Solhint
 	@echo "Linting Solidity files..."
@@ -59,3 +60,11 @@ cleanup-demo: ## Clean up demo files from project directories
 	@chmod +x script/cleanup-demo.sh
 	@echo "Running cleanup script..."
 	@./script/cleanup-demo.sh
+
+test: ## Run all tests
+	forge test
+
+# ============================================================================
+# Hardfork testing targets (extract-fixtures, storage-diff, hardfork-test, etc.)
+# ============================================================================
+include test/hardfork/hardfork.mk
