@@ -13,24 +13,24 @@ import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 library HardforkRegistry {
     /// @notice A system contract whose bytecode should be replaced during hardfork
     struct ContractUpgrade {
-        address addr;       // e.g., SystemAddresses.STAKE_CONFIG
-        string  name;       // e.g., "StakingConfig" — used for fixture file lookup & deploy
+        address addr; // e.g., SystemAddresses.STAKE_CONFIG
+        string name; // e.g., "StakingConfig" — used for fixture file lookup & deploy
     }
 
     /// @notice A storage write to apply after bytecode replacement (e.g., init ReentrancyGuard)
     struct PostAction {
-        address target;     // contract address (or address(0) for dynamic targets like pools)
-        bytes32 slot;       // storage slot to write
-        bytes32 value;      // value to write
-        bool    isDynamic;  // if true, apply to all StakePool instances instead of `target`
+        address target; // contract address (or address(0) for dynamic targets like pools)
+        bytes32 slot; // storage slot to write
+        bytes32 value; // value to write
+        bool isDynamic; // if true, apply to all StakePool instances instead of `target`
     }
 
     /// @notice Complete hardfork definition
     struct HardforkDef {
-        string              name;       // "gamma", "delta", ...
-        string              fromTag;    // git tag for the "from" version fixtures
-        ContractUpgrade[]   upgrades;   // contracts to replace
-        PostAction[]        postActions; // storage patches after replacement
+        string name; // "gamma", "delta", ...
+        string fromTag; // git tag for the "from" version fixtures
+        ContractUpgrade[] upgrades; // contracts to replace
+        PostAction[] postActions; // storage patches after replacement
     }
 
     // ========================================================================
@@ -64,8 +64,8 @@ library HardforkRegistry {
         def.postActions[0] = PostAction({
             target: address(0),
             slot: REENTRANCY_GUARD_SLOT,
-            value: bytes32(uint256(1)),  // NOT_ENTERED
-            isDynamic: true              // apply to all StakePool instances
+            value: bytes32(uint256(1)), // NOT_ENTERED
+            isDynamic: true // apply to all StakePool instances
         });
     }
 }

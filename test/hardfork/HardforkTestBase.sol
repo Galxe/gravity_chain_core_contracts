@@ -112,33 +112,61 @@ abstract contract HardforkTestBase is Test {
     /// @notice Load runtime bytecode from a fixture hex file
     /// @param tag Git tag name (e.g., "gravity-testnet-v1.0.0")
     /// @param contractName Contract name (e.g., "StakingConfig")
-    function _loadFixtureBytecode(string memory tag, string memory contractName) internal view returns (bytes memory) {
+    function _loadFixtureBytecode(
+        string memory tag,
+        string memory contractName
+    ) internal view returns (bytes memory) {
         string memory path = string.concat(FIXTURE_BASE_DIR, tag, "/", contractName, ".hex");
         string memory hexStr = vm.readFile(path);
         return vm.parseBytes(hexStr);
     }
 
     /// @notice Deploy all system contracts using fixture bytecodes from a specific tag
-    function _deployFromFixtures(string memory tag) internal {
+    function _deployFromFixtures(
+        string memory tag
+    ) internal {
         // All contracts that have fixture bytecodes
         string[19] memory contracts = [
-            "StakingConfig", "ValidatorConfig", "Staking", "ValidatorManagement",
-            "Reconfiguration", "NativeOracle", "Blocker", "ValidatorPerformanceTracker",
-            "GovernanceConfig", "Governance", "StakePool", "EpochConfig",
-            "ConsensusConfig", "ExecutionConfig", "VersionConfig", "RandomnessConfig",
-            "Timestamp", "DKG", "JWKManager"
+            "StakingConfig",
+            "ValidatorConfig",
+            "Staking",
+            "ValidatorManagement",
+            "Reconfiguration",
+            "NativeOracle",
+            "Blocker",
+            "ValidatorPerformanceTracker",
+            "GovernanceConfig",
+            "Governance",
+            "StakePool",
+            "EpochConfig",
+            "ConsensusConfig",
+            "ExecutionConfig",
+            "VersionConfig",
+            "RandomnessConfig",
+            "Timestamp",
+            "DKG",
+            "JWKManager"
         ];
         address[19] memory addrs = [
-            SystemAddresses.STAKE_CONFIG, SystemAddresses.VALIDATOR_CONFIG,
-            SystemAddresses.STAKING, SystemAddresses.VALIDATOR_MANAGER,
-            SystemAddresses.RECONFIGURATION, SystemAddresses.NATIVE_ORACLE,
-            SystemAddresses.BLOCK, SystemAddresses.PERFORMANCE_TRACKER,
-            SystemAddresses.GOVERNANCE_CONFIG, SystemAddresses.GOVERNANCE,
+            SystemAddresses.STAKE_CONFIG,
+            SystemAddresses.VALIDATOR_CONFIG,
+            SystemAddresses.STAKING,
+            SystemAddresses.VALIDATOR_MANAGER,
+            SystemAddresses.RECONFIGURATION,
+            SystemAddresses.NATIVE_ORACLE,
+            SystemAddresses.BLOCK,
+            SystemAddresses.PERFORMANCE_TRACKER,
+            SystemAddresses.GOVERNANCE_CONFIG,
+            SystemAddresses.GOVERNANCE,
             address(0), // StakePool — not a system address, skip
-            SystemAddresses.EPOCH_CONFIG, SystemAddresses.CONSENSUS_CONFIG,
-            SystemAddresses.EXECUTION_CONFIG, SystemAddresses.VERSION_CONFIG,
-            SystemAddresses.RANDOMNESS_CONFIG, SystemAddresses.TIMESTAMP,
-            SystemAddresses.DKG, SystemAddresses.JWK_MANAGER
+            SystemAddresses.EPOCH_CONFIG,
+            SystemAddresses.CONSENSUS_CONFIG,
+            SystemAddresses.EXECUTION_CONFIG,
+            SystemAddresses.VERSION_CONFIG,
+            SystemAddresses.RANDOMNESS_CONFIG,
+            SystemAddresses.TIMESTAMP,
+            SystemAddresses.DKG,
+            SystemAddresses.JWK_MANAGER
         ];
 
         for (uint256 i = 0; i < contracts.length; i++) {
@@ -197,7 +225,9 @@ abstract contract HardforkTestBase is Test {
 
     /// @notice Apply a hardfork using a registry definition
     /// @dev Replaces bytecodes for all contracts in the definition, then applies post-actions
-    function _applyHardfork(HardforkRegistry.HardforkDef memory def) internal {
+    function _applyHardfork(
+        HardforkRegistry.HardforkDef memory def
+    ) internal {
         // --- Tier 1: System contracts ---
         for (uint256 i = 0; i < def.upgrades.length; i++) {
             bytes memory newCode = _compileNewBytecode(def.upgrades[i].name);
@@ -231,7 +261,9 @@ abstract contract HardforkTestBase is Test {
     }
 
     /// @notice Compile current bytecode for a contract by name
-    function _compileNewBytecode(string memory name) internal returns (bytes memory) {
+    function _compileNewBytecode(
+        string memory name
+    ) internal returns (bytes memory) {
         // Use keccak to dispatch — Solidity can't switch on strings
         bytes32 h = keccak256(bytes(name));
         if (h == keccak256("StakingConfig")) return address(new StakingConfig()).code;
@@ -252,7 +284,10 @@ abstract contract HardforkTestBase is Test {
     // ========================================================================
 
     /// @notice Snapshot storage values at specific slots for later comparison
-    function _snapshotStorage(address addr, bytes32[] memory slots) internal {
+    function _snapshotStorage(
+        address addr,
+        bytes32[] memory slots
+    ) internal {
         _snapshotAddresses.push(addr);
         _snapshotSlots.push(slots);
         for (uint256 i = 0; i < slots.length; i++) {
@@ -268,10 +303,11 @@ abstract contract HardforkTestBase is Test {
             for (uint256 j = 0; j < slots.length; j++) {
                 bytes32 before = _storageSnapshot[addr][slots[j]];
                 bytes32 after_ = vm.load(addr, slots[j]);
-                assertEq(after_, before, string.concat(
-                    "Storage changed at ", vm.toString(addr),
-                    " slot ", vm.toString(slots[j])
-                ));
+                assertEq(
+                    after_,
+                    before,
+                    string.concat("Storage changed at ", vm.toString(addr), " slot ", vm.toString(slots[j]))
+                );
             }
         }
     }
@@ -325,7 +361,10 @@ abstract contract HardforkTestBase is Test {
     // VALIDATOR & STAKING HELPERS
     // ========================================================================
 
-    function _createStakePool(address owner, uint256 stakeAmount) internal returns (address pool) {
+    function _createStakePool(
+        address owner,
+        uint256 stakeAmount
+    ) internal returns (address pool) {
         uint64 lockedUntil = timestamp.nowMicroseconds() + LOCKUP_DURATION;
         vm.prank(owner);
         pool = staking.createPool{ value: stakeAmount }(owner, owner, owner, owner, lockedUntil);
@@ -333,7 +372,9 @@ abstract contract HardforkTestBase is Test {
     }
 
     function _createAndRegisterValidator(
-        address owner, uint256 stakeAmount, string memory moniker
+        address owner,
+        uint256 stakeAmount,
+        string memory moniker
     ) internal returns (address pool) {
         pool = _createStakePool(owner, stakeAmount);
         bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
@@ -344,7 +385,9 @@ abstract contract HardforkTestBase is Test {
     }
 
     function _createRegisterAndJoin(
-        address owner, uint256 stakeAmount, string memory moniker
+        address owner,
+        uint256 stakeAmount,
+        string memory moniker
     ) internal returns (address pool) {
         pool = _createAndRegisterValidator(owner, stakeAmount, moniker);
         vm.prank(owner);
@@ -355,7 +398,9 @@ abstract contract HardforkTestBase is Test {
     // TIME & EPOCH HELPERS
     // ========================================================================
 
-    function _advanceTime(uint64 micros) internal {
+    function _advanceTime(
+        uint64 micros
+    ) internal {
         uint64 currentTime = timestamp.nowMicroseconds();
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(alice, currentTime + micros);
@@ -366,7 +411,9 @@ abstract contract HardforkTestBase is Test {
         return reconfig.checkAndStartTransition();
     }
 
-    function _simulateFinishReconfiguration(bytes memory dkgTranscript) internal {
+    function _simulateFinishReconfiguration(
+        bytes memory dkgTranscript
+    ) internal {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         reconfig.finishTransition(dkgTranscript);
     }
@@ -392,9 +439,7 @@ abstract contract HardforkTestBase is Test {
         return RandomnessConfig.RandomnessConfigData({
             variant: RandomnessConfig.ConfigVariant.V2,
             configV2: RandomnessConfig.ConfigV2Data({
-                secrecyThreshold: half,
-                reconstructionThreshold: twoThirds,
-                fastPathSecrecyThreshold: twoThirds
+                secrecyThreshold: half, reconstructionThreshold: twoThirds, fastPathSecrecyThreshold: twoThirds
             })
         });
     }

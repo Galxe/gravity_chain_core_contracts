@@ -45,9 +45,7 @@ contract NativeOracleUpgradeTest is GammaHardforkBase {
 
         // Try nonce 3 (skip 2) — should revert with NonceNotSequential
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 2, 3)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 2, 3));
         nativeOracle.record(SOURCE_TYPE_JWK, SOURCE_ID, 3, block.number, hex"aabb", 0);
     }
 
@@ -57,18 +55,14 @@ contract NativeOracleUpgradeTest is GammaHardforkBase {
 
         // Try nonce 1 again — should revert (expected nonce is 2)
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 2, 1)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 2, 1));
         nativeOracle.record(SOURCE_TYPE_JWK, SOURCE_ID, 1, block.number, hex"aabb", 0);
     }
 
     /// @notice Test that nonce 0 reverts (first valid nonce is 1)
     function test_nonce_zeroReverts() public {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 1, 0)
-        );
+        vm.expectRevert(abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_JWK, SOURCE_ID, 1, 0));
         nativeOracle.record(SOURCE_TYPE_JWK, SOURCE_ID, 0, block.number, hex"aabb", 0);
     }
 
@@ -129,7 +123,11 @@ contract NativeOracleUpgradeTest is GammaHardforkBase {
     // HELPERS
     // ========================================================================
 
-    function _recordData(uint32 sourceType, uint256 sourceId, uint128 nonce) internal {
+    function _recordData(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) internal {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         nativeOracle.record(sourceType, sourceId, nonce, block.number, abi.encodePacked("payload_", nonce), 0);
     }

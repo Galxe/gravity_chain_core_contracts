@@ -77,8 +77,7 @@ contract GovernanceUpgradeTest is GammaHardforkBase {
         vm.prank(SystemAddresses.GOVERNANCE);
         vm.expectRevert();
         validatorConfig.setForNextEpoch(
-            MIN_BOND, MAX_BOND, type(uint64).max,
-            true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+            MIN_BOND, MAX_BOND, type(uint64).max, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
     }
 
@@ -91,8 +90,7 @@ contract GovernanceUpgradeTest is GammaHardforkBase {
         // Disable validator set changes via pending config
         vm.prank(SystemAddresses.GOVERNANCE);
         validatorConfig.setForNextEpoch(
-            MIN_BOND, MAX_BOND, UNBONDING_DELAY,
-            false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, false, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
         // Apply via reconfiguration
         vm.prank(SystemAddresses.RECONFIGURATION);
