@@ -1,0 +1,69 @@
+name: Hardfork Tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'test/hardfork/**'
+      - 'foundry.toml'
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: 'Git tag for the "from" version (e.g., gravity-testnet-v1.0.0)'
+        required: false
+        default: 'gravity-testnet-v1.0.0'
+
+env:
+  FOUNDRY_PROFILE: default
+
+jobs:
+  hardfork-tests:
+    name: Hardfork Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for git worktree
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Dependencies
+        run: |
+          npm install
+          forge install
+
+      - name: Build Contracts
+        run: forge build
+
+      - name: Run HardFork Tests
+        run: forge test --match-path "test/hardfork/*" -v
+
+      - name: Run Full Test Suite
+        run: forge test
+
+      - name: Storage Layout Diff (informational)
+        if: always()
+        run: |
+          echo "## Storage Layout Changes" >> $GITHUB_STEP_SUMMARY
+          for contract in StakingConfig ValidatorConfig Staking ValidatorManagement Reconfiguration NativeOracle Blocker GovernanceConfig Governance; do
+            layout_file="test/hardfork/fixtures/gravity-testnet-v1.0.0/${contract}.storage.json"
+            if [ -f "$layout_file" ]; then
+              new_layout=$(forge inspect $contract storage-layout --json 2>/dev/null)
+              old_fields=$(python3 -c "import json; [print(f\"{x['label']:30s} slot={x['slot']:>3s} type={x['type']}\") for x in json.load(open('$layout_file')).get('storage',[])]" 2>/dev/null)
+              new_fields=$(echo "$new_layout" | python3 -c "import json,sys; [print(f\"{x['label']:30s} slot={x['slot']:>3s} type={x['type']}\") for x in json.load(sys.stdin).get('storage',[])]" 2>/dev/null)
+              changes=$(diff <(echo "$old_fields") <(echo "$new_fields") 2>/dev/null || true)
+              if [ -n "$changes" ]; then
+                echo "### ⚠️ $contract — CHANGED" >> $GITHUB_STEP_SUMMARY
+                echo '```diff' >> $GITHUB_STEP_SUMMARY
+                echo "$changes" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+              else
+                echo "### ✅ $contract — No changes" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
