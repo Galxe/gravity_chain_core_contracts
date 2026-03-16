@@ -73,9 +73,7 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
 
         assertEq(validatorManager.getActiveValidatorCount(), 3, "should have 3 validators");
         assertEq(
-            uint8(validatorManager.getValidatorStatus(pool3)),
-            uint8(ValidatorStatus.ACTIVE),
-            "charlie should be active"
+            uint8(validatorManager.getValidatorStatus(pool3)), uint8(ValidatorStatus.ACTIVE), "charlie should be active"
         );
     }
 
@@ -213,7 +211,9 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
     // ========================================================================
 
     /// @notice Fuzz test: epoch transitions with varying behavior after hardfork
-    function testFuzz_epochsAfterHardfork(uint8 numEpochs) public {
+    function testFuzz_epochsAfterHardfork(
+        uint8 numEpochs
+    ) public {
         numEpochs = uint8(bound(numEpochs, 1, 10));
 
         for (uint8 i = 0; i < numEpochs; i++) {
@@ -221,10 +221,6 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
         }
 
         // Should complete without reverting
-        assertEq(
-            reconfig.currentEpoch(),
-            uint64(1) + uint64(numEpochs),
-            "should complete all epochs"
-        );
+        assertEq(reconfig.currentEpoch(), uint64(1) + uint64(numEpochs), "should complete all epochs");
     }
 }
