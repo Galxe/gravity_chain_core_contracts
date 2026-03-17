@@ -7,7 +7,6 @@ import { IGBridgeReceiver, INativeMintPrecompile } from "@src/oracle/evm/native_
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "@src/foundation/SystemAccessControl.sol";
-import { Errors } from "@src/foundation/Errors.sol";
 
 /// @title MockNativeMintPrecompile
 /// @notice Mock precompile for testing native token minting
@@ -53,7 +52,7 @@ contract GBridgeReceiverTest is Test {
         vm.mockCall(SystemAddresses.NATIVE_MINT_PRECOMPILE, emptyData, successReturn);
 
         // Deploy receiver with trusted bridge
-        receiver = new GBridgeReceiver(trustedBridge, ETHEREUM_SOURCE_ID);
+        receiver = new GBridgeReceiver(trustedBridge);
     }
 
     // ========================================================================
@@ -77,11 +76,6 @@ contract GBridgeReceiverTest is Test {
 
     function test_Constructor() public view {
         assertEq(receiver.trustedBridge(), trustedBridge);
-    }
-
-    function test_Constructor_RevertWhenZeroTrustedBridge() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        new GBridgeReceiver(address(0), ETHEREUM_SOURCE_ID);
     }
 
     // ========================================================================
@@ -180,7 +174,6 @@ contract GBridgeReceiverTest is Test {
         uint128 messageNonce
     ) public {
         vm.assume(recipient != address(0));
-        vm.assume(amount > 0); // amount=0 now reverts
         vm.assume(!receiver.isProcessed(messageNonce));
 
         bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, amount, recipient);
