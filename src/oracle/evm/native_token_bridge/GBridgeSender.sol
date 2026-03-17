@@ -87,16 +87,18 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroRecipient();
 
-        // Transfer G tokens from sender to this contract (lock) using SafeERC20
+        // Use balance delta pattern to handle potential fee-on-transfer tokens
+        uint256 balanceBefore = IERC20(gToken).balanceOf(address(this));
         IERC20(gToken).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 actualReceived = IERC20(gToken).balanceOf(address(this)) - balanceBefore;
 
-        // Encode bridge message: (amount, recipient)
-        bytes memory message = abi.encode(amount, recipient);
+        // Encode bridge message with actual received amount
+        bytes memory message = abi.encode(actualReceived, recipient);
 
         // Send message through GravityPortal (forwards ETH for fee)
         messageNonce = IGravityPortal(gravityPortal).send{ value: msg.value }(message);
 
-        emit TokensLocked(msg.sender, recipient, amount, messageNonce);
+        emit TokensLocked(msg.sender, recipient, actualReceived, messageNonce);
     }
 
     // ========================================================================
