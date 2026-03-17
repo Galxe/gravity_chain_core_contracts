@@ -322,7 +322,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function unstakeAndWithdraw(
         uint256 amount,
         address recipient
-    ) external onlyStaker whenNotReconfiguring returns (uint256 withdrawn) {
+    ) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 withdrawn) {
         // First unstake the requested amount
         _unstake(amount);
 
