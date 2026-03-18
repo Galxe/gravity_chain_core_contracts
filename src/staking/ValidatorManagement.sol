@@ -734,7 +734,14 @@ contract ValidatorManagement is IValidatorManagement {
         for (uint256 i = 0; i < length; i++) {
             address pool = _activeValidators[i];
             // Renew lockup via Staking factory (which calls StakePool.systemRenewLockup)
-            IStaking(SystemAddresses.STAKING).renewPoolLockup(pool);
+            // Use try/catch to ensure one bad/malicious pool doesn't revert the entire reconfiguration
+            try IStaking(SystemAddresses.STAKING).renewPoolLockup(pool) {
+            // Success, do nothing
+            }
+                catch {
+                // Ignore failure to ensure epoch transition liveness
+                // The validator might lose voting power and be evicted in the next epoch
+            }
         }
     }
 
@@ -804,7 +811,16 @@ contract ValidatorManagement is IValidatorManagement {
         address stakePool
     ) internal view returns (uint256) {
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
+        uint256 power;
+
+        // Use try/catch to ensure calling getPoolVotingPower doesn't revert the reconfiguration
+        try IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_) returns (uint256 _power) {
+            power = _power;
+        } catch {
+            // Safe fallback value if the external call reverts
+            power = 0;
+        }
+
         uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
     }
