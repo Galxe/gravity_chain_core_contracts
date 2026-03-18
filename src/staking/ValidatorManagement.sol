@@ -415,7 +415,14 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length == 1) {
+        uint256 remainingActive = 0;
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                remainingActive++;
+            }
+        }
+        if (remainingActive <= 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
@@ -448,7 +455,14 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length <= 1) {
+        uint256 remainingActive = 0;
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
+                remainingActive++;
+            }
+        }
+        if (remainingActive <= 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
