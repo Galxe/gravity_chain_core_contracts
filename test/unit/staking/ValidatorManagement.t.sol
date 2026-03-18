@@ -2048,5 +2048,49 @@ contract ValidatorManagementTest is Test {
         assertEq(freshManager.getTotalVotingPower(), expectedTotalPower, "Total voting power should match");
         assertTrue(freshManager.isInitialized(), "Should be initialized");
     }
+
+    // ========================================================================
+    // EPOCH RESILIENCY TESTS
+    // ========================================================================
+
+    function test_onNewEpoch_resilientToStakingReverts() public {
+        // Create 3 validators
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+
+        _processEpoch(); // Activate all 3 validators
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "Should have 3 active validators");
+
+        // Mock Staking contract to revert when dealing with pool2
+        vm.mockCallRevert(
+            SystemAddresses.STAKING,
+            abi.encodeWithSelector(IStaking.renewPoolLockup.selector, pool2),
+            "Intentional renew revert"
+        );
+        
+        uint64 now_ = timestamp.nowMicroseconds(); 
+        vm.mockCallRevert(
+            SystemAddresses.STAKING,
+            abi.encodeWithSelector(IStaking.getPoolVotingPower.selector, pool2, now_),
+            "Intentional voting power revert"
+        );
+
+        // Process another epoch. With try/catch, it should succeed, and pool2 should have 0 voting power.
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.onNewEpoch();
+        
+        // The transition succeeded!
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "Should still have 3 active validators initially");
+        
+        // Check pool2 voting power was safely downgraded to 0
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(bobRecord.bond, 0, "Bob's voting power should be downgraded to 0 due to revert");
+        
+        // Check that other validators are unaffected
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(pool1);
+        assertEq(aliceRecord.bond, MIN_BOND, "Alice's voting power should be unaffected");
+    }
 }
 
