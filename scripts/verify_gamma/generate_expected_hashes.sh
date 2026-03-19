@@ -88,7 +88,7 @@ if len(all_refs) != 2:
     sys.exit(1)
 
 # Patch with FACTORY = Staking system address
-factory_hex = '00000000000000000000000000000000000000000000000000000001625F2000'
+factory_hex = '00000000000000000000000000000000000000000000000000000001625f2000'
 patched = bytearray(bytes.fromhex(bytecode_hex))
 for (start, length) in all_refs:
     assert length == 32, f'Expected 32-byte immutable, got {length}'
@@ -110,7 +110,7 @@ echo "  ✅ StakePool: ${STAKEPOOL_CODEHASH}"
     echo "EXPECTED_HASH_StakePool=\"${STAKEPOOL_CODEHASH}\""
     echo ""
     echo "# Immutable details:"
-    echo "#   FACTORY = Staking address = 0x0000000000000000000000000001625F2000"
+    echo "#   FACTORY = Staking address = 0x00000000000000000000000000000001625F2000"
 } >> "$OUTPUT_FILE"
 
 echo ""
