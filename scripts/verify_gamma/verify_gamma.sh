@@ -167,6 +167,12 @@ echo "║        Functional Smoke Tests                              ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
+# Helper: normalize cast output
+# cast can return values like "31536000000000[3.153e13]" — strip the [...] suffix
+normalize_cast_output() {
+    echo "$1" | sed 's/\[.*\]//g' | tr -d ' \n' | tr '[:upper:]' '[:lower:]'
+}
+
 # Helper: call a view function and check result
 check_call() {
     local label="$1"
@@ -183,14 +189,14 @@ check_call() {
         return
     fi
 
-    # Trim whitespace
-    result=$(echo "$result" | tr -d ' \n')
-    expected_trimmed=$(echo "$expected" | tr -d ' \n')
+    # Normalize: strip [scientific notation], whitespace, and lowercase
+    result_norm=$(normalize_cast_output "$result")
+    expected_norm=$(echo "$expected" | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
 
-    if [ "$result" = "$expected_trimmed" ]; then
-        pass "${label}: ${result}"
+    if [ "$result_norm" = "$expected_norm" ]; then
+        pass "${label}: ${result_norm}"
     else
-        fail "${label}: expected=${expected_trimmed}, got=${result}"
+        fail "${label}: expected=${expected_norm}, got=${result_norm}"
     fi
 }
 
@@ -234,8 +240,9 @@ echo "--- StakingConfig ---"
 check_call "hasPendingConfig()" "$STAKE_CONFIG" "hasPendingConfig()(bool)" "false"
 check_call "isInitialized()" "$STAKE_CONFIG" "isInitialized()(bool)" "true"
 
-# MAX_LOCKUP_DURATION = 4 * 365 * 86400 * 1_000_000 = 126230400000000
-check_call "MAX_LOCKUP_DURATION()" "$STAKE_CONFIG" "MAX_LOCKUP_DURATION()(uint64)" "126230400000000"
+# MAX_LOCKUP_DURATION = 4 * 365 * 86400 * 1_000_000 = 126144000000000
+# Note: Solidity `365 days` = exactly 365 * 86400 seconds (no leap year)
+check_call "MAX_LOCKUP_DURATION()" "$STAKE_CONFIG" "MAX_LOCKUP_DURATION()(uint64)" "126144000000000"
 
 # MAX_UNBONDING_DELAY = 365 * 86400 * 1_000_000 = 31536000000000
 check_call "MAX_UNBONDING_DELAY()" "$STAKE_CONFIG" "MAX_UNBONDING_DELAY()(uint64)" "31536000000000"
@@ -267,7 +274,7 @@ if [ -n "${pool_list:-}" ]; then
     if [ -n "$first_pool" ]; then
         check_exists "getRewardBalance()" "$first_pool" "getRewardBalance()(uint256)"
         check_call "FACTORY()" "$first_pool" "FACTORY()(address)" "$STAKING"
-        check_call "MAX_LOCKUP_DURATION()" "$first_pool" "MAX_LOCKUP_DURATION()(uint64)" "126230400000000"
+        check_call "MAX_LOCKUP_DURATION()" "$first_pool" "MAX_LOCKUP_DURATION()(uint64)" "126144000000000"
         check_call "MAX_PENDING_BUCKETS()" "$first_pool" "MAX_PENDING_BUCKETS()(uint256)" "1000"
     else
         skip "StakePool functional tests: no pool address available"
