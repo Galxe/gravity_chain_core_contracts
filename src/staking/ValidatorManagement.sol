@@ -79,6 +79,13 @@ contract ValidatorManagement is IValidatorManagement {
         address[] toKeepPending;
         /// @notice Number of validators to keep pending
         uint256 keepPendingCount;
+        /// @notice Active validators that dropped below minimum bond (ACTIVE -> INACTIVE)
+        /// @dev These are currently active validators whose voting power fell below minimumBond,
+        ///      e.g. due to try/catch fallback returning 0. They should be removed from the
+        ///      active set to prevent zero-bond validators from occupying consensus seats.
+        address[] toDeactivateUnderbonded;
+        /// @notice Number of underbonded active validators to deactivate
+        uint256 deactivateUnderbondedCount;
     }
 
     // ========================================================================
@@ -415,7 +422,9 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length == 1) {
+        // Use _pendingInactive.length to account for validators already leaving this epoch
+        // This prevents concurrent leave calls from bypassing the last-validator guard
+        if (_activeValidators.length <= _pendingInactive.length + 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
@@ -448,7 +457,8 @@ contract ValidatorManagement is IValidatorManagement {
         }
 
         // Prevent removing the last active validator (would halt consensus)
-        if (_activeValidators.length <= 1) {
+        // Use _pendingInactive.length to account for validators already leaving this epoch
+        if (_activeValidators.length <= _pendingInactive.length + 1) {
             revert Errors.CannotRemoveLastValidator();
         }
 
@@ -464,6 +474,13 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
+    /// @dev Key rotation uses a pending-apply pattern (similar to pendingFeeRecipient).
+    ///      The new key is stored in pendingConsensusPubkey/pendingConsensusPop and applied
+    ///      at the next epoch boundary by _applyPendingConsensusKeys(). This ensures:
+    ///      1. No mid-epoch desync between EVM contract state and BFT consensus engine
+    ///      2. Old key mapping (_pubkeyToValidator) stays valid for the current epoch,
+    ///         preventing slashing escape via key rotation (Fix D2-2)
+    ///      3. Light clients and bridge relayers see consistent keys within an epoch
     function rotateConsensusKey(
         address stakePool,
         bytes calldata newPubkey,
@@ -474,22 +491,29 @@ contract ValidatorManagement is IValidatorManagement {
 
         ValidatorRecord storage validator = _validators[stakePool];
 
-        // Check new pubkey is unique
+        // Check new pubkey is unique (against both active keys and other pending keys)
         bytes32 newKeyHash = keccak256(newPubkey);
         if (_pubkeyToValidator[newKeyHash] != address(0)) {
             revert Errors.DuplicateConsensusPubkey(newPubkey);
         }
 
-        // Clear old pubkey from mapping and register new one
-        bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
-        delete _pubkeyToValidator[oldKeyHash];
+        // Reserve the new key hash immediately to prevent concurrent registration conflicts.
+        // This means the new key is "claimed" but not yet effective for consensus.
+        // The old key mapping is intentionally preserved until epoch boundary
+        // (_applyPendingConsensusKeys) so that slashing can still locate this validator
+        // by its currently-active consensus key.
         _pubkeyToValidator[newKeyHash] = stakePool;
 
-        // TODO(yxia): it wont take effect immediately i think, it has to wait until the next epoch.
-        // check if aptos has some fancy way to make it take effect immediately.
-        // Update consensus key material (takes effect immediately)
-        validator.consensusPubkey = newPubkey;
-        validator.consensusPop = newPop;
+        // If there's already a pending key that hasn't been applied yet,
+        // release its reservation
+        if (validator.pendingConsensusPubkey.length > 0) {
+            bytes32 oldPendingHash = keccak256(validator.pendingConsensusPubkey);
+            delete _pubkeyToValidator[oldPendingHash];
+        }
+
+        // Store as pending (will be applied at next epoch boundary)
+        validator.pendingConsensusPubkey = newPubkey;
+        validator.pendingConsensusPop = newPop;
 
         emit ConsensusKeyRotated(stakePool, newPubkey);
     }
@@ -527,10 +551,14 @@ contract ValidatorManagement is IValidatorManagement {
         // 2. Apply deactivations (PENDING_INACTIVE → INACTIVE)
         _applyDeactivations(nextSet.toDeactivate, nextSet.deactivateCount);
 
+        // 2a. Deactivate underbonded active validators (ACTIVE -> INACTIVE)
+        //     These are active validators whose voting power dropped below minimumBond
+        _applyRevertInactive(nextSet.toDeactivateUnderbonded, nextSet.deactivateUnderbondedCount);
+
         // 3. Apply activations (PENDING_ACTIVE → ACTIVE)
         _applyActivations(nextSet.toActivate, nextSet.activateCount);
 
-        // 4. Handle validators that dropped below minimum bond
+        // 4. Handle validators that dropped below minimum bond (from pending)
         _applyRevertInactive(nextSet.toRevertInactive, nextSet.revertInactiveCount);
 
         // 5. Update pending active array (keep those that couldn't be activated)
@@ -553,6 +581,10 @@ contract ValidatorManagement is IValidatorManagement {
 
         // 8. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
+
+        // 8a. Apply pending consensus key rotations for all active validators
+        //     Keys are written at epoch boundary to maintain BFT <-> EVM consistency
+        _applyPendingConsensusKeys();
 
         // 9. Update bond (voting power) and total voting power in a single pass
         //    This captures post-lockup-renewal voting power and avoids redundant
@@ -632,7 +664,9 @@ contract ValidatorManagement is IValidatorManagement {
                 // Preserve liveness: never evict the last active validator
                 if (remainingActive <= 1) {
                     // Cannot evict the last active validator — would halt consensus
-                    break;
+                    // Use continue instead of break to avoid giving tail-index validators
+                    // positional immunity from eviction
+                    continue;
                 }
 
                 // Mark as PENDING_INACTIVE for processing by onNewEpoch()
@@ -760,6 +794,34 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
+    /// @notice Apply pending consensus key rotations at epoch boundary
+    /// @dev For each active validator with a pending key, this function:
+    ///      1. Deletes the old key from _pubkeyToValidator mapping
+    ///      2. Writes the pending key to consensusPubkey/consensusPop
+    ///      3. Clears the pending key fields
+    ///      Note: The new key's _pubkeyToValidator mapping was already set in rotateConsensusKey()
+    ///      to reserve the key for uniqueness checks. We only need to clean up the old mapping.
+    function _applyPendingConsensusKeys() internal {
+        uint256 length = _activeValidators.length;
+        for (uint256 i = 0; i < length; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+            if (validator.pendingConsensusPubkey.length > 0) {
+                // Remove old key from mapping (new key was already registered in rotateConsensusKey)
+                bytes32 oldKeyHash = keccak256(validator.consensusPubkey);
+                delete _pubkeyToValidator[oldKeyHash];
+
+                // Apply pending key
+                validator.consensusPubkey = validator.pendingConsensusPubkey;
+                validator.consensusPop = validator.pendingConsensusPop;
+
+                // Clear pending
+                delete validator.pendingConsensusPubkey;
+                delete validator.pendingConsensusPop;
+            }
+        }
+    }
+
     /// @notice Update bond (voting power) for all active validators and calculate total voting power
     /// @dev Called after lockup renewal to capture post-renewal voting power.
     ///      Merges the former _syncValidatorBonds() and _calculateTotalVotingPower() into
@@ -850,20 +912,41 @@ contract ValidatorManagement is IValidatorManagement {
             result.toDeactivate[i] = _pendingInactive[i];
         }
 
-        // Step 2: Count staying active validators (active minus pending_inactive)
-        // Use O(1) status lookup instead of O(n) _isInPendingInactive() scan
+        // Read minimumBond config once (used in Step 2 and Step 3)
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+
+        // Step 2: Count staying active validators
+        // Check both PENDING_INACTIVE status and minimumBond requirement.
+        // Active validators whose voting power dropped below minimumBond (e.g. due to
+        // try/catch fallback returning 0) should be removed from the active set.
         uint256 stayingActiveCount = 0;
+        result.toDeactivateUnderbonded = new address[](activeLen);
         for (uint256 i = 0; i < activeLen; i++) {
-            if (_validators[_activeValidators[i]].status != ValidatorStatus.PENDING_INACTIVE) {
-                stayingActiveCount++;
+            address pool = _activeValidators[i];
+            if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {
+                continue;
             }
+            // Check if active validator still meets minimumBond
+            uint256 power = _getValidatorVotingPower(pool);
+            if (power < minimumBond) {
+                result.toDeactivateUnderbonded[result.deactivateUnderbondedCount] = pool;
+                result.deactivateUnderbondedCount++;
+                continue;
+            }
+            stayingActiveCount++;
+        }
+        // Safety guard: if ALL active validators are underbonded, keep the last one
+        // to prevent consensus halt (empty active set). This validator will have low/zero
+        // voting power but consensus can still proceed.
+        if (stayingActiveCount == 0 && result.deactivateUnderbondedCount > 0) {
+            result.deactivateUnderbondedCount--;
+            stayingActiveCount = 1;
         }
 
         // Step 3: Compute pending activation with voting power limits
         uint256 currentTotal = _calculateTotalVotingPower();
         uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
         uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
-        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         uint256 addedPower = 0;
 
         for (uint256 i = 0; i < pendingActiveLen; i++) {
@@ -879,7 +962,11 @@ contract ValidatorManagement is IValidatorManagement {
 
             // Check voting power increase limit
             // Note: if currentTotal is 0 (first validators), no limit applies
-            if (currentTotal > 0 && addedPower + power > maxIncrease) {
+            // The addedPower > 0 condition ensures that at least one validator can always be
+            // activated per epoch, even if its individual power exceeds maxIncrease (whale node).
+            // Without this, a whale with power > maxIncrease would be permanently stuck in
+            // PENDING_ACTIVE since 0 + power > maxIncrease is always true.
+            if (currentTotal > 0 && addedPower + power > maxIncrease && addedPower > 0) {
                 result.toKeepPending[result.keepPendingCount] = pool;
                 result.keepPendingCount++;
                 continue;
@@ -896,22 +983,27 @@ contract ValidatorManagement is IValidatorManagement {
         result.validators = new ValidatorConsensusInfo[](totalValidators);
         uint256 idx = 0;
 
-        // Add staying active validators (excluding pending_inactive)
+        // Add staying active validators (excluding pending_inactive and underbonded)
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
-            if (_validators[pool].status != ValidatorStatus.PENDING_INACTIVE) {
-                ValidatorRecord storage validator = _validators[pool];
-                result.validators[idx] = ValidatorConsensusInfo({
-                    validator: pool,
-                    consensusPubkey: validator.consensusPubkey,
-                    consensusPop: validator.consensusPop,
-                    votingPower: _getValidatorVotingPower(pool),
-                    validatorIndex: uint64(idx),
-                    networkAddresses: validator.networkAddresses,
-                    fullnodeAddresses: validator.fullnodeAddresses
-                });
-                idx++;
+            if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {
+                continue;
             }
+            // Skip underbonded validators (they are in toDeactivateUnderbonded)
+            if (_isInArray(result.toDeactivateUnderbonded, result.deactivateUnderbondedCount, pool)) {
+                continue;
+            }
+            ValidatorRecord storage validator = _validators[pool];
+            result.validators[idx] = ValidatorConsensusInfo({
+                validator: pool,
+                consensusPubkey: validator.consensusPubkey,
+                consensusPop: validator.consensusPop,
+                votingPower: _getValidatorVotingPower(pool),
+                validatorIndex: uint64(idx),
+                networkAddresses: validator.networkAddresses,
+                fullnodeAddresses: validator.fullnodeAddresses
+            });
+            idx++;
         }
 
         // Add validators being activated
@@ -1139,6 +1231,24 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 length = _pendingInactive.length;
         for (uint256 i = 0; i < length; i++) {
             if (_pendingInactive[i] == pool) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// @notice Check if an address is in an array (up to count elements)
+    /// @param arr The array to search
+    /// @param count Number of valid elements in the array
+    /// @param target The address to find
+    /// @return True if found
+    function _isInArray(
+        address[] memory arr,
+        uint256 count,
+        address target
+    ) internal pure returns (bool) {
+        for (uint256 i = 0; i < count; i++) {
+            if (arr[i] == target) {
                 return true;
             }
         }
