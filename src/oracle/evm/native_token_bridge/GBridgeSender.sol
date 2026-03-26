@@ -26,6 +26,16 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     /// @notice The GravityPortal contract
     address public immutable gravityPortal;
 
+    /// @notice Timestamp after which emergency withdrawal is allowed
+    uint256 public emergencyUnlockTime;
+
+    /// @notice Whether emergency withdrawal has been used (one-shot mechanism)
+    /// @dev Prevents re-initiation after first use
+    bool public emergencyUsed;
+
+    /// @notice Timelock duration for emergency withdrawal (7 days)
+    uint256 public constant EMERGENCY_TIMELOCK = 7 days;
+
     // ========================================================================
     // CONSTRUCTOR
     // ========================================================================
@@ -105,25 +115,30 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
     // EMERGENCY FUNCTIONS (Owner Only)
     // ========================================================================
 
-    /// @inheritdoc IGBridgeSender
+    /// @notice Initiate emergency withdrawal process (starts 7-day timelock)
+    /// @dev Only callable by contract owner
+    function initiateEmergencyWithdraw() external onlyOwner {
+        if (emergencyUsed) revert EmergencyAlreadyUsed();
+        emergencyUnlockTime = block.timestamp + EMERGENCY_TIMELOCK;
+        emit EmergencyWithdrawInitiated(emergencyUnlockTime);
+    }
+
+    /// @notice Execute emergency withdrawal after timelock expires
+    /// @dev Only callable by contract owner after timelock period
+    /// @param recipient Address to receive the tokens
+    /// @param amount Amount of G tokens to withdraw
     function emergencyWithdraw(
         address recipient,
         uint256 amount
     ) external onlyOwner {
+        if (emergencyUnlockTime == 0) revert EmergencyNotInitiated();
+        if (block.timestamp < emergencyUnlockTime) revert EmergencyTimelockNotExpired(emergencyUnlockTime);
         if (recipient == address(0)) revert ZeroRecipient();
+
+        emergencyUnlockTime = 0;
+        emergencyUsed = true;
         IERC20(gToken).safeTransfer(recipient, amount);
         emit EmergencyWithdraw(recipient, amount);
-    }
-
-    /// @inheritdoc IGBridgeSender
-    function recoverERC20(
-        address token,
-        address recipient,
-        uint256 amount
-    ) external onlyOwner {
-        if (recipient == address(0)) revert ZeroRecipient();
-        IERC20(token).safeTransfer(recipient, amount);
-        emit ERC20Recovered(token, recipient, amount);
     }
 
     // ========================================================================
@@ -140,3 +155,4 @@ contract GBridgeSender is IGBridgeSender, Ownable2Step {
         return IGravityPortal(gravityPortal).calculateFee(message.length);
     }
 }
+

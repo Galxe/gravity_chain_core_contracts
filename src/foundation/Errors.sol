@@ -284,8 +284,7 @@ library Errors {
 
     /// @notice Proposal execution failed
     /// @param proposalId ID of the proposal
-    /// @param reason The revert data from the failed call
-    error ExecutionFailed(uint64 proposalId, bytes reason);
+    error ExecutionFailed(uint64 proposalId);
 
     /// @notice Caller is not an authorized executor
     /// @param caller The unauthorized caller address
@@ -443,33 +442,12 @@ library Errors {
     /// @notice Validator config has not been initialized
     error ValidatorConfigNotInitialized();
 
-    /// @notice Auto-eviction threshold exceeds maximum (must fit in uint64 to match successfulProposals type)
-    /// @param value The invalid threshold provided
-    /// @param maximum The maximum allowed threshold (type(uint64).max)
-    error InvalidAutoEvictThreshold(uint256 value, uint256 maximum);
-
     // ========================================================================
     // GOVERNANCE CONFIG ERRORS
     // ========================================================================
 
     /// @notice Governance config has not been initialized
     error GovernanceConfigNotInitialized();
-
-    /// @notice Min voting threshold is unreasonably high (would make quorum unreachable)
-    error ExcessiveMinVotingThreshold();
-
-    /// @notice Required proposer stake is unreasonably high (would prevent any proposal creation)
-    error ExcessiveRequiredProposerStake();
-
-    /// @notice Voting duration is too short for meaningful participation
-    /// @param provided Duration provided (microseconds)
-    /// @param minimum Minimum required duration (microseconds)
-    error VotingDurationTooShort(uint64 provided, uint64 minimum);
-
-    /// @notice Voting duration exceeds maximum allowed
-    /// @param provided Duration provided (microseconds)
-    /// @param maximum Maximum allowed duration (microseconds)
-    error VotingDurationTooLong(uint64 provided, uint64 maximum);
 
     // ========================================================================
     // EPOCH CONFIG ERRORS
@@ -503,6 +481,9 @@ library Errors {
     // ========================================================================
     // JWK MANAGER ERRORS
     // ========================================================================
+
+    /// @notice Only NativeOracle can call JWKManager callback
+    error JWKOnlyNativeOracle();
 
     /// @notice JWK version must be strictly increasing
     /// @param issuer The issuer URL

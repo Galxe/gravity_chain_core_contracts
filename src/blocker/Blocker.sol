@@ -88,7 +88,6 @@ contract Blocker {
         uint64 timestampMicros
     ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
-        require(_initialized, "Blocker: not initialized");
 
         // Track proposal performance statistics (Aptos: stake::update_performance_statistics)
         // Performance scores must be updated before the epoch transition check,

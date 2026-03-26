@@ -540,24 +540,19 @@ contract ValidatorManagement is IValidatorManagement {
         //    This ensures _activeValidators matches exactly what getNextValidatorConsensusInfos() returned
         _setActiveValidators(nextSet.validators);
 
-        // 6a. Emit ValidatorActivated for newly activated validators
-        //     Done here (after _setActiveValidators) so validatorIndex and bond are correct.
-        for (uint256 i = 0; i < nextSet.activateCount; i++) {
-            address pool = nextSet.toActivate[i];
-            ValidatorRecord storage v = _validators[pool];
-            emit ValidatorActivated(pool, v.validatorIndex, v.bond);
-        }
-
         // 7. Auto-renew lockups for active validators (Aptos-style)
         _renewActiveValidatorLockups();
 
         // 8. Apply pending fee recipient changes for all active validators
         _applyPendingFeeRecipients();
 
-        // 9. Update bond (voting power) and total voting power in a single pass
-        //    This captures post-lockup-renewal voting power and avoids redundant
-        //    external calls to Staking/ValidatorConfig per validator.
-        totalVotingPower = _syncBondsAndCalculateTotalVotingPower();
+        // 9. Update bond (voting power) for all active validators
+        //    This captures post-lockup-renewal voting power
+        _syncValidatorBonds();
+
+        // 10. Update total voting power
+        //     Note: Epoch is managed by Reconfiguration contract (single source of truth)
+        totalVotingPower = _calculateTotalVotingPower();
 
         // TODO(lightman): validator's voting power needs to be uint64 on the consensus engine.
         // NOTE: The NewEpochEvent (emitted by Reconfiguration._applyReconfiguration) contains
@@ -676,8 +671,9 @@ contract ValidatorManagement is IValidatorManagement {
             ValidatorRecord storage validator = _validators[pool];
 
             validator.status = ValidatorStatus.ACTIVE;
-            // Note: bond, validatorIndex, and ValidatorActivated event are handled
-            // after _setActiveValidators() in onNewEpoch() where the correct values are available.
+            // Note: bond and validatorIndex will be set in _setActiveValidators
+
+            emit ValidatorActivated(pool, 0, _getValidatorVotingPower(pool));
         }
     }
 
@@ -760,24 +756,17 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
-    /// @notice Update bond (voting power) for all active validators and calculate total voting power
+    /// @notice Update bond (voting power) for all active validators
     /// @dev Called after lockup renewal to capture post-renewal voting power.
-    ///      Merges the former _syncValidatorBonds() and _calculateTotalVotingPower() into
-    ///      a single pass to avoid redundant _getValidatorVotingPower() external calls.
-    ///      Each _getValidatorVotingPower() call makes 2 external calls (Staking + ValidatorConfig),
-    ///      so this optimization saves N×2 external calls per epoch transition.
     ///      Note: owner/operator are not synced here - they are set during registration
     ///      and the authoritative source is always the StakePool contract.
-    function _syncBondsAndCalculateTotalVotingPower() internal returns (uint256) {
-        uint256 total = 0;
+    function _syncValidatorBonds() internal {
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
             address pool = _activeValidators[i];
-            uint256 power = _getValidatorVotingPower(pool);
-            _validators[pool].bond = power;
-            total += power;
+            // Update bond (voting power snapshot after lockup renewal)
+            _validators[pool].bond = _getValidatorVotingPower(pool);
         }
-        return total;
     }
 
     /// @notice Remove a validator from the pending active array

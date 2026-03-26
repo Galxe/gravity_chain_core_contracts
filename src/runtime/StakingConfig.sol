@@ -49,14 +49,14 @@ contract StakingConfig {
     /// @notice Minimum stake required to create governance proposals
     uint256 public minimumProposalStake;
 
-    /// @notice Whether the contract has been initialized
-    bool private _initialized;
-
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
 
     /// @notice Whether a pending configuration exists
     bool public hasPendingConfig;
+
+    /// @notice Whether the contract has been initialized
+    bool private _initialized;
 
     // ========================================================================
     // EVENTS

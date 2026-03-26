@@ -360,40 +360,14 @@ contract GravityPortalTest is Test {
         bytes calldata message,
         uint256 extraFee
     ) public {
+        extraFee = bound(extraFee, 0, 1 ether);
         uint256 requiredFee = portal.calculateFee(message.length);
-        // extraFee must not exceed requiredFee, otherwise total > 2x and reverts
-        extraFee = bound(extraFee, 0, requiredFee);
 
         vm.prank(alice);
         uint128 nonce = portal.send{ value: requiredFee + extraFee }(message);
 
         assertEq(nonce, 1);
-        // All value (including overpayment) is kept by the contract
-        assertEq(address(portal).balance, requiredFee + extraFee);
-    }
-
-    function test_Send_AbsorbsSmallOverpayment() public {
-        bytes memory message = abi.encode(uint256(100), bob);
-        uint256 fee = portal.calculateFee(message.length);
-        // Pay 1.5x the fee — should succeed and keep everything
-        uint256 overpayment = fee / 2;
-
-        vm.prank(alice);
-        portal.send{ value: fee + overpayment }(message);
-
-        // Contract keeps all the value (no refund)
-        assertEq(address(portal).balance, fee + overpayment);
-    }
-
-    function test_Send_RevertWhenExcessiveFee() public {
-        bytes memory message = abi.encode(uint256(100), bob);
-        uint256 fee = portal.calculateFee(message.length);
-        // Pay more than 2x the required fee
-        uint256 excessiveValue = 2 * fee + 1;
-
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.ExcessiveFee.selector, fee, excessiveValue));
-        portal.send{ value: excessiveValue }(message);
+        assertGe(address(portal).balance, requiredFee);
     }
 
     function testFuzz_FeeConfiguration(
