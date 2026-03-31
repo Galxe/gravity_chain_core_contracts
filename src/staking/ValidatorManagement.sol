@@ -79,13 +79,6 @@ contract ValidatorManagement is IValidatorManagement {
         address[] toKeepPending;
         /// @notice Number of validators to keep pending
         uint256 keepPendingCount;
-        /// @notice Active validators that dropped below minimum bond (ACTIVE -> INACTIVE)
-        /// @dev These are currently active validators whose voting power fell below minimumBond,
-        ///      e.g. due to try/catch fallback returning 0. They should be removed from the
-        ///      active set to prevent zero-bond validators from occupying consensus seats.
-        address[] toDeactivateUnderbonded;
-        /// @notice Number of underbonded active validators to deactivate
-        uint256 deactivateUnderbondedCount;
     }
 
     // ========================================================================
@@ -551,10 +544,6 @@ contract ValidatorManagement is IValidatorManagement {
         // 2. Apply deactivations (PENDING_INACTIVE → INACTIVE)
         _applyDeactivations(nextSet.toDeactivate, nextSet.deactivateCount);
 
-        // 2a. Deactivate underbonded active validators (ACTIVE -> INACTIVE)
-        //     These are active validators whose voting power dropped below minimumBond
-        _applyRevertInactive(nextSet.toDeactivateUnderbonded, nextSet.deactivateUnderbondedCount);
-
         // 3. Apply activations (PENDING_ACTIVE → ACTIVE)
         _applyActivations(nextSet.toActivate, nextSet.activateCount);
 
@@ -869,20 +858,14 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Get validator's voting power (capped at maximumBond)
+    /// @dev The call chain (Staking.getPoolVotingPower → StakePool.getVotingPower → _getEffectiveStakeAt)
+    ///      is entirely pure view functions with safe arithmetic. For factory-created StakePools,
+    ///      this call cannot revert. No try/catch is needed.
     function _getValidatorVotingPower(
         address stakePool
     ) internal view returns (uint256) {
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint256 power;
-
-        // Use try/catch to ensure calling getPoolVotingPower doesn't revert the reconfiguration
-        try IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_) returns (uint256 _power) {
-            power = _power;
-        } catch {
-            // Safe fallback value if the external call reverts
-            power = 0;
-        }
-
+        uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
         return power > maxBond ? maxBond : power;
     }
@@ -912,35 +895,14 @@ contract ValidatorManagement is IValidatorManagement {
             result.toDeactivate[i] = _pendingInactive[i];
         }
 
-        // Read minimumBond config once (used in Step 2 and Step 3)
-        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-
-        // Step 2: Count staying active validators
-        // Check both PENDING_INACTIVE status and minimumBond requirement.
-        // Active validators whose voting power dropped below minimumBond (e.g. due to
-        // try/catch fallback returning 0) should be removed from the active set.
+        // Step 2: Count staying active validators (active minus pending_inactive)
         uint256 stayingActiveCount = 0;
-        result.toDeactivateUnderbonded = new address[](activeLen);
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
             if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {
                 continue;
             }
-            // Check if active validator still meets minimumBond
-            uint256 power = _getValidatorVotingPower(pool);
-            if (power < minimumBond) {
-                result.toDeactivateUnderbonded[result.deactivateUnderbondedCount] = pool;
-                result.deactivateUnderbondedCount++;
-                continue;
-            }
             stayingActiveCount++;
-        }
-        // Safety guard: if ALL active validators are underbonded, keep the last one
-        // to prevent consensus halt (empty active set). This validator will have low/zero
-        // voting power but consensus can still proceed.
-        if (stayingActiveCount == 0 && result.deactivateUnderbondedCount > 0) {
-            result.deactivateUnderbondedCount--;
-            stayingActiveCount = 1;
         }
 
         // Step 3: Compute pending activation with voting power limits
@@ -949,6 +911,7 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
         uint256 addedPower = 0;
 
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
         for (uint256 i = 0; i < pendingActiveLen; i++) {
             address pool = _pendingActive[i];
             uint256 power = _getValidatorVotingPower(pool);
@@ -983,14 +946,10 @@ contract ValidatorManagement is IValidatorManagement {
         result.validators = new ValidatorConsensusInfo[](totalValidators);
         uint256 idx = 0;
 
-        // Add staying active validators (excluding pending_inactive and underbonded)
+        // Add staying active validators (excluding pending_inactive)
         for (uint256 i = 0; i < activeLen; i++) {
             address pool = _activeValidators[i];
             if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {
-                continue;
-            }
-            // Skip underbonded validators (they are in toDeactivateUnderbonded)
-            if (_isInArray(result.toDeactivateUnderbonded, result.deactivateUnderbondedCount, pool)) {
                 continue;
             }
             ValidatorRecord storage validator = _validators[pool];
@@ -1236,23 +1195,4 @@ contract ValidatorManagement is IValidatorManagement {
         }
         return false;
     }
-
-    /// @notice Check if an address is in an array (up to count elements)
-    /// @param arr The array to search
-    /// @param count Number of valid elements in the array
-    /// @param target The address to find
-    /// @return True if found
-    function _isInArray(
-        address[] memory arr,
-        uint256 count,
-        address target
-    ) internal pure returns (bool) {
-        for (uint256 i = 0; i < count; i++) {
-            if (arr[i] == target) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
-

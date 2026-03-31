@@ -2096,7 +2096,7 @@ contract ValidatorManagementTest is Test {
     // EPOCH RESILIENCY TESTS
     // ========================================================================
 
-    function test_onNewEpoch_resilientToStakingReverts() public {
+    function test_onNewEpoch_resilientToRenewalReverts() public {
         // Create 3 validators
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
@@ -2106,39 +2106,30 @@ contract ValidatorManagementTest is Test {
 
         assertEq(validatorManager.getActiveValidatorCount(), 3, "Should have 3 active validators");
 
-        // Mock Staking contract to revert when dealing with pool2
+        // Mock Staking contract to revert when renewing pool2's lockup.
+        // The try/catch in _renewActiveValidatorLockups should absorb this.
         vm.mockCallRevert(
             SystemAddresses.STAKING,
             abi.encodeWithSelector(IStaking.renewPoolLockup.selector, pool2),
             "Intentional renew revert"
         );
 
-        uint64 now_ = timestamp.nowMicroseconds();
-        vm.mockCallRevert(
-            SystemAddresses.STAKING,
-            abi.encodeWithSelector(IStaking.getPoolVotingPower.selector, pool2, now_),
-            "Intentional voting power revert"
-        );
+        // Process another epoch. The renewal revert for pool2 should be absorbed by try/catch.
+        // Pool2 remains active but its lockup may not be renewed.
+        _processEpoch();
 
-        // Process another epoch. With try/catch, it should succeed, and pool2 should have 0 voting power.
-        vm.prank(SystemAddresses.RECONFIGURATION);
-        validatorManager.onNewEpoch();
+        // The transition succeeded — all 3 validators are still active.
+        // (getPoolVotingPower is a pure view call that never reverts for factory pools,
+        //  so no try/catch is needed there.)
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "All validators should remain active");
 
-        // The transition succeeded!
-        // After Fix 2 (D3-2): pool2 with 0 voting power is now deactivated as underbonded.
-        // This is the correct behavior: a validator whose staking calls revert gets 0 power
-        // and is subsequently removed from the active set at epoch boundary.
-        assertEq(validatorManager.getActiveValidatorCount(), 2, "Pool2 should be deactivated (zero bond)");
-
-        // Check pool2 was deactivated. Its stored bond retains the old value because
-        // _syncBondsAndCalculateTotalVotingPower only runs on remaining active validators.
-        // The key assertion is that pool2 is no longer in the active set.
-        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
-        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.INACTIVE), "Bob should be deactivated");
-
-        // Check that other validators are unaffected
+        // Check all validators are still active and unaffected
         ValidatorRecord memory aliceRecord = validatorManager.getValidator(pool1);
-        assertEq(aliceRecord.bond, MIN_BOND, "Alice's voting power should be unaffected");
+        assertEq(uint8(aliceRecord.status), uint8(ValidatorStatus.ACTIVE), "Alice should be active");
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Bob should be active despite renewal failure");
+        ValidatorRecord memory charlieRecord = validatorManager.getValidator(pool3);
+        assertEq(uint8(charlieRecord.status), uint8(ValidatorStatus.ACTIVE), "Charlie should be active");
     }
 
     // ========================================================================
