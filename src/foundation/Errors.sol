@@ -303,8 +303,17 @@ library Errors {
     /// @notice Proposal batch cannot be empty
     error EmptyProposalBatch();
 
+    /// @notice Number of proposal targets exceeds the maximum allowed
+    /// @param targetsLength Length of targets array
+    /// @param maxTargets Maximum allowed targets
+    error TooManyProposalTargets(uint256 targetsLength, uint256 maxTargets);
+
     /// @notice Proposal ID is invalid (sentinel value 0)
     error InvalidProposalId();
+
+    /// @notice Proposal must be explicitly resolved before execution
+    /// @param proposalId ID of the unresolved proposal
+    error ProposalNotResolved(uint64 proposalId);
 
     // ========================================================================
     // TIMESTAMP ERRORS
@@ -343,9 +352,6 @@ library Errors {
 
     /// @notice Minimum stake must be greater than zero
     error InvalidMinimumStake();
-
-    /// @notice Minimum proposal stake must be greater than zero
-    error InvalidMinimumProposalStake();
 
     /// @notice Staking config has not been initialized
     error StakingConfigNotInitialized();

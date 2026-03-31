@@ -21,6 +21,13 @@ import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 contract Governance is IGovernance, Ownable2Step {
     using EnumerableSet for EnumerableSet.AddressSet;
     // ========================================================================
+    // CONSTANTS
+    // ========================================================================
+
+    /// @notice Maximum number of targets/actions per proposal to prevent block gas limit DoS
+    uint256 public constant MAX_PROPOSAL_TARGETS = 100;
+
+    // ========================================================================
     // STATE
     // ========================================================================
 
@@ -279,6 +286,9 @@ contract Governance is IGovernance, Ownable2Step {
         if (targets.length == 0) {
             revert Errors.EmptyProposalBatch();
         }
+        if (targets.length > MAX_PROPOSAL_TARGETS) {
+            revert Errors.TooManyProposalTargets(targets.length, MAX_PROPOSAL_TARGETS);
+        }
 
         // Verify pool is valid
         _requireValidPool(stakePool);
@@ -490,6 +500,11 @@ contract Governance is IGovernance, Ownable2Step {
         // Verify not already executed (check this before state to get correct error)
         if (executed[proposalId]) {
             revert Errors.ProposalAlreadyExecuted(proposalId);
+        }
+
+        // Verify proposal is explicitly resolved
+        if (!_proposals[proposalId].isResolved) {
+            revert Errors.ProposalNotResolved(proposalId);
         }
 
         // Verify proposal succeeded

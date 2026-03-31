@@ -87,9 +87,7 @@ contract NativeOracle is INativeOracle {
         // Invoke callback first to determine if we should store
         // Default: store if no callback or callback fails
         bool shouldStore = true;
-        if (callbackGasLimit > 0) {
-            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
-        }
+        shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
 
         // Conditionally store record based on callback result
         if (shouldStore) {
@@ -153,9 +151,7 @@ contract NativeOracle is INativeOracle {
         // Invoke callback first to determine if we should store
         // Default: store if no callback or callback fails
         bool shouldStore = true;
-        if (callbackGasLimit > 0) {
-            shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
-        }
+        shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
 
         // Conditionally store record based on callback result
         if (shouldStore) {
@@ -306,6 +302,10 @@ contract NativeOracle is INativeOracle {
     ) internal returns (bool shouldStore) {
         address callback = _resolveCallback(sourceType, sourceId);
         if (callback == address(0)) return true; // No callback = store by default
+        if (gasLimit == 0) {
+            emit CallbackSkipped(sourceType, sourceId, nonce, callback);
+            return true;
+        }
 
         // Try to call the callback with specified gas limit
         // This prevents malicious callbacks from:
