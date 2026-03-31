@@ -610,12 +610,6 @@ contract ValidatorManagement is IValidatorManagement {
     function evictUnderperformingValidators() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
-        // Check if auto-eviction is enabled
-        bool enabled = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictEnabled();
-        if (!enabled) {
-            return;
-        }
-
         // Skip eviction for epoch 1 — the first epoch after genesis has insufficient
         // performance data (validators are still bootstrapping), so eviction starts from epoch 2.
         uint64 closingEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
@@ -623,22 +617,11 @@ contract ValidatorManagement is IValidatorManagement {
             return;
         }
 
-        uint64 thresholdPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictThresholdPct();
-
-        // Read performance data from the completed epoch
-        IValidatorPerformanceTracker.IndividualPerformance[] memory perfs =
-            IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).getAllPerformances();
-
         uint256 activeLen = _activeValidators.length;
-        uint256 perfLen = perfs.length;
+        uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
 
-        // Strict equality check: perf array length must match active validator count.
-        if (activeLen != perfLen) {
-            emit PerformanceLengthMismatch(activeLen, perfLen);
-            return;
-        }
-
-        // Initialize counter once and decrement per eviction instead of O(n) inner loop
+        // --- Phase 1: Underbonded eviction (always runs) ---
+        // Initialize counter: count currently ACTIVE validators (exclude already PENDING_INACTIVE)
         uint256 remainingActive = 0;
         for (uint256 i = 0; i < activeLen; i++) {
             if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {
@@ -650,7 +633,52 @@ contract ValidatorManagement is IValidatorManagement {
             address pool = _activeValidators[i];
             ValidatorRecord storage validator = _validators[pool];
 
-            // Only evict ACTIVE validators (skip if already PENDING_INACTIVE from manual leave)
+            // Only evaluate ACTIVE validators
+            if (validator.status != ValidatorStatus.ACTIVE) {
+                continue;
+            }
+
+            uint256 power = _getValidatorVotingPower(pool);
+            if (power < minimumBond) {
+                // Preserve liveness: never evict the last active validator
+                if (remainingActive <= 1) {
+                    continue;
+                }
+
+                validator.status = ValidatorStatus.PENDING_INACTIVE;
+                _pendingInactive.push(pool);
+                remainingActive--;
+
+                emit ValidatorUnderbondedEvicted(pool, power, minimumBond);
+            }
+        }
+
+        // --- Phase 2: Performance eviction (only if autoEvictEnabled) ---
+        bool enabled = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictEnabled();
+        if (!enabled) {
+            return;
+        }
+
+        uint64 thresholdPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictThresholdPct();
+
+        // Read performance data from the completed epoch
+        IValidatorPerformanceTracker.IndividualPerformance[] memory perfs =
+            IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).getAllPerformances();
+
+        uint256 perfLen = perfs.length;
+
+        // Strict equality check: perf array length must match active validator count.
+        if (activeLen != perfLen) {
+            emit PerformanceLengthMismatch(activeLen, perfLen);
+            return;
+        }
+
+        // Note: remainingActive counter is shared and correctly reflects remaining ACTIVE validators after Phase 1
+        for (uint256 i = 0; i < activeLen; i++) {
+            address pool = _activeValidators[i];
+            ValidatorRecord storage validator = _validators[pool];
+
+            // Only evaluate ACTIVE validators (skipping those evicted in Phase 1)
             if (validator.status != ValidatorStatus.ACTIVE) {
                 continue;
             }
@@ -675,9 +703,6 @@ contract ValidatorManagement is IValidatorManagement {
             if (shouldEvict) {
                 // Preserve liveness: never evict the last active validator
                 if (remainingActive <= 1) {
-                    // Cannot evict the last active validator — would halt consensus
-                    // Use continue instead of break to avoid giving tail-index validators
-                    // positional immunity from eviction
                     continue;
                 }
 
