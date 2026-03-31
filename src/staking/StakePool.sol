@@ -318,6 +318,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         amount = _withdrawAvailable(recipient);
     }
 
+    /// TODO(alex): check if nonReentrant cross different call graph
     /// @inheritdoc IStakePool
     function unstakeAndWithdraw(
         uint256 amount,

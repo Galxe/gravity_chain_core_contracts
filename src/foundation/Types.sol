@@ -85,6 +85,12 @@ struct ValidatorRecord {
     // === Indexing ===
     /// @notice Index in active validator array (only valid when ACTIVE/PENDING_INACTIVE)
     uint64 validatorIndex;
+    // === Pending Consensus Key Rotation (Fix D2-3) ===
+    /// @notice Pending BLS consensus public key (applied at next epoch boundary)
+    /// @dev Set by rotateConsensusKey(). Empty means no pending rotation.
+    bytes pendingConsensusPubkey;
+    /// @notice Pending proof of possession for the pending BLS key
+    bytes pendingConsensusPop;
 }
 
 // ============================================================================

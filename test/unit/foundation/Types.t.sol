@@ -249,7 +249,9 @@ contract TypesTest is Test {
             feeRecipient: address(0x5678),
             pendingFeeRecipient: address(0),
             stakingPool: address(0),
-            validatorIndex: 0
+            validatorIndex: 0,
+            pendingConsensusPubkey: hex"",
+            pendingConsensusPop: hex""
         });
     }
 

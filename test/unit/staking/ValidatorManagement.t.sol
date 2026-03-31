@@ -514,11 +514,13 @@ contract ValidatorManagementTest is Test {
         address pool2 = _createRegisterAndJoin(bob, 30 ether, "bob");
         _processEpoch();
 
-        // Bob should still be pending because 30 > 20% of 100
-        assertEq(validatorManager.getActiveValidatorCount(), 1, "Only alice should be active");
+        // After whale fix (D3-1): the first pending validator is always allowed to activate
+        // even if its power exceeds maxIncrease, since addedPower starts at 0.
+        // So bob (30 ether) WILL be activated as the first pending validator.
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "Both alice and bob should be active");
 
         ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
-        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.PENDING_ACTIVE), "Bob should still be pending");
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Bob should now be active");
     }
 
     function test_onNewEpoch_activatesWithinLimit() public {
@@ -550,9 +552,24 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
 
+        // Key should be pending (not immediately applied)
         ValidatorRecord memory record = validatorManager.getValidator(pool);
-        assertEq(record.consensusPubkey, newPubkey, "Pubkey should be updated");
-        assertEq(record.consensusPop, newPop, "PoP should be updated");
+        assertEq(record.pendingConsensusPubkey, newPubkey, "Pending pubkey should be set");
+        assertEq(record.pendingConsensusPop, newPop, "Pending PoP should be set");
+        assertFalse(
+            keccak256(record.consensusPubkey) == keccak256(newPubkey), "Active pubkey should NOT be updated yet"
+        );
+
+        // Activate the validator and process epoch to apply the key
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(pool);
+        _processEpoch();
+
+        // Now the key should be applied
+        ValidatorRecord memory recordAfter = validatorManager.getValidator(pool);
+        assertEq(recordAfter.consensusPubkey, newPubkey, "Pubkey should be updated after epoch");
+        assertEq(recordAfter.consensusPop, newPop, "PoP should be updated after epoch");
+        assertEq(recordAfter.pendingConsensusPubkey.length, 0, "Pending pubkey should be cleared");
     }
 
     function test_rotateConsensusKey_emitsEvent() public {
@@ -615,7 +632,7 @@ contract ValidatorManagementTest is Test {
         validatorManager.rotateConsensusKey(alicePool, bobPubkey, hex"abcd1234");
     }
 
-    /// @notice Test that after rotation, old pubkey can be reused by another validator
+    /// @notice Test that after rotation AND epoch, old pubkey can be reused by another validator
     function test_rotateConsensusKey_clearsOldPubkey() public {
         // Alice registers with a specific pubkey
         address alicePool = _createStakePool(alice, MIN_BOND);
@@ -626,14 +643,27 @@ contract ValidatorManagementTest is Test {
             alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
-        // Alice rotates to a new key
+        // Alice rotates to a new key (pending)
         bytes memory aliceNewPubkey =
             hex"a1ecafe00000000200000000000000000000000000000000000000000000000000000000000000000000000000000000";
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
-        // Bob should now be able to register with Alice's old pubkey
+        // Old pubkey is still reserved (active key) until epoch boundary.
+        // Bob should NOT be able to use Alice's old key before epoch processes.
         address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, aliceOldPubkey));
+        validatorManager.registerValidator(
+            bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Activate Alice, process epoch to apply the pending key
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        _processEpoch();
+
+        // Now old pubkey should be freed. Bob can use it.
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -671,8 +701,21 @@ contract ValidatorManagementTest is Test {
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
+        // Key should be pending, not immediately applied
         ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
-        assertEq(aliceRecord.consensusPubkey, aliceNewPubkey, "Alice should have new pubkey");
+        assertEq(aliceRecord.pendingConsensusPubkey, aliceNewPubkey, "Alice should have pending pubkey");
+        assertEq(aliceRecord.consensusPubkey, alicePubkey, "Alice active key should still be old");
+
+        // Process epoch to apply (both need to be active first)
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        vm.prank(bob);
+        validatorManager.joinValidatorSet(bobPool);
+        _processEpoch();
+
+        // Now the key should be applied
+        ValidatorRecord memory aliceRecordAfter = validatorManager.getValidator(alicePool);
+        assertEq(aliceRecordAfter.consensusPubkey, aliceNewPubkey, "Alice should have new pubkey after epoch");
     }
 
     function test_setFeeRecipient_success() public {
@@ -2053,7 +2096,7 @@ contract ValidatorManagementTest is Test {
     // EPOCH RESILIENCY TESTS
     // ========================================================================
 
-    function test_onNewEpoch_resilientToStakingReverts() public {
+    function test_onNewEpoch_resilientToRenewalReverts() public {
         // Create 3 validators
         address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
         address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
@@ -2063,34 +2106,194 @@ contract ValidatorManagementTest is Test {
 
         assertEq(validatorManager.getActiveValidatorCount(), 3, "Should have 3 active validators");
 
-        // Mock Staking contract to revert when dealing with pool2
+        // Mock Staking contract to revert when renewing pool2's lockup.
+        // The try/catch in _renewActiveValidatorLockups should absorb this.
         vm.mockCallRevert(
             SystemAddresses.STAKING,
             abi.encodeWithSelector(IStaking.renewPoolLockup.selector, pool2),
             "Intentional renew revert"
         );
 
-        uint64 now_ = timestamp.nowMicroseconds();
-        vm.mockCallRevert(
-            SystemAddresses.STAKING,
-            abi.encodeWithSelector(IStaking.getPoolVotingPower.selector, pool2, now_),
-            "Intentional voting power revert"
-        );
+        // Process another epoch. The renewal revert for pool2 should be absorbed by try/catch.
+        // Pool2 remains active but its lockup may not be renewed.
+        _processEpoch();
 
-        // Process another epoch. With try/catch, it should succeed, and pool2 should have 0 voting power.
-        vm.prank(SystemAddresses.RECONFIGURATION);
-        validatorManager.onNewEpoch();
+        // The transition succeeded — all 3 validators are still active.
+        // (getPoolVotingPower is a pure view call that never reverts for factory pools,
+        //  so no try/catch is needed there.)
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "All validators should remain active");
 
-        // The transition succeeded!
-        assertEq(validatorManager.getActiveValidatorCount(), 3, "Should still have 3 active validators initially");
-
-        // Check pool2 voting power was safely downgraded to 0
-        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
-        assertEq(bobRecord.bond, 0, "Bob's voting power should be downgraded to 0 due to revert");
-
-        // Check that other validators are unaffected
+        // Check all validators are still active and unaffected
         ValidatorRecord memory aliceRecord = validatorManager.getValidator(pool1);
-        assertEq(aliceRecord.bond, MIN_BOND, "Alice's voting power should be unaffected");
+        assertEq(uint8(aliceRecord.status), uint8(ValidatorStatus.ACTIVE), "Alice should be active");
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Bob should be active despite renewal failure");
+        ValidatorRecord memory charlieRecord = validatorManager.getValidator(pool3);
+        assertEq(uint8(charlieRecord.status), uint8(ValidatorStatus.ACTIVE), "Charlie should be active");
+    }
+
+    // ========================================================================
+    // AUDIT FIX TESTS (Batch A)
+    // ========================================================================
+
+    /// @notice Fix 1 (D1-1): Concurrent leaveValidatorSet should not allow draining all validators
+    function test_audit_concurrentLeave_preventsConsensusHalt() public {
+        // Activate 3 validators
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "All 3 should be active");
+
+        // First two leave requests should succeed
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(pool1);
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(pool2);
+
+        // Third leave should revert — would leave no active validators
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotRemoveLastValidator.selector));
+        validatorManager.leaveValidatorSet(pool3);
+
+        // Charlie should still be active and can process epoch safely
+        _processEpoch();
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "Only charlie should remain active");
+    }
+
+    /// @notice Fix 1: Same test for forceLeaveValidatorSet
+    function test_audit_concurrentForceLeave_preventsConsensusHalt() public {
+        // Activate 2 validators
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "Both should be active");
+
+        // First force leave should succeed (requires GOVERNANCE permission)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(pool1);
+
+        // Second force leave should revert
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CannotRemoveLastValidator.selector));
+        validatorManager.forceLeaveValidatorSet(pool2);
+    }
+
+    /// @notice Fix 3 (D1-2): Eviction should not break with continue instead of break
+    /// @dev The break→continue fix ensures tail-index validators don't get positional immunity.
+    ///      This test verifies the function still works correctly (does not revert).
+    ///      Detailed eviction ordering tests require mocking the performance tracker.
+    function test_audit_evict_doesNotRevert() public {
+        address pool1 = _createRegisterAndJoin(alice, 50 ether, "alice");
+        address pool2 = _createRegisterAndJoin(bob, 50 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 50 ether, "charlie");
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "All 3 should be active");
+
+        // Call eviction (autoEvict may be disabled by default, but should not revert)
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        // Should still have validators (autoEvict disabled = no eviction)
+        assertTrue(validatorManager.getActiveValidatorCount() >= 1, "At least 1 validator must remain");
+    }
+
+    /// @notice Fix 7 (D3-1): Whale validator (power > maxIncrease) should be activatable
+    function test_audit_whaleValidator_canActivate() public {
+        // First validator with 100 ether (establishes baseline)
+        address pool1 = _createRegisterAndJoin(alice, 100 ether, "alice");
+        _processEpoch();
+
+        // Whale validator with 100 ether (100% increase > 20% limit)
+        // Before fix: would be stuck in PENDING_ACTIVE forever
+        // After fix: activatable as first pending validator in epoch
+        address pool2 = _createRegisterAndJoin(bob, 100 ether, "bob");
+        _processEpoch();
+
+        // Bob should be activated (first pending validator bypass)
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "Whale should be activated");
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "Both should be active");
+    }
+
+    /// @notice Fix 7: Second whale should still be limited after first is activated
+    function test_audit_secondWhale_stillLimited() public {
+        address pool1 = _createRegisterAndJoin(alice, 100 ether, "alice");
+        _processEpoch();
+
+        // Two whales try to activate in same epoch
+        address pool2 = _createRegisterAndJoin(bob, 100 ether, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, 100 ether, "charlie");
+        _processEpoch();
+
+        // Bob (first) should activate, Charlie (second) should stay pending
+        // because after Bob, addedPower > 0 and 100+100 > maxIncrease
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(pool2);
+        assertEq(uint8(bobRecord.status), uint8(ValidatorStatus.ACTIVE), "First whale should activate");
+
+        ValidatorRecord memory charlieRecord = validatorManager.getValidator(pool3);
+        assertEq(uint8(charlieRecord.status), uint8(ValidatorStatus.PENDING_ACTIVE), "Second whale should stay pending");
+    }
+
+    /// @notice Fix 4 (D2-3): Key rotation should be pending until epoch boundary
+    function test_audit_rotateConsensusKey_pendingMode() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        // Get original key
+        ValidatorRecord memory recordBefore = validatorManager.getValidator(pool);
+        bytes memory originalPubkey = recordBefore.consensusPubkey;
+
+        // Rotate key
+        bytes memory newPubkey =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
+        bytes memory newPop = hex"cafebabe";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
+
+        // Verify: active key unchanged, pending key set
+        ValidatorRecord memory recordMid = validatorManager.getValidator(pool);
+        assertEq(recordMid.consensusPubkey, originalPubkey, "Active key should be unchanged mid-epoch");
+        assertEq(recordMid.pendingConsensusPubkey, newPubkey, "Pending key should be set");
+
+        // Process epoch
+        _processEpoch();
+
+        // Verify: pending key applied, pending fields cleared
+        ValidatorRecord memory recordAfter = validatorManager.getValidator(pool);
+        assertEq(recordAfter.consensusPubkey, newPubkey, "Active key should be new after epoch");
+        assertEq(recordAfter.pendingConsensusPubkey.length, 0, "Pending key should be cleared");
+    }
+
+    /// @notice Fix 4: Double rotate in same epoch should release intermediate reservation
+    function test_audit_rotateConsensusKey_doubleRotate() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _processEpoch();
+
+        bytes memory key1 =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
+        bytes memory key2 =
+            hex"b777e42e7f4d6f9bbc8f1f3f037f1c5418ccbe77277b66a9d9eef22630f27fa75be4f530f8d84f3f46d7b7ac219050ff";
+
+        // First rotation
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool, key1, hex"aa01");
+
+        // Second rotation should work (releases key1 reservation)
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool, key2, hex"bb02");
+
+        // key1 should now be available for others
+        address bobPool = _createAndRegisterValidator(bob, MIN_BOND, "bob");
+        // Bob should be able to rotate to key1 (it was released by Alice's second rotation)
+        vm.prank(bob);
+        validatorManager.rotateConsensusKey(bobPool, key1, hex"cc03");
+
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(pool);
+        assertEq(aliceRecord.pendingConsensusPubkey, key2, "Alice pending should be key2");
     }
 }
 
