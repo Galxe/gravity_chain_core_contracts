@@ -617,7 +617,7 @@ pub fn call_get_active_validators() -> TxEnv {
 }
 
 pub fn print_active_validators_result(result: &ExecutionResult, config: &GenesisConfig) {
-    handle_execution_result(result, "getActiveValidators", |output_bytes| {
+    let _ = handle_execution_result(result, "getActiveValidators", |output_bytes| {
         let decoded =
             IValidatorManagement::getActiveValidatorsCall::abi_decode_returns(output_bytes, false)
                 .expect("Failed to decode getActiveValidators result");

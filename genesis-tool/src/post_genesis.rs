@@ -14,7 +14,7 @@ use crate::{
 ///
 /// This function provides a common structure for all print_* functions,
 /// reducing code duplication and making the codebase more maintainable.
-pub fn handle_execution_result<F>(result: &ExecutionResult, function_name: &str, success_handler: F)
+pub fn handle_execution_result<F>(result: &ExecutionResult, function_name: &str, success_handler: F) -> Result<(), String>
 where
     F: FnOnce(&[u8]),
 {
@@ -34,13 +34,16 @@ where
             }
 
             success_handler(output_bytes);
+            Ok(())
         }
         ExecutionResult::Revert { output, .. } => {
             error!("{} call reverted", function_name);
             error!("Revert output: 0x{}", hex::encode(output));
+            Err(format!("{} call reverted: 0x{}", function_name, hex::encode(output)))
         }
         ExecutionResult::Halt { reason, .. } => {
             error!("{} call halted: {:?}", function_name, reason);
+            Err(format!("{} call halted: {:?}", function_name, reason))
         }
     }
 }
@@ -53,8 +56,9 @@ fn execute_verification<F>(
     verification_name: &str,
     chain_id: u64,
     result_handler: F,
-) where
-    F: FnOnce(&ExecutionResult),
+) -> Result<(), String>
+where
+    F: FnOnce(&ExecutionResult) -> Result<(), String>,
 {
     let env = prepare_env(chain_id);
     let r = execute_revm_sequential(db, SpecId::LATEST, env, &[transaction], Some(bundle_state));
@@ -62,20 +66,19 @@ fn execute_verification<F>(
     match r {
         Ok((result, _)) => {
             if let Some(execution_result) = result.get(0) {
-                result_handler(execution_result);
+                result_handler(execution_result)?;
             }
+            Ok(())
         }
         Err(e) => {
-            error!(
-                "verify {} error: {:?}",
-                verification_name,
-                e.map_db_err(|_| "Database error".to_string())
-            );
+            let err_msg = format!("{:?}", e.map_db_err(|_| "Database error".to_string()));
+            error!("verify {} error: {}", verification_name, err_msg);
+            Err(format!("verify {} error: {}", verification_name, err_msg))
         }
     }
 }
 
-fn verify_active_validators(db: impl DatabaseRef, bundle_state: BundleState, config: &GenesisConfig) {
+fn verify_active_validators(db: impl DatabaseRef, bundle_state: BundleState, config: &GenesisConfig) -> Result<(), String> {
     let get_validators_txn = call_get_active_validators();
     execute_verification(
         db,
@@ -83,8 +86,11 @@ fn verify_active_validators(db: impl DatabaseRef, bundle_state: BundleState, con
         get_validators_txn,
         "active validators",
         config.chain_id,
-        |result| print_active_validators_result(result, config),
-    );
+        |result| {
+            print_active_validators_result(result, config);
+            Ok(())
+        },
+    )
 }
 
 pub fn verify_result(
@@ -92,7 +98,8 @@ pub fn verify_result(
     bundle_state: BundleState,
     config: &GenesisConfig,
 ) {
-    verify_active_validators(db.clone(), bundle_state.clone(), config);
+    verify_active_validators(db.clone(), bundle_state.clone(), config)
+        .expect("Genesis verification: active validators check FAILED");
     // Add more verification steps as needed:
     // - verify_jwks()
     // - verify_epoch_config()

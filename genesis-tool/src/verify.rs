@@ -117,7 +117,9 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
             .as_ref()
             .map(|c| {
                 let hex_str = c.strip_prefix("0x").unwrap_or(c);
-                hex::decode(hex_str).expect("Invalid bytecode hex")
+                hex::decode(hex_str).unwrap_or_else(|e| {
+                    panic!("FATAL: Failed to decode hex bytecode: {}", e)
+                })
             })
             .unwrap_or_default();
 
