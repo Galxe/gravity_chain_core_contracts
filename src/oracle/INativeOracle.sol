@@ -84,6 +84,13 @@ interface INativeOracle {
     /// @param callback The callback contract that requested skip
     event StorageSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
+    /// @notice Emitted when callback execution is skipped due to gas limit 0
+    /// @param sourceType The source type
+    /// @param sourceId The source identifier
+    /// @param nonce The nonce of the record
+    /// @param callback The callback contract that was skipped
+    event CallbackSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
+
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================

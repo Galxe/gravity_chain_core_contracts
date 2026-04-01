@@ -30,7 +30,6 @@ contract StakingConfig {
         uint256 minimumStake;
         uint64 lockupDurationMicros;
         uint64 unbondingDelayMicros;
-        uint256 minimumProposalStake;
     }
 
     // ========================================================================
@@ -45,9 +44,6 @@ contract StakingConfig {
 
     /// @notice Unbonding delay in microseconds (additional wait after lockedUntil before withdrawal)
     uint64 public unbondingDelayMicros;
-
-    /// @notice Minimum stake required to create governance proposals
-    uint256 public minimumProposalStake;
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
@@ -80,21 +76,18 @@ contract StakingConfig {
     /// @param _minimumStake Minimum stake for governance participation (must be > 0)
     /// @param _lockupDurationMicros Lockup duration in microseconds (must be > 0)
     /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
-    /// @param _minimumProposalStake Minimum stake to create proposals (must be > 0)
     function initialize(
         uint256 _minimumStake,
         uint64 _lockupDurationMicros,
-        uint64 _unbondingDelayMicros,
-        uint256 _minimumProposalStake
+        uint64 _unbondingDelayMicros
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
         if (_initialized) revert Errors.AlreadyInitialized();
-        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros, _minimumProposalStake);
+        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros);
 
         minimumStake = _minimumStake;
         lockupDurationMicros = _lockupDurationMicros;
         unbondingDelayMicros = _unbondingDelayMicros;
-        minimumProposalStake = _minimumProposalStake;
         _initialized = true;
 
         emit StakingConfigUpdated();
@@ -127,22 +120,19 @@ contract StakingConfig {
     /// @param _minimumStake Minimum stake for governance participation (must be > 0)
     /// @param _lockupDurationMicros Lockup duration in microseconds (must be > 0)
     /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
-    /// @param _minimumProposalStake Minimum stake to create proposals (must be > 0)
     function setForNextEpoch(
         uint256 _minimumStake,
         uint64 _lockupDurationMicros,
-        uint64 _unbondingDelayMicros,
-        uint256 _minimumProposalStake
+        uint64 _unbondingDelayMicros
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
-        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros, _minimumProposalStake);
+        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros);
 
         _pendingConfig = PendingConfig({
             minimumStake: _minimumStake,
             lockupDurationMicros: _lockupDurationMicros,
-            unbondingDelayMicros: _unbondingDelayMicros,
-            minimumProposalStake: _minimumProposalStake
+            unbondingDelayMicros: _unbondingDelayMicros
         });
         hasPendingConfig = true;
         emit PendingStakingConfigSet();
@@ -163,7 +153,6 @@ contract StakingConfig {
         minimumStake = _pendingConfig.minimumStake;
         lockupDurationMicros = _pendingConfig.lockupDurationMicros;
         unbondingDelayMicros = _pendingConfig.unbondingDelayMicros;
-        minimumProposalStake = _pendingConfig.minimumProposalStake;
         hasPendingConfig = false;
 
         // Clear pending config storage
@@ -181,12 +170,10 @@ contract StakingConfig {
     /// @param _minimumStake Minimum stake
     /// @param _lockupDurationMicros Lockup duration
     /// @param _unbondingDelayMicros Unbonding delay
-    /// @param _minimumProposalStake Minimum proposal stake
     function _validateConfig(
         uint256 _minimumStake,
         uint64 _lockupDurationMicros,
-        uint64 _unbondingDelayMicros,
-        uint256 _minimumProposalStake
+        uint64 _unbondingDelayMicros
     ) internal pure {
         if (_minimumStake == 0) revert Errors.InvalidMinimumStake();
         if (_lockupDurationMicros == 0) revert Errors.InvalidLockupDuration();
@@ -197,7 +184,6 @@ contract StakingConfig {
         if (_unbondingDelayMicros > MAX_UNBONDING_DELAY) {
             revert Errors.ExcessiveDuration(_unbondingDelayMicros, MAX_UNBONDING_DELAY);
         }
-        if (_minimumProposalStake == 0) revert Errors.InvalidMinimumProposalStake();
     }
 
     /// @notice Require the contract to be initialized

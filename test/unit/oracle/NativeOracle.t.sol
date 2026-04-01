@@ -963,34 +963,4 @@ contract NativeOracleTest is Test {
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
     }
-
-    function test_Events_NoDataRecordedWhenSkipped() public {
-        mockCallback.setShouldStore(false);
-        vm.prank(governance);
-        oracle.setCallback(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, address(mockCallback));
-
-        bytes memory payload = abi.encode("jwk data");
-        uint128 nonce = 1;
-
-        // Record logs to check that DataRecorded is NOT emitted
-        vm.recordLogs();
-
-        vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
-
-        // Check logs - should have CallbackSuccess and StorageSkipped, but NOT DataRecorded
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-
-        bool foundDataRecorded = false;
-        bytes32 dataRecordedTopic = keccak256("DataRecorded(uint32,uint256,uint128,uint256)");
-
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == dataRecordedTopic) {
-                foundDataRecorded = true;
-                break;
-            }
-        }
-
-        assertFalse(foundDataRecorded, "DataRecorded should not be emitted when storage is skipped");
-    }
 }

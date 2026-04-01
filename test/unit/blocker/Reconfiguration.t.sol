@@ -198,8 +198,7 @@ contract ReconfigurationTest is Test {
             .initialize(
                 1 ether, // minimumStake
                 30 days * 1_000_000, // lockupDurationMicros
-                7 days * 1_000_000, // unbondingDelayMicros
-                10 ether // minimumProposalStake
+                7 days * 1_000_000 // unbondingDelayMicros
             );
 
         // Setup mock validators

@@ -98,7 +98,7 @@ contract ValidatorManagementTest is Test {
 
         // Initialize StakingConfig (with unbonding delay)
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, 10 ether);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
 
         // Initialize ValidatorConfig
         vm.prank(SystemAddresses.GENESIS);

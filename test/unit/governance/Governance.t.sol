@@ -85,7 +85,7 @@ contract GovernanceTest is Test {
 
         // Initialize StakingConfig
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION_MICROS, UNBONDING_DELAY_MICROS, REQUIRED_PROPOSER_STAKE);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION_MICROS, UNBONDING_DELAY_MICROS);
 
         // Deploy Staking
         vm.etch(SystemAddresses.STAKING, address(new Staking()).code);
