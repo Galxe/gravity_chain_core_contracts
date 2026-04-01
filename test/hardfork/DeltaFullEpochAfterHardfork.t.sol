@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { GammaHardforkBase } from "./GammaHardforkBase.t.sol";
+import { DeltaHardforkBase } from "./DeltaHardforkBase.t.sol";
 import { IStakePool } from "../../src/staking/IStakePool.sol";
 import { ValidatorConsensusInfo, ValidatorStatus } from "../../src/foundation/Types.sol";
 import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../src/foundation/Errors.sol";
 import { IDKG } from "../../src/runtime/IDKG.sol";
 
-/// @title FullEpochAfterHardforkTest
-/// @notice Integration test: complete epoch lifecycle after Gamma hardfork.
+/// @title DeltaFullEpochAfterHardforkTest
+/// @notice Integration test: complete epoch lifecycle after Delta hardfork.
 ///         Verifies the entire consensus engine flow works correctly with upgraded bytecodes.
-contract FullEpochAfterHardforkTest is GammaHardforkBase {
+contract DeltaFullEpochAfterHardforkTest is DeltaHardforkBase {
     address public pool1;
     address public pool2;
 
@@ -24,8 +24,8 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
         pool2 = _createRegisterAndJoin(bob, MIN_BOND * 3, "bob");
         _processEpoch();
 
-        // Apply Gamma hardfork mid-chain
-        _applyGammaHardfork();
+        // Apply Delta hardfork mid-chain
+        _applyDeltaHardfork();
     }
 
     // ========================================================================
@@ -57,7 +57,7 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
     // VALIDATOR CHURN AFTER HARDFORK
     // ========================================================================
 
-    /// @notice New validator can join after hardfork (may need multiple epochs due to VP limit)
+    /// @notice New validator can join after hardfork
     function test_validatorJoin_afterHardfork() public {
         // Charlie joins with MIN_BOND
         address pool3 = _createAndRegisterValidator(charlie, MIN_BOND, "charlie");
@@ -65,7 +65,6 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
         validatorManager.joinValidatorSet(pool3);
 
         // Complete enough epochs for charlie to be activated
-        // (voting power increase limit of 20% may defer activation across multiple epochs)
         for (uint256 i = 0; i < 5; i++) {
             _completeEpochTransition();
             if (validatorManager.getActiveValidatorCount() >= 3) break;
@@ -143,11 +142,11 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
     // STAKING CONFIG PENDING + EPOCH (CROSS-MODULE)
     // ========================================================================
 
-    /// @notice StakingConfig pending config applied via Reconfiguration after hardfork
+    /// @notice StakingConfig pending config (3-arg) applied via Reconfiguration after hardfork
     function test_stakingConfigPending_appliedViaEpoch() public {
         uint256 newMinStake = 5 ether;
 
-        // Queue config change
+        // Queue config change (3-arg signature)
         vm.prank(SystemAddresses.GOVERNANCE);
         stakingConfig.setForNextEpoch(newMinStake, LOCKUP_DURATION, UNBONDING_DELAY);
         assertTrue(stakingConfig.hasPendingConfig(), "should have pending");
@@ -204,6 +203,39 @@ contract FullEpochAfterHardforkTest is GammaHardforkBase {
         // Complete
         _simulateFinishReconfiguration(SAMPLE_DKG_TRANSCRIPT);
         assertEq(reconfig.currentEpoch(), 2, "epoch should advance");
+    }
+
+    // ========================================================================
+    // CONSENSUS KEY ROTATION ACROSS EPOCHS (Integration)
+    // ========================================================================
+
+    /// @notice Test consensus key rotation works across epoch boundaries after hardfork
+    function test_consensusKeyRotation_acrossEpochs() public {
+        // Rotate alice's key
+        bytes memory newPubkey = abi.encodePacked(pool1, bytes28(keccak256(abi.encodePacked(pool1, "newkey"))));
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(pool1, newPubkey, hex"a0b1c2d3");
+
+        // Complete epoch — key should be applied
+        _completeEpochTransition();
+
+        // Verify new key is active
+        ValidatorConsensusInfo[] memory info = validatorManager.getActiveValidators();
+        bool found = false;
+        for (uint256 i = 0; i < info.length; i++) {
+            if (info[i].validator == pool1) {
+                assertEq(keccak256(info[i].consensusPubkey), keccak256(newPubkey), "new key applied");
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "pool1 should be active");
+
+        // Run more epochs to verify stability
+        for (uint256 i = 0; i < 3; i++) {
+            _completeEpochTransition();
+        }
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "validators stable");
     }
 
     // ========================================================================

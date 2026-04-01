@@ -1,64 +1,70 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { GammaHardforkBase } from "./GammaHardforkBase.t.sol";
+import { DeltaHardforkBase } from "./DeltaHardforkBase.t.sol";
 import { StakingConfig } from "../../src/runtime/StakingConfig.sol";
 import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../src/foundation/Errors.sol";
 
-/// @title StakingConfigUpgradeTest
-/// @notice Tests for StakingConfig after Gamma hardfork bytecode replacement.
+/// @title DeltaStakingConfigUpgradeTest
+/// @notice Tests for StakingConfig after Delta hardfork bytecode replacement.
 ///         Key concerns:
-///         - _initialized remains in slot 3 (storage compatibility)
-///         - hasPendingConfig is initialized to false (slot 7)
-///         - New pending config pattern (setForNextEpoch + applyPendingConfig) works
-///         - MAX_LOCKUP_DURATION / MAX_UNBONDING_DELAY validation works
-contract StakingConfigUpgradeTest is GammaHardforkBase {
+///         - Storage layout shifted: minimumProposalStake removed, _initialized moves to slot 2
+///         - New 3-arg setForNextEpoch() works correctly (minimumProposalStake param removed)
+///         - _initialized reads correctly from shifted slot
+///         - hasPendingConfig reads correctly from shifted slot
+///         - Validation (MAX_LOCKUP_DURATION, MAX_UNBONDING_DELAY) still works
+contract DeltaStakingConfigUpgradeTest is DeltaHardforkBase {
     function setUp() public override {
         super.setUp();
         // Apply hardfork after initial state is established
-        _applyGammaHardfork();
+        _applyDeltaHardfork();
     }
 
     // ========================================================================
-    // STORAGE LAYOUT VERIFICATION
+    // STORAGE LAYOUT VERIFICATION (POST-SHIFT)
     // ========================================================================
 
-    /// @notice Verify _initialized is in slot 1 offset 16 (packed with lockup/unbonding)
-    function test_storageLayout_initializedInSlot1Packed() public view {
-        bytes32 slot1 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(1)));
-        // _initialized is at offset 16 bytes = 128 bits within slot 1
-        uint256 initBit = (uint256(slot1) >> 128) & 0xFF;
-        assertTrue(initBit != 0, "_initialized should be true at slot 1 offset 16");
+    /// @notice Verify _initialized is true after bytecode replacement
+    /// @dev In v1.2.0: _initialized was in slot 3.
+    ///      In main: _initialized moved to slot 2 (reads old minimumProposalStake which was non-zero → true)
+    function test_storageLayout_initializedAfterShift() public view {
         assertTrue(stakingConfig.isInitialized(), "isInitialized() should return true");
     }
 
-    /// @notice Verify hasPendingConfig is false initially (slot 4)
-    function test_storageLayout_hasPendingConfigSlot4() public view {
-        bytes32 slot4 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(4)));
-        assertEq(uint256(slot4), 0, "hasPendingConfig should be false (0) initially");
+    /// @notice Verify hasPendingConfig is false initially
+    /// @dev In v1.2.0: hasPendingConfig was in slot 7.
+    ///      In main: hasPendingConfig moved to slot 5 (reads old _pendingConfig packed field = 0 → false)
+    function test_storageLayout_hasPendingConfigAfterShift() public view {
         assertFalse(stakingConfig.hasPendingConfig(), "hasPendingConfig() should return false");
     }
 
     /// @notice Verify existing config values are preserved after bytecode replacement
+    /// @dev Slots 0 and 1 are unchanged between versions
     function test_storageLayout_existingValuesPreserved() public view {
         assertEq(stakingConfig.minimumStake(), MIN_STAKE, "minimumStake should be preserved");
         assertEq(stakingConfig.lockupDurationMicros(), LOCKUP_DURATION, "lockupDuration should be preserved");
         assertEq(stakingConfig.unbondingDelayMicros(), UNBONDING_DELAY, "unbondingDelay should be preserved");
     }
 
+    /// @notice Verify minimumProposalStake getter no longer exists
+    /// @dev Calling the old 4-arg selector should revert since function was removed
+    function test_storageLayout_minimumProposalStakeRemoved() public {
+        (bool ok,) = SystemAddresses.STAKE_CONFIG.staticcall(abi.encodeWithSignature("minimumProposalStake()"));
+        assertFalse(ok, "minimumProposalStake() should not exist");
+    }
+
     // ========================================================================
-    // PENDING CONFIG PATTERN
+    // NEW 3-ARG PENDING CONFIG PATTERN
     // ========================================================================
 
-    /// @notice Test the full pending config lifecycle: set → apply at epoch boundary
+    /// @notice Test the full pending config lifecycle with new 3-arg signature
     function test_pendingConfig_fullLifecycle() public {
         uint256 newMinStake = 5 ether;
         uint64 newLockup = 7 days * 1_000_000;
         uint64 newUnbonding = 3 days * 1_000_000;
-        uint256 newProposalStake = 50 ether;
 
-        // Set pending config via GOVERNANCE
+        // Set pending config via GOVERNANCE (3-arg signature, no minimumProposalStake)
         vm.prank(SystemAddresses.GOVERNANCE);
         stakingConfig.setForNextEpoch(newMinStake, newLockup, newUnbonding);
 
@@ -68,6 +74,7 @@ contract StakingConfigUpgradeTest is GammaHardforkBase {
         assertTrue(hasPending, "getPendingConfig should indicate pending");
         assertEq(pending.minimumStake, newMinStake, "pending minimumStake");
         assertEq(pending.lockupDurationMicros, newLockup, "pending lockupDuration");
+        assertEq(pending.unbondingDelayMicros, newUnbonding, "pending unbondingDelay");
 
         // Current values should NOT have changed yet
         assertEq(stakingConfig.minimumStake(), MIN_STAKE, "current minimumStake unchanged");

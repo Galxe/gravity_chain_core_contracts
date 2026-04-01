@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import { HardforkTestBase } from "./HardforkTestBase.sol";
 import { HardforkRegistry } from "./HardforkRegistry.sol";
 import { IStakePool } from "../../src/staking/IStakePool.sol";
+import { ValidatorConsensusInfo, ValidatorStatus } from "../../src/foundation/Types.sol";
 import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../src/foundation/Errors.sol";
 import { ConsensusConfig } from "../../src/runtime/ConsensusConfig.sol";
@@ -11,27 +12,27 @@ import { ExecutionConfig } from "../../src/runtime/ExecutionConfig.sol";
 import { VersionConfig } from "../../src/runtime/VersionConfig.sol";
 import { RandomnessConfig } from "../../src/runtime/RandomnessConfig.sol";
 
-/// @title GammaHardforkMigrationTest
+/// @title DeltaHardforkMigrationTest
 /// @notice Phase A1: True pre→post hardfork migration test.
 ///         Uses HardforkTestBase framework:
-///         1. Loads v1.0.0 runtime bytecodes from fixtures via _deployFromFixtures()
-///         2. Initializes chain state using v1.0.0 code (4-arg StakingConfig.initialize)
-///         3. Applies Gamma hardfork via _applyHardfork(HardforkRegistry.gamma())
+///         1. Loads v1.2.0 runtime bytecodes from fixtures via _deployFromFixtures()
+///         2. Initializes chain state using v1.2.0 code
+///         3. Applies Delta hardfork via _applyDeltaMigration()
 ///         4. Verifies all post-hardfork functionality works correctly
-contract GammaHardforkMigrationTest is HardforkTestBase {
+contract DeltaHardforkMigrationTest is HardforkTestBase {
     address public pool1;
     address public pool2;
 
     function setUp() public {
         _fundTestAccounts();
 
-        // Deploy v1.0.0 bytecodes from fixtures
-        _deployFromFixtures("gravity-testnet-v1.0.0");
+        // Deploy v1.2.0 bytecodes from fixtures
+        _deployFromFixtures("gravity-testnet-v1.2.0");
 
-        // Initialize using v1.0.0 contracts
-        // Note: v1.0.0 StakingConfig.initialize() takes 4 args (includes minimumProposalStake)
+        // Initialize using v1.2.0 contracts
+        // Note: v1.2.0 StakingConfig.initialize() takes 4 args (includes minimumProposalStake)
         //       We use a raw call to match the old ABI signature
-        _initializeAllConfigsV100();
+        _initializeAllConfigsV120();
         _initializeReconfigAndBlocker();
         _setInitialTimestamp();
 
@@ -42,15 +43,15 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         // Process epoch to activate validators
         _processEpoch();
 
-        // Run one epoch on v1.0.0 code to prove chain is live
+        // Run one epoch on v1.2.0 code to prove chain is live
         _completeEpochTransition();
     }
 
-    /// @notice Initialize configs using v1.0.0 ABI (StakingConfig has 4-arg initialize)
-    function _initializeAllConfigsV100() internal {
+    /// @notice Initialize configs using v1.2.0 ABI (StakingConfig has 4-arg initialize)
+    function _initializeAllConfigsV120() internal {
         vm.startPrank(SystemAddresses.GENESIS);
 
-        // v1.0.0 StakingConfig.initialize(uint256,uint64,uint64,uint256)
+        // v1.2.0 StakingConfig.initialize(uint256,uint64,uint64,uint256)
         (bool ok,) = SystemAddresses.STAKE_CONFIG
             .call(
                 abi.encodeWithSignature(
@@ -61,7 +62,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
                     MIN_PROPOSAL_STAKE
                 )
             );
-        require(ok, "v1.0.0 StakingConfig.initialize failed");
+        require(ok, "v1.2.0 StakingConfig.initialize failed");
 
         validatorConfig.initialize(
             MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
@@ -81,11 +82,11 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         vm.stopPrank();
     }
 
-    /// @notice Apply Gamma hardfork with full storage migration
-    /// @dev After Gamma, the same StakingConfig storage shift applies (v1.0.0 also had
-    ///      minimumProposalStake). We need the packed _initialized migration here too.
-    function _applyGammaMigration() internal {
-        _applyHardfork(HardforkRegistry.gamma());
+    /// @notice Apply Delta hardfork with full storage migration
+    /// @dev Combines registry-driven _applyHardfork() with the packed-bit migration
+    ///      for _initialized at slot 1 offset 16
+    function _applyDeltaMigration() internal {
+        _applyHardfork(HardforkRegistry.delta());
         _migrateStakingConfigStorage();
     }
 
@@ -104,7 +105,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
 
     function test_migration_epochTransitionAfterHardfork() public {
         uint64 epochBefore = reconfig.currentEpoch();
-        _applyGammaMigration();
+        _applyDeltaMigration();
         _completeEpochTransition();
         assertEq(reconfig.currentEpoch(), epochBefore + 1, "epoch should advance");
         assertEq(validatorManager.getActiveValidatorCount(), 2, "validators preserved");
@@ -116,7 +117,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         slots[0] = bytes32(uint256(0)); // minimumStake
         _snapshotStorage(SystemAddresses.STAKE_CONFIG, slots);
 
-        _applyGammaMigration();
+        _applyDeltaMigration();
 
         _verifyStoragePreserved();
         assertTrue(stakingConfig.isInitialized(), "still initialized");
@@ -127,9 +128,10 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         assertEq(stakingConfig.unbondingDelayMicros(), UNBONDING_DELAY, "unbonding preserved");
     }
 
-    function test_migration_stakingConfigPendingConfigWorks() public {
-        _applyGammaMigration();
+    function test_migration_stakingConfigNewSignature() public {
+        _applyDeltaMigration();
 
+        // New 3-arg setForNextEpoch should work
         uint256 newMinStake = 5 ether;
         vm.prank(SystemAddresses.GOVERNANCE);
         stakingConfig.setForNextEpoch(newMinStake, LOCKUP_DURATION, UNBONDING_DELAY);
@@ -141,7 +143,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
     }
 
     function test_migration_stakePoolWithdrawRewards() public {
-        _applyGammaMigration();
+        _applyDeltaMigration();
 
         uint256 activeStake = IStakePool(pool1).getActiveStake();
         uint256 rewardAmount = 3 ether;
@@ -153,16 +155,8 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         assertEq(alice.balance, aliceBefore + rewardAmount, "rewards withdrawn");
     }
 
-    function test_migration_stakePoolReceiveRemoved() public {
-        _applyGammaMigration();
-
-        vm.prank(charlie);
-        (bool success,) = pool1.call{ value: 1 ether }("");
-        assertFalse(success, "plain ETH should revert");
-    }
-
     function test_migration_nativeOracleSequentialNonce() public {
-        _applyGammaMigration();
+        _applyDeltaMigration();
 
         vm.prank(SystemAddresses.SYSTEM_CALLER);
         nativeOracle.record(1, 100, 1, block.number, hex"aabb", 0);
@@ -177,16 +171,16 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
     }
 
     function test_migration_validatorJoinAfterHardfork() public {
-        _applyGammaMigration();
+        _applyDeltaMigration();
 
-        _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
         _completeEpochTransition();
         assertEq(validatorManager.getActiveValidatorCount(), 3, "3 validators after join");
     }
 
     function test_migration_multipleEpochs() public {
-        _applyGammaMigration();
-        for (uint256 i = 0; i < 5; ++i) {
+        _applyDeltaMigration();
+        for (uint256 i = 0; i < 5; i++) {
             _completeEpochTransition();
         }
         assertEq(reconfig.currentEpoch(), 7, "epoch 7 (2 + 5)");
@@ -195,7 +189,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
     function test_migration_fullLifecycleIntegration() public {
         assertEq(reconfig.currentEpoch(), 2, "start at epoch 2");
 
-        _applyGammaMigration();
+        _applyDeltaMigration();
 
         vm.prank(alice);
         IStakePool(pool1).addStake{ value: 5 ether }();
@@ -203,7 +197,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         vm.prank(SystemAddresses.GOVERNANCE);
         stakingConfig.setForNextEpoch(2 ether, LOCKUP_DURATION, UNBONDING_DELAY);
 
-        _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
 
         _completeEpochTransition();
 

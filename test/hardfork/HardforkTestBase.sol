@@ -260,6 +260,20 @@ abstract contract HardforkTestBase is Test {
         }
     }
 
+    /// @notice Migrate StakingConfig storage for Delta hardfork
+    /// @dev In v1.2.0, _initialized was at slot 3 (standalone bool).
+    ///      In main, _initialized is packed at slot 1 offset 16 (with lockup + unbonding).
+    ///      PostActions can't do read-modify-write, so we handle this separately:
+    ///      1. Read existing slot 1 (contains lockupDurationMicros | unbondingDelayMicros)
+    ///      2. OR with (1 << 128) to set the _initialized bit at byte offset 16
+    ///      3. Write back the combined value
+    function _migrateStakingConfigStorage() internal {
+        bytes32 slot1 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(1)));
+        // _initialized is at offset 16 bytes = 128 bits within slot 1
+        bytes32 withInitialized = slot1 | bytes32(uint256(1) << 128);
+        vm.store(SystemAddresses.STAKE_CONFIG, bytes32(uint256(1)), withInitialized);
+    }
+
     /// @notice Compile current bytecode for a contract by name
     function _compileNewBytecode(
         string memory name
@@ -318,7 +332,7 @@ abstract contract HardforkTestBase is Test {
 
     function _initializeAllConfigs() internal {
         vm.startPrank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, MIN_PROPOSAL_STAKE);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
         validatorConfig.initialize(
             MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
         );
