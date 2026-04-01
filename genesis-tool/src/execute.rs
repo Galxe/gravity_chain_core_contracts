@@ -72,7 +72,19 @@ fn deploy_bsc_style(byte_code_dir: &str, total_stake: U256) -> InMemoryDB {
 /// Extract runtime bytecode from constructor bytecode
 /// This is a simplified implementation - the bytecode should already be runtime bytecode
 fn extract_runtime_bytecode(constructor_bytecode: &str) -> Vec<u8> {
-    let bytes = hex::decode(constructor_bytecode.trim()).unwrap_or_default();
+    let trimmed = constructor_bytecode.trim();
+    let bytes = hex::decode(trimmed).unwrap_or_else(|e| {
+        panic!(
+            "FATAL: Failed to decode hex bytecode: {}. Input (first 100 chars): {}",
+            e,
+            &trimmed[..trimmed.len().min(100)]
+        )
+    });
+
+    // Guard against empty bytecode — this indicates a corrupted or missing hex file
+    if bytes.is_empty() {
+        panic!("FATAL: Decoded bytecode is empty — possible corrupted or empty hex file");
+    }
 
     // Simple heuristic: if the bytecode starts with typical constructor patterns,
     // we need to extract the runtime part
@@ -203,7 +215,40 @@ pub fn genesis_generate(
     }
 
     // Add any state changes from the bundle_state (from the initialize transaction)
+    // Remove system accounts that should NOT carry balance into genesis:
+    // 1. SYSTEM_CALLER — funding account used only during genesis execution
     bundle_state.state.remove(&SYSTEM_CALLER);
+
+    // 2. GENESIS_ADDR — buffer balance used during initialize() should be zeroed out.
+    //    Genesis.initialize() transfers all validator stakes to StakePools;
+    //    any remaining balance is a phantom artifact that must not leak to mainnet.
+    if let Some(genesis_account) = bundle_state.state.get_mut(&GENESIS_ADDR) {
+        if let Some(ref mut info) = genesis_account.info {
+            if info.balance > U256::ZERO {
+                warn!(
+                    "Zeroing out Genesis contract phantom balance: {} wei",
+                    info.balance
+                );
+                info.balance = U256::ZERO;
+            }
+        }
+    }
+
+    // Safety scan: warn about any unexpected non-zero balances in system contracts
+    for (addr, account) in &bundle_state.state {
+        if let Some(ref info) = account.info {
+            // StakePool addresses are expected to hold stake — skip them
+            // System contracts should generally have zero balance
+            let is_system_contract = CONTRACTS.iter().any(|(_, a)| a == addr);
+            if is_system_contract && info.balance > U256::ZERO {
+                warn!(
+                    "Unexpected non-zero balance at system contract {:?}: {} wei",
+                    addr, info.balance
+                );
+            }
+        }
+    }
+
     // write bundle state into one json file named bundle_state.json
     serde_json::to_writer_pretty(
         BufWriter::new(File::create(format!("{output_dir}/bundle_state.json")).unwrap()),
