@@ -30,6 +30,8 @@ contract StakingConfig {
         uint256 minimumStake;
         uint64 lockupDurationMicros;
         uint64 unbondingDelayMicros;
+        /// @dev DEPRECATED: kept as storage gap to preserve slot layout for hardfork compatibility.
+        uint256 __deprecated_minimumProposalStake;
     }
 
     // ========================================================================
@@ -44,6 +46,11 @@ contract StakingConfig {
 
     /// @notice Unbonding delay in microseconds (additional wait after lockedUntil before withdrawal)
     uint64 public unbondingDelayMicros;
+
+    /// @notice DEPRECATED: kept as storage gap to preserve slot layout for hardfork compatibility.
+    /// @dev Was `minimumProposalStake` in v1.2.0; removed functionally but retained to avoid
+    ///      shifting subsequent storage slots (_initialized, _pendingConfig, hasPendingConfig).
+    uint256 private __deprecated_minimumProposalStake;
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
@@ -132,7 +139,8 @@ contract StakingConfig {
         _pendingConfig = PendingConfig({
             minimumStake: _minimumStake,
             lockupDurationMicros: _lockupDurationMicros,
-            unbondingDelayMicros: _unbondingDelayMicros
+            unbondingDelayMicros: _unbondingDelayMicros,
+            __deprecated_minimumProposalStake: 0
         });
         hasPendingConfig = true;
         emit PendingStakingConfigSet();
