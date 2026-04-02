@@ -9,10 +9,10 @@ import { Errors } from "../../src/foundation/Errors.sol";
 /// @title DeltaStakingConfigUpgradeTest
 /// @notice Tests for StakingConfig after Delta hardfork bytecode replacement.
 ///         Key concerns:
-///         - Storage layout shifted: minimumProposalStake removed, _initialized moves to slot 2
+///         - Storage layout preserved: minimumProposalStake kept as gap variable
 ///         - New 3-arg setForNextEpoch() works correctly (minimumProposalStake param removed)
-///         - _initialized reads correctly from shifted slot
-///         - hasPendingConfig reads correctly from shifted slot
+///         - _initialized reads correctly from preserved slot 3
+///         - hasPendingConfig reads correctly from preserved slot 7
 ///         - Validation (MAX_LOCKUP_DURATION, MAX_UNBONDING_DELAY) still works
 contract DeltaStakingConfigUpgradeTest is DeltaHardforkBase {
     function setUp() public override {
@@ -22,19 +22,17 @@ contract DeltaStakingConfigUpgradeTest is DeltaHardforkBase {
     }
 
     // ========================================================================
-    // STORAGE LAYOUT VERIFICATION (POST-SHIFT)
+    // STORAGE LAYOUT VERIFICATION (GAP PATTERN)
     // ========================================================================
 
     /// @notice Verify _initialized is true after bytecode replacement
-    /// @dev In v1.2.0: _initialized was in slot 3.
-    ///      In main: _initialized moved to slot 2 (reads old minimumProposalStake which was non-zero → true)
+    /// @dev With storage gap, _initialized stays at slot 3 — same as v1.2.0. No migration needed.
     function test_storageLayout_initializedAfterShift() public view {
         assertTrue(stakingConfig.isInitialized(), "isInitialized() should return true");
     }
 
     /// @notice Verify hasPendingConfig is false initially
-    /// @dev In v1.2.0: hasPendingConfig was in slot 7.
-    ///      In main: hasPendingConfig moved to slot 5 (reads old _pendingConfig packed field = 0 → false)
+    /// @dev With storage gap, hasPendingConfig stays at slot 7 — same as v1.2.0.
     function test_storageLayout_hasPendingConfigAfterShift() public view {
         assertFalse(stakingConfig.hasPendingConfig(), "hasPendingConfig() should return false");
     }
@@ -48,7 +46,7 @@ contract DeltaStakingConfigUpgradeTest is DeltaHardforkBase {
     }
 
     /// @notice Verify minimumProposalStake getter no longer exists
-    /// @dev Calling the old 4-arg selector should revert since function was removed
+    /// @dev The storage slot is preserved as a gap but the public getter was removed
     function test_storageLayout_minimumProposalStakeRemoved() public {
         (bool ok,) = SystemAddresses.STAKE_CONFIG.staticcall(abi.encodeWithSignature("minimumProposalStake()"));
         assertFalse(ok, "minimumProposalStake() should not exist");

@@ -33,12 +33,10 @@ abstract contract DeltaHardforkBase is HardforkTestBase {
     // ========================================================================
 
     /// @notice Apply Delta hardfork using the registry definition
+    /// @dev Storage gap pattern means no storage migration is needed — just bytecode replacement.
     function _applyDeltaHardfork() internal {
         HardforkRegistry.HardforkDef memory def = HardforkRegistry.delta();
         _applyHardfork(def);
-        // StakingConfig._initialized moved from slot 3 to slot 1 offset 16 (packed).
-        // PostActions clear stale slots, this sets the packed bit.
-        _migrateStakingConfigStorage();
     }
 
     // ========================================================================

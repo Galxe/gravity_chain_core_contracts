@@ -75,10 +75,7 @@ library HardforkRegistry {
 
     /// @notice Build the Delta hardfork definition
     /// @dev Delta upgrades from gravity-testnet-v1.2.0 to main (PR #49, #55, #58):
-    ///      - StakingConfig: removed minimumProposalStake → storage layout shift:
-    ///        v1.2.0: slot 1=[lockup|unbonding], slot 2=minimumProposalStake, slot 3=_initialized
-    ///        main:   slot 1=[lockup|unbonding|_initialized(packed)], slot 2=_pendingConfig
-    ///        REQUIRES: set _initialized bit at slot 1 offset 16, clear stale slots 2-3, 6-7
+    ///      - StakingConfig: minimumProposalStake deprecated (kept as storage gap, no layout shift)
     ///      - ValidatorManagement: consensus key rotation, try/catch renewPoolLockup,
     ///        whale VP fix, eviction fairness fix
     ///      - Governance: MAX_PROPOSAL_TARGETS limit, ProposalNotResolved check
@@ -94,39 +91,6 @@ library HardforkRegistry {
         def.upgrades[2] = ContractUpgrade(SystemAddresses.GOVERNANCE, "Governance");
         def.upgrades[3] = ContractUpgrade(SystemAddresses.NATIVE_ORACLE, "NativeOracle");
 
-        // --- PostActions: Clear stale StakingConfig storage slots ---
-        // Note: _initialized is packed at slot 1 offset 16 in the new layout.
-        //       Setting it requires read-modify-write (OR with existing packed value).
-        //       This is done in _migrateStakingConfigStorage() instead of here.
-        //       These PostActions only handle clearing stale data from the old layout.
-        def.postActions = new PostAction[](4);
-        // Clear old minimumProposalStake (slot 2) — now _pendingConfig.minimumStake
-        def.postActions[0] = PostAction({
-            target: SystemAddresses.STAKE_CONFIG,
-            slot: bytes32(uint256(2)),
-            value: bytes32(uint256(0)),
-            isDynamic: false
-        });
-        // Clear old _initialized (slot 3) — now _pendingConfig packed
-        def.postActions[1] = PostAction({
-            target: SystemAddresses.STAKE_CONFIG,
-            slot: bytes32(uint256(3)),
-            value: bytes32(uint256(0)),
-            isDynamic: false
-        });
-        // Clear old _pendingConfig.minimumProposalStake (slot 6) — orphaned
-        def.postActions[2] = PostAction({
-            target: SystemAddresses.STAKE_CONFIG,
-            slot: bytes32(uint256(6)),
-            value: bytes32(uint256(0)),
-            isDynamic: false
-        });
-        // Clear old hasPendingConfig (slot 7) — orphaned
-        def.postActions[3] = PostAction({
-            target: SystemAddresses.STAKE_CONFIG,
-            slot: bytes32(uint256(7)),
-            value: bytes32(uint256(0)),
-            isDynamic: false
-        });
+        // No PostActions needed — StakingConfig uses storage gap pattern to preserve v1.2.0 layout
     }
 }

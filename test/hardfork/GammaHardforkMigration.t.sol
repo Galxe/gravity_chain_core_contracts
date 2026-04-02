@@ -81,12 +81,10 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         vm.stopPrank();
     }
 
-    /// @notice Apply Gamma hardfork with full storage migration
-    /// @dev After Gamma, the same StakingConfig storage shift applies (v1.0.0 also had
-    ///      minimumProposalStake). We need the packed _initialized migration here too.
+    /// @notice Apply Gamma hardfork (bytecode replacement + ReentrancyGuard init)
+    /// @dev With storage gap pattern, StakingConfig layout is preserved — no migration needed.
     function _applyGammaMigration() internal {
         _applyHardfork(HardforkRegistry.gamma());
-        _migrateStakingConfigStorage();
     }
 
     // ========================================================================
@@ -111,9 +109,10 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
     }
 
     function test_migration_stakingConfigStoragePreserved() public {
-        // Snapshot slot 0 only — slot 1 WILL change (gets _initialized bit OR'd in)
-        bytes32[] memory slots = new bytes32[](1);
+        // Snapshot slots 0 and 1 — with storage gap, neither changes during hardfork
+        bytes32[] memory slots = new bytes32[](2);
         slots[0] = bytes32(uint256(0)); // minimumStake
+        slots[1] = bytes32(uint256(1)); // lockup|unbonding (packed)
         _snapshotStorage(SystemAddresses.STAKE_CONFIG, slots);
 
         _applyGammaMigration();
@@ -122,7 +121,7 @@ contract GammaHardforkMigrationTest is HardforkTestBase {
         assertTrue(stakingConfig.isInitialized(), "still initialized");
         assertFalse(stakingConfig.hasPendingConfig(), "no pending config initially");
 
-        // Verify the packed slot 1 preserves lockup values
+        // Verify lockup values are preserved
         assertEq(stakingConfig.lockupDurationMicros(), LOCKUP_DURATION, "lockup preserved");
         assertEq(stakingConfig.unbondingDelayMicros(), UNBONDING_DELAY, "unbonding preserved");
     }

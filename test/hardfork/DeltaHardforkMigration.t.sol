@@ -82,12 +82,10 @@ contract DeltaHardforkMigrationTest is HardforkTestBase {
         vm.stopPrank();
     }
 
-    /// @notice Apply Delta hardfork with full storage migration
-    /// @dev Combines registry-driven _applyHardfork() with the packed-bit migration
-    ///      for _initialized at slot 1 offset 16
+    /// @notice Apply Delta hardfork (bytecode replacement only)
+    /// @dev Storage gap pattern means no storage migration is needed.
     function _applyDeltaMigration() internal {
         _applyHardfork(HardforkRegistry.delta());
-        _migrateStakingConfigStorage();
     }
 
     // ========================================================================
@@ -112,9 +110,10 @@ contract DeltaHardforkMigrationTest is HardforkTestBase {
     }
 
     function test_migration_stakingConfigStoragePreserved() public {
-        // Snapshot slot 0 only — slot 1 WILL change (gets _initialized bit OR'd in)
-        bytes32[] memory slots = new bytes32[](1);
+        // Snapshot slots 0 and 1 — with storage gap, neither changes during hardfork
+        bytes32[] memory slots = new bytes32[](2);
         slots[0] = bytes32(uint256(0)); // minimumStake
+        slots[1] = bytes32(uint256(1)); // lockup|unbonding (packed)
         _snapshotStorage(SystemAddresses.STAKE_CONFIG, slots);
 
         _applyDeltaMigration();
@@ -123,7 +122,7 @@ contract DeltaHardforkMigrationTest is HardforkTestBase {
         assertTrue(stakingConfig.isInitialized(), "still initialized");
         assertFalse(stakingConfig.hasPendingConfig(), "no pending config initially");
 
-        // Verify the packed slot 1 preserves lockup values
+        // Verify lockup values are preserved
         assertEq(stakingConfig.lockupDurationMicros(), LOCKUP_DURATION, "lockup preserved");
         assertEq(stakingConfig.unbondingDelayMicros(), UNBONDING_DELAY, "unbonding preserved");
     }

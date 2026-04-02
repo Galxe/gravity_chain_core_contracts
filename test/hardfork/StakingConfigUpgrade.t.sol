@@ -24,19 +24,19 @@ contract StakingConfigUpgradeTest is GammaHardforkBase {
     // STORAGE LAYOUT VERIFICATION
     // ========================================================================
 
-    /// @notice Verify _initialized is in slot 1 offset 16 (packed with lockup/unbonding)
-    function test_storageLayout_initializedInSlot1Packed() public view {
-        bytes32 slot1 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(1)));
-        // _initialized is at offset 16 bytes = 128 bits within slot 1
-        uint256 initBit = (uint256(slot1) >> 128) & 0xFF;
-        assertTrue(initBit != 0, "_initialized should be true at slot 1 offset 16");
+    /// @notice Verify _initialized is in slot 3
+    function test_storageLayout_initializedInSlot3() public view {
+        bytes32 slot3 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(3)));
+        // _initialized is a boolean at offset 0 within slot 3
+        uint256 initBit = uint256(slot3) & 0xFF;
+        assertTrue(initBit != 0, "_initialized should be true at slot 3");
         assertTrue(stakingConfig.isInitialized(), "isInitialized() should return true");
     }
 
-    /// @notice Verify hasPendingConfig is false initially (slot 4)
-    function test_storageLayout_hasPendingConfigSlot4() public view {
-        bytes32 slot4 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(4)));
-        assertEq(uint256(slot4), 0, "hasPendingConfig should be false (0) initially");
+    /// @notice Verify hasPendingConfig is false initially (slot 7)
+    function test_storageLayout_hasPendingConfigSlot7() public view {
+        bytes32 slot7 = vm.load(SystemAddresses.STAKE_CONFIG, bytes32(uint256(7)));
+        assertEq(uint256(slot7), 0, "hasPendingConfig should be false (0) initially");
         assertFalse(stakingConfig.hasPendingConfig(), "hasPendingConfig() should return false");
     }
 
