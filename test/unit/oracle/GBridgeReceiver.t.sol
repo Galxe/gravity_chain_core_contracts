@@ -3,32 +3,16 @@ pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
 import { GBridgeReceiver } from "@src/oracle/evm/native_token_bridge/GBridgeReceiver.sol";
-import { IGBridgeReceiver, INativeMintPrecompile } from "@src/oracle/evm/native_token_bridge/IGBridgeReceiver.sol";
+import { IGBridgeReceiver } from "@src/oracle/evm/native_token_bridge/IGBridgeReceiver.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { SystemAddresses } from "@src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "@src/foundation/SystemAccessControl.sol";
 import { Errors } from "@src/foundation/Errors.sol";
 
-/// @title MockNativeMintPrecompile
-/// @notice Mock precompile for testing native token minting
-contract MockNativeMintPrecompile is INativeMintPrecompile {
-    mapping(address => uint256) public balances;
-    uint256 public totalMinted;
-
-    function mint(
-        address recipient,
-        uint256 amount
-    ) external override {
-        balances[recipient] += amount;
-        totalMinted += amount;
-    }
-}
-
 /// @title GBridgeReceiverTest
 /// @notice Unit tests for GBridgeReceiver contract
 contract GBridgeReceiverTest is Test {
     GBridgeReceiver public receiver;
-    MockNativeMintPrecompile public mockPrecompile;
 
     address public nativeOracle;
     address public trustedBridge;
@@ -44,13 +28,12 @@ contract GBridgeReceiverTest is Test {
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
-        // Mock the precompile call to always succeed
-        // GBridgeReceiver uses low-level call:
-        // NATIVE_MINT_PRECOMPILE.call(abi.encodePacked(uint8(0x01), recipient, amount))
-        // We mock any call to this address to return (true, "")
+        // Mock the NativeMintWrapper.mint() call to always succeed
+        // GBridgeReceiver now calls:
+        // INativeMintWrapper(SystemAddresses.NATIVE_MINT_WRAPPER).mint(recipient, amount)
         bytes memory emptyData = "";
         bytes memory successReturn = "";
-        vm.mockCall(SystemAddresses.NATIVE_MINT_PRECOMPILE, emptyData, successReturn);
+        vm.mockCall(SystemAddresses.NATIVE_MINT_WRAPPER, emptyData, successReturn);
 
         // Deploy receiver with trusted bridge
         receiver = new GBridgeReceiver(trustedBridge, ETHEREUM_SOURCE_ID);

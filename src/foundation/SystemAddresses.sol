@@ -118,6 +118,11 @@ library SystemAddresses {
     /// @dev Accepts user-initiated on-demand oracle requests with fee payment
     address internal constant ORACLE_REQUEST_QUEUE = address(0x0000000000000000000000000001625F4002);
 
+    /// @notice Native mint wrapper contract
+    /// @dev Wraps native mint precompile with access control for multiple callers.
+    ///      Only authorized minters (e.g., bridge receivers) can mint through this wrapper.
+    address internal constant NATIVE_MINT_WRAPPER = address(0x0000000000000000000000000001625F4003);
+
     // ==================== Precompiles (0x1625F5xxx) ====================
 
     /// @notice Native mint precompile
