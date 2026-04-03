@@ -159,7 +159,7 @@ contract BlockerTest is Test {
                 20, // votingPowerIncreaseLimitPct
                 100, // maxValidatorSetSize
                 false, // autoEvictEnabled
-                0 // autoEvictThreshold
+                0 // autoEvictThresholdPct
             );
 
         // Initialize VersionConfig

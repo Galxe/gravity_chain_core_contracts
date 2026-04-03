@@ -449,10 +449,10 @@ library Errors {
     /// @notice Validator config has not been initialized
     error ValidatorConfigNotInitialized();
 
-    /// @notice Auto-eviction threshold exceeds maximum (must fit in uint64 to match successfulProposals type)
+    /// @notice Auto-eviction threshold percentage exceeds maximum (must be 0-100)
     /// @param value The invalid threshold provided
-    /// @param maximum The maximum allowed threshold (type(uint64).max)
-    error InvalidAutoEvictThreshold(uint256 value, uint256 maximum);
+    /// @param maximum The maximum allowed threshold (100)
+    error InvalidAutoEvictThresholdPct(uint64 value, uint64 maximum);
 
     // ========================================================================
     // GOVERNANCE CONFIG ERRORS

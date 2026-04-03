@@ -27,9 +27,9 @@ interface IValidatorConfig {
     /// @notice Whether auto-eviction of underperforming validators is enabled
     function autoEvictEnabled() external view returns (bool);
 
-    /// @notice Minimum successful proposals required to avoid auto-eviction
-    /// @dev Validators with successfulProposals <= this threshold are evicted at epoch boundary
-    function autoEvictThreshold() external view returns (uint256);
+    /// @notice Minimum success percentage required to avoid auto-eviction (0-100)
+    /// @dev Validators with success rate < this threshold are evicted at epoch boundary
+    function autoEvictThresholdPct() external view returns (uint64);
 
     /// @notice Maximum allowed voting power increase limit (50%)
     function MAX_VOTING_POWER_INCREASE_LIMIT() external view returns (uint64);

@@ -97,8 +97,8 @@ pub struct ValidatorConfigParams {
     #[serde(rename = "autoEvictEnabled", default)]
     pub auto_evict_enabled: bool,
 
-    #[serde(rename = "autoEvictThreshold", default)]
-    pub auto_evict_threshold: String,
+    #[serde(rename = "autoEvictThresholdPct", default)]
+    pub auto_evict_threshold_pct: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -248,7 +248,7 @@ sol! {
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
         bool autoEvictEnabled;
-        uint256 autoEvictThreshold;
+        uint64 autoEvictThresholdPct;
     }
 
     struct SolStakingConfigParams {
@@ -382,10 +382,10 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         votingPowerIncreaseLimitPct: config.validator_config.voting_power_increase_limit_pct,
         maxValidatorSetSize: parse_u256(&config.validator_config.max_validator_set_size),
         autoEvictEnabled: config.validator_config.auto_evict_enabled,
-        autoEvictThreshold: if config.validator_config.auto_evict_threshold.is_empty() {
-            U256::ZERO
+        autoEvictThresholdPct: if config.validator_config.auto_evict_threshold_pct.is_empty() {
+            0u64
         } else {
-            parse_u256(&config.validator_config.auto_evict_threshold)
+            config.validator_config.auto_evict_threshold_pct.parse::<u64>().expect("invalid autoEvictThresholdPct")
         },
     };
 

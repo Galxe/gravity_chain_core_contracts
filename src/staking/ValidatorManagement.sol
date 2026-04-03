@@ -591,7 +591,7 @@ contract ValidatorManagement is IValidatorManagement {
     /// @inheritdoc IValidatorManagement
     /// @dev Called by Reconfiguration BEFORE onNewEpoch() during epoch transition.
     ///      Reads the completed epoch's performance data and marks validators
-    ///      with successfulProposals <= autoEvictThreshold as PENDING_INACTIVE.
+    ///      with success rate < autoEvictThresholdPct as PENDING_INACTIVE.
     ///
     ///      ## Timing Difference from leaveValidatorSet
     ///
@@ -616,7 +616,14 @@ contract ValidatorManagement is IValidatorManagement {
             return;
         }
 
-        uint256 threshold = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictThreshold();
+        // Skip eviction for epoch 1 — the first epoch after genesis has insufficient
+        // performance data (validators are still bootstrapping), so eviction starts from epoch 2.
+        uint64 closingEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
+        if (closingEpoch <= 1) {
+            return;
+        }
+
+        uint64 thresholdPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).autoEvictThresholdPct();
 
         // Read performance data from the completed epoch
         IValidatorPerformanceTracker.IndividualPerformance[] memory perfs =
@@ -648,8 +655,18 @@ contract ValidatorManagement is IValidatorManagement {
                 continue;
             }
 
-            // Check if validator meets eviction criteria
-            if (perfs[i].successfulProposals <= threshold) {
+            // Check if validator meets eviction criteria based on success percentage
+            uint256 total = uint256(perfs[i].successfulProposals) + uint256(perfs[i].failedProposals);
+            bool shouldEvict = false;
+
+            if (total > 0) {
+                uint256 successPct = (uint256(perfs[i].successfulProposals) * 100) / total;
+                if (successPct < thresholdPct) {
+                    shouldEvict = true;
+                }
+            }
+
+            if (shouldEvict) {
                 // Preserve liveness: never evict the last active validator
                 if (remainingActive <= 1) {
                     // Cannot evict the last active validator — would halt consensus
