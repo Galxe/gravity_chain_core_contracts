@@ -659,7 +659,10 @@ contract ValidatorManagement is IValidatorManagement {
             uint256 total = uint256(perfs[i].successfulProposals) + uint256(perfs[i].failedProposals);
             bool shouldEvict = false;
 
-            if (total > 0) {
+            if (total == 0) {
+                // No proposals at all — validator was completely inactive this epoch
+                shouldEvict = true;
+            } else {
                 uint256 successPct = (uint256(perfs[i].successfulProposals) * 100) / total;
                 if (successPct < thresholdPct) {
                     shouldEvict = true;
