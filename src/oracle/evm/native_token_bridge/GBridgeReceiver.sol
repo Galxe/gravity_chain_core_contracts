@@ -27,8 +27,9 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     // STATE
     // ========================================================================
 
-    /// @notice Processed nonces for replay protection
-    mapping(uint128 => bool) private _processedNonces;
+    // @deprecated Kept for storage layout compatibility after hardfork.
+    // Replay protection is already guaranteed by NativeOracle's sequential nonce enforcement.
+    uint256 private __deprecated_processedNonces;
 
     // ========================================================================
     // CONSTRUCTOR
@@ -80,10 +81,8 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
             revert InvalidSender(sender, trustedBridge);
         }
 
-        // Check for replay
-        if (_processedNonces[messageNonce]) {
-            revert AlreadyProcessed(messageNonce);
-        }
+        // Replay protection is handled by NativeOracle's sequential nonce enforcement
+        // (nonce must equal currentNonce + 1), so no duplicate check is needed here.
 
         // Decode message: (amount, recipient)
         (uint256 amount, address recipient) = abi.decode(message, (uint256, address));
@@ -91,9 +90,6 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         // Validate decoded data to prevent no-op mints and burns to address(0)
         if (amount == 0) revert Errors.ZeroAmount();
         if (recipient == address(0)) revert Errors.ZeroAddress();
-
-        // Mark nonce as processed BEFORE minting (CEI pattern)
-        _processedNonces[messageNonce] = true;
 
         // Mint native tokens via precompile (precompile never reverts)
         bytes memory callData = abi.encodePacked(uint8(0x01), recipient, amount);
@@ -107,16 +103,4 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
         // Store bridge events in NativeOracle for verification and audit trail
         return true;
     }
-
-    // ========================================================================
-    // VIEW FUNCTIONS
-    // ========================================================================
-
-    /// @inheritdoc IGBridgeReceiver
-    function isProcessed(
-        uint128 nonce
-    ) external view returns (bool) {
-        return _processedNonces[nonce];
-    }
 }
-
