@@ -10,7 +10,7 @@
     "votingPowerIncreaseLimitPct": 20,
     "maxValidatorSetSize": "100",
     "autoEvictEnabled": false,
-    "autoEvictThreshold": "0"
+    "autoEvictThresholdPct": "0"
   },
 
   "stakingConfig": {

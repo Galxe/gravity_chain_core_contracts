@@ -38,7 +38,8 @@ contract ValidatorConfig {
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
         bool autoEvictEnabled;
-        uint256 autoEvictThreshold;
+        uint256 __deprecated_autoEvictThreshold;
+        uint64 autoEvictThresholdPct;
     }
 
     // ========================================================================
@@ -66,10 +67,8 @@ contract ValidatorConfig {
     /// @notice Whether auto-eviction of underperforming validators is enabled
     bool public autoEvictEnabled;
 
-    /// @notice Minimum successful proposals required to avoid auto-eviction
-    /// @dev Validators with successfulProposals <= this threshold are evicted at epoch boundary.
-    ///      Default 0 means only validators with zero successful proposals are evicted.
-    uint256 public autoEvictThreshold;
+    /// @dev Deprecated: preserved for storage layout compatibility. Do not use.
+    uint256 private __deprecated_autoEvictThreshold;
 
     /// @notice Pending configuration for next epoch
     PendingConfig private _pendingConfig;
@@ -79,6 +78,11 @@ contract ValidatorConfig {
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
+
+    /// @notice Minimum success percentage required to avoid auto-eviction (0-100)
+    /// @dev Validators with success rate < this threshold are evicted at epoch boundary.
+    ///      E.g., 50 means validators with < 50% success rate are evicted.
+    uint64 public autoEvictThresholdPct;
 
     // ========================================================================
     // EVENTS
@@ -106,7 +110,7 @@ contract ValidatorConfig {
     /// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)
     /// @param _maxValidatorSetSize Max validators in set (1-65536)
     /// @param _autoEvictEnabled Whether auto-eviction is enabled at genesis
-    /// @param _autoEvictThreshold Minimum successful proposals to avoid eviction
+    /// @param _autoEvictThresholdPct Minimum success percentage to avoid eviction (0-100)
     function initialize(
         uint256 _minimumBond,
         uint256 _maximumBond,
@@ -115,7 +119,7 @@ contract ValidatorConfig {
         uint64 _votingPowerIncreaseLimitPct,
         uint256 _maxValidatorSetSize,
         bool _autoEvictEnabled,
-        uint256 _autoEvictThreshold
+        uint64 _autoEvictThresholdPct
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
 
@@ -130,7 +134,7 @@ contract ValidatorConfig {
             _unbondingDelayMicros,
             _votingPowerIncreaseLimitPct,
             _maxValidatorSetSize,
-            _autoEvictThreshold
+            _autoEvictThresholdPct
         );
 
         minimumBond = _minimumBond;
@@ -140,7 +144,7 @@ contract ValidatorConfig {
         votingPowerIncreaseLimitPct = _votingPowerIncreaseLimitPct;
         maxValidatorSetSize = _maxValidatorSetSize;
         autoEvictEnabled = _autoEvictEnabled;
-        autoEvictThreshold = _autoEvictThreshold;
+        autoEvictThresholdPct = _autoEvictThresholdPct;
 
         _initialized = true;
 
@@ -178,7 +182,7 @@ contract ValidatorConfig {
     /// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)
     /// @param _maxValidatorSetSize Max validators in set (1-65536)
     /// @param _autoEvictEnabled Whether auto-eviction is enabled
-    /// @param _autoEvictThreshold Minimum successful proposals to avoid eviction
+    /// @param _autoEvictThresholdPct Minimum success percentage to avoid eviction (0-100)
     function setForNextEpoch(
         uint256 _minimumBond,
         uint256 _maximumBond,
@@ -187,7 +191,7 @@ contract ValidatorConfig {
         uint64 _votingPowerIncreaseLimitPct,
         uint256 _maxValidatorSetSize,
         bool _autoEvictEnabled,
-        uint256 _autoEvictThreshold
+        uint64 _autoEvictThresholdPct
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
@@ -199,7 +203,7 @@ contract ValidatorConfig {
             _unbondingDelayMicros,
             _votingPowerIncreaseLimitPct,
             _maxValidatorSetSize,
-            _autoEvictThreshold
+            _autoEvictThresholdPct
         );
 
         _pendingConfig = PendingConfig({
@@ -210,7 +214,8 @@ contract ValidatorConfig {
             votingPowerIncreaseLimitPct: _votingPowerIncreaseLimitPct,
             maxValidatorSetSize: _maxValidatorSetSize,
             autoEvictEnabled: _autoEvictEnabled,
-            autoEvictThreshold: _autoEvictThreshold
+            __deprecated_autoEvictThreshold: 0,
+            autoEvictThresholdPct: _autoEvictThresholdPct
         });
         hasPendingConfig = true;
 
@@ -240,7 +245,7 @@ contract ValidatorConfig {
         votingPowerIncreaseLimitPct = _pendingConfig.votingPowerIncreaseLimitPct;
         maxValidatorSetSize = _pendingConfig.maxValidatorSetSize;
         autoEvictEnabled = _pendingConfig.autoEvictEnabled;
-        autoEvictThreshold = _pendingConfig.autoEvictThreshold;
+        autoEvictThresholdPct = _pendingConfig.autoEvictThresholdPct;
 
         hasPendingConfig = false;
 
@@ -261,14 +266,14 @@ contract ValidatorConfig {
     /// @param _unbondingDelayMicros Unbonding delay
     /// @param _votingPowerIncreaseLimitPct Voting power increase limit
     /// @param _maxValidatorSetSize Max validator set size
-    /// @param _autoEvictThreshold Auto-eviction threshold
+    /// @param _autoEvictThresholdPct Auto-eviction success percentage threshold (0-100)
     function _validateConfig(
         uint256 _minimumBond,
         uint256 _maximumBond,
         uint64 _unbondingDelayMicros,
         uint64 _votingPowerIncreaseLimitPct,
         uint256 _maxValidatorSetSize,
-        uint256 _autoEvictThreshold
+        uint64 _autoEvictThresholdPct
     ) internal pure {
         if (_minimumBond == 0) {
             revert Errors.InvalidMinimumBond();
@@ -293,10 +298,8 @@ contract ValidatorConfig {
             revert Errors.InvalidValidatorSetSize(_maxValidatorSetSize);
         }
 
-        // autoEvictThreshold must fit in uint64 since successfulProposals is uint64.
-        // A threshold of type(uint256).max would cause every validator to be evicted.
-        if (_autoEvictThreshold > type(uint64).max) {
-            revert Errors.InvalidAutoEvictThreshold(_autoEvictThreshold, type(uint64).max);
+        if (_autoEvictThresholdPct > 100) {
+            revert Errors.InvalidAutoEvictThresholdPct(_autoEvictThresholdPct, 100);
         }
     }
 

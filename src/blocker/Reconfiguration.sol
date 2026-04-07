@@ -95,7 +95,10 @@ contract Reconfiguration is IReconfiguration {
             return false;
         }
 
-        // 3. Get randomness config to check if DKG is enabled
+        // 3. Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
+        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
+
+        // 4. Get randomness config to check if DKG is enabled
         RandomnessConfig.RandomnessConfigData memory config =
             IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).getCurrentConfig();
 
@@ -143,6 +146,9 @@ contract Reconfiguration is IReconfiguration {
         if (_transitionState == TransitionState.DkgInProgress) {
             revert Errors.ReconfigurationInProgress();
         }
+
+        // Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
+        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
 
         // Get randomness config to check if DKG is enabled
         RandomnessConfig.RandomnessConfigData memory config =
@@ -257,8 +263,7 @@ contract Reconfiguration is IReconfiguration {
     /// @dev Core reconfiguration logic shared by finishTransition() and _doImmediateReconfigure()
     ///      Following Aptos pattern: all config modules apply pending changes at epoch boundary
     function _applyReconfiguration() internal {
-        // 1. Apply pending configs BEFORE validator changes
-        //    This ensures new configs are active for the new epoch's first block
+        // 1. Apply pending configs
         IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
         ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
         ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
@@ -268,45 +273,34 @@ contract Reconfiguration is IReconfiguration {
         StakingConfig(SystemAddresses.STAKE_CONFIG).applyPendingConfig();
         EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
 
-        // 2. Auto-evict underperforming validators based on completed epoch's performance data
-        //    Must happen AFTER config apply (so autoEvictEnabled reflects latest governance decision)
-        //    and BEFORE onNewEpoch() (so evicted validators are processed in this same transition).
-        //    Evicted validators go ACTIVE → PENDING_INACTIVE here, then PENDING_INACTIVE → INACTIVE
-        //    in onNewEpoch() below — all within one epoch transition (no buffer epoch).
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
-
-        // 3. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
+        // 2. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
         //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
         //    before config_ref.epoch is incremented. This ensures validator set
         //    changes are processed in the context of the current epoch.
         IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
 
-        // 4. Reset performance tracker for the new epoch
+        // 3. Reset performance tracker for the new epoch
         //    ORDERING INVARIANT: This call destructively erases all epoch performance data.
-        //    It MUST be the last consumer-dependent step — specifically AFTER:
-        //      - evictUnderperformingValidators() (step 2), which reads getAllPerformances()
-        //      - ValidatorManagement.onNewEpoch() (step 3), which processes validator changes
-        //    Reordering this before step 2 will silently zero out performance records,
-        //    disabling eviction and any future reward distribution logic.
-        //    Following Aptos pattern: validator_perf.validators is reset and
-        //    re-populated with zeros after on_new_epoch() processes rewards.
+        //    It MUST happen AFTER ValidatorManagement.onNewEpoch().
+        //    Note: evictUnderperformingValidators() is now called BEFORE DKG starts,
+        //    so its readings naturally precede this reset.
         uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();
         IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);
 
-        // 5. Increment epoch and update timestamp
+        // 4. Increment epoch and update timestamp
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
         lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
 
-        // 6. Reset state
+        // 5. Reset state
         _transitionState = TransitionState.Idle;
 
-        // 7. Get finalized validator set for NewEpochEvent
+        // 6. Get finalized validator set for NewEpochEvent
         ValidatorConsensusInfo[] memory validatorSet =
             IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
         uint256 totalVotingPower = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower();
 
-        // 8. Emit events
+        // 7. Emit events
         //    - EpochTransitioned: simple event for internal tracking
         //    - NewEpochEvent: full validator set for consensus engine
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);

@@ -215,7 +215,7 @@ interface IValidatorManagement {
     /// @notice Auto-evict underperforming validators at epoch boundary
     /// @dev Only callable by RECONFIGURATION during epoch transition.
     ///      Reads performance data from ValidatorPerformanceTracker and marks validators
-    ///      with successfulProposals <= autoEvictThreshold as PENDING_INACTIVE.
+    ///      with success rate < autoEvictThresholdPct as PENDING_INACTIVE.
     ///      Note: Unlike leaveValidatorSet, this happens DURING reconfiguration (not between epochs),
     ///      so evicted validators are immediately processed by onNewEpoch() in the same call,
     ///      going directly from ACTIVE → PENDING_INACTIVE → INACTIVE in one epoch transition.
