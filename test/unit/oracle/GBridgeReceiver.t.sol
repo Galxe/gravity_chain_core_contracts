@@ -98,8 +98,6 @@ contract GBridgeReceiverTest is Test {
         vm.expectEmit(true, true, true, true);
         emit IGBridgeReceiver.NativeMinted(alice, amount, messageNonce);
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
-
-        assertTrue(receiver.isProcessed(messageNonce));
     }
 
     function test_OnOracleEvent_RevertWhenNotNativeOracle() public {
@@ -119,20 +117,31 @@ contract GBridgeReceiverTest is Test {
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
     }
 
-    function test_OnOracleEvent_RevertWhenAlreadyProcessed() public {
-        uint256 amount = 100 ether;
-        uint128 messageNonce = 42;
-        uint128 oracleNonce = 1000;
-        bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, amount, alice);
+    function test_OnOracleEvent_RevertWhenInvalidSourceChain() public {
+        uint256 wrongSourceId = 56; // BSC instead of Ethereum
+        bytes memory payload = _createOraclePayload(trustedBridge, 1, 100 ether, alice);
 
-        // First call succeeds
         vm.prank(nativeOracle);
-        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
+        vm.expectRevert(
+            abi.encodeWithSelector(IGBridgeReceiver.InvalidSourceChain.selector, wrongSourceId, ETHEREUM_SOURCE_ID)
+        );
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, wrongSourceId, 1000, payload);
+    }
 
-        // Second call with same message nonce fails
+    function test_OnOracleEvent_RevertWhenZeroAmount() public {
+        bytes memory payload = _createOraclePayload(trustedBridge, 1, 0, alice);
+
         vm.prank(nativeOracle);
-        vm.expectRevert(abi.encodeWithSelector(IGBridgeReceiver.AlreadyProcessed.selector, messageNonce));
-        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
+        vm.expectRevert(Errors.ZeroAmount.selector);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
+    }
+
+    function test_OnOracleEvent_RevertWhenZeroRecipient() public {
+        bytes memory payload = _createOraclePayload(trustedBridge, 1, 100 ether, address(0));
+
+        vm.prank(nativeOracle);
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
     }
 
     function test_OnOracleEvent_DifferentNonces() public {
@@ -144,8 +153,6 @@ contract GBridgeReceiverTest is Test {
 
             vm.prank(nativeOracle);
             receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
-
-            assertTrue(receiver.isProcessed(i));
         }
     }
 
@@ -153,21 +160,12 @@ contract GBridgeReceiverTest is Test {
     // VIEW TESTS
     // ========================================================================
 
-    function test_IsProcessed_False() public view {
-        assertFalse(receiver.isProcessed(999));
-    }
-
-    function test_IsProcessed_True() public {
-        bytes memory payload = _createOraclePayload(trustedBridge, 123, 100, alice);
-
-        vm.prank(nativeOracle);
-        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1000, payload);
-
-        assertTrue(receiver.isProcessed(123));
-    }
-
     function test_TrustedBridge() public view {
         assertEq(receiver.trustedBridge(), trustedBridge);
+    }
+
+    function test_TrustedSourceId() public view {
+        assertEq(receiver.trustedSourceId(), ETHEREUM_SOURCE_ID);
     }
 
     // ========================================================================
@@ -180,32 +178,12 @@ contract GBridgeReceiverTest is Test {
         uint128 messageNonce
     ) public {
         vm.assume(recipient != address(0));
-        vm.assume(amount > 0); // amount=0 now reverts
-        vm.assume(!receiver.isProcessed(messageNonce));
+        vm.assume(amount > 0);
 
         bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, amount, recipient);
         uint128 oracleNonce = 1000;
 
         vm.prank(nativeOracle);
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
-
-        assertTrue(receiver.isProcessed(messageNonce));
-    }
-
-    function testFuzz_ReplayProtection(
-        uint128 messageNonce
-    ) public {
-        bytes memory payload = _createOraclePayload(trustedBridge, messageNonce, 100, alice);
-        uint128 oracleNonce = 1000;
-
-        // First call succeeds
-        vm.prank(nativeOracle);
-        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce, payload);
-
-        // Second call fails
-        vm.prank(nativeOracle);
-        vm.expectRevert(abi.encodeWithSelector(IGBridgeReceiver.AlreadyProcessed.selector, messageNonce));
-        receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, oracleNonce + 1, payload);
     }
 }
-

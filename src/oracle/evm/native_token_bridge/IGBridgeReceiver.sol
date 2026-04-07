@@ -27,10 +27,6 @@ interface IGBridgeReceiver {
     /// @param expected The expected trusted bridge address
     error InvalidSender(address sender, address expected);
 
-    /// @notice Nonce has already been processed (replay protection)
-    /// @param nonce The duplicate nonce
-    error AlreadyProcessed(uint128 nonce);
-
     /// @notice Native token mint via precompile failed
     /// @param recipient The intended recipient
     /// @param amount The amount that failed to mint
@@ -44,13 +40,6 @@ interface IGBridgeReceiver {
     // ========================================================================
     // VIEW FUNCTIONS
     // ========================================================================
-
-    /// @notice Check if a nonce has been processed
-    /// @param nonce The nonce to check
-    /// @return True if the nonce has been processed
-    function isProcessed(
-        uint128 nonce
-    ) external view returns (bool);
 
     /// @notice Get the trusted bridge address on Ethereum
     /// @return The trusted GBridgeSender address
