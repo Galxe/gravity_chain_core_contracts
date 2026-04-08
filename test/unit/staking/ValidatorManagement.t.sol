@@ -14,6 +14,7 @@ import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { Errors } from "../../../src/foundation/Errors.sol";
 import { ValidatorRecord, ValidatorStatus, ValidatorConsensusInfo } from "../../../src/foundation/Types.sol";
 import { IReconfiguration } from "../../../src/blocker/IReconfiguration.sol";
+import { IValidatorPerformanceTracker } from "../../../src/blocker/IValidatorPerformanceTracker.sol";
 import { MockBlsPopVerify } from "../../utils/MockBlsPopVerify.sol";
 
 /// @notice Mock Reconfiguration contract for testing
@@ -2294,6 +2295,235 @@ contract ValidatorManagementTest is Test {
 
         ValidatorRecord memory aliceRecord = validatorManager.getValidator(pool);
         assertEq(aliceRecord.pendingConsensusPubkey, key2, "Alice pending should be key2");
+    }
+
+    // ========================================================================
+    // D3-2 UNDERBONDED VALIDATOR EVICTION TESTS
+    // ========================================================================
+
+    /// @notice Test that raising minimumBond evicts underbonded validators
+    function test_d3_2_governanceRaisesMinimumBond_evictsUnderbonded() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 30 ether, "bob");
+        address charliePool = _createRegisterAndJoin(charlie, 50 ether, "charlie");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // Ensure all are active
+        assertEq(validatorManager.getActiveValidatorCount(), 3);
+
+        // Governance raises minimumBond to 40 ether
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            40 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Run eviction phase + epoch transition
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        // Alice (20) and Bob (30) should be eviced, Charlie (50) remains
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(charliePool)), uint8(ValidatorStatus.ACTIVE));
+    }
+
+    /// @notice Test that if all validators are underbonded, safety guard keeps one
+    function test_d3_2_allUnderbonded_safetyGuardKeepsOne() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 30 ether, "bob");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // Governance raises minimumBond to 100 ether (both are under)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            100 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        // One validator should be kept due to liveness guard
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+
+        // Either Alice or Bob was kept. Verify that whoever wasn't kept is INACTIVE
+        uint8 aliceStatus = uint8(validatorManager.getValidatorStatus(alicePool));
+        uint8 bobStatus = uint8(validatorManager.getValidatorStatus(bobPool));
+
+        assertTrue(
+            (aliceStatus == uint8(ValidatorStatus.INACTIVE) && bobStatus == uint8(ValidatorStatus.ACTIVE))
+                || (aliceStatus == uint8(ValidatorStatus.ACTIVE) && bobStatus == uint8(ValidatorStatus.INACTIVE)),
+            "Exactly one must be ACTIVE"
+        );
+    }
+
+    /// @notice Test that an evicted validator can add stake and rejoin
+    function test_d3_2_evictedValidator_canRejoin() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 50 ether, "bob");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // Raise minimum to 40
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            40 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE));
+
+        // Alice adds stake
+        vm.prank(alice);
+        IStakePool(alicePool).addStake{ value: 30 ether }();
+        assertEq(IStakePool(alicePool).getActiveStake(), 50 ether);
+
+        // Alice rejoins
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+
+        _processEpoch();
+
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.ACTIVE));
+        assertEq(validatorManager.getActiveValidatorCount(), 2);
+    }
+
+    /// @notice Test that minimumBond unchanged has no eviction effect
+    function test_d3_2_minimumBondUnchanged_noEffect() public {
+        address alicePool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address bobPool = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2);
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.ACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.ACTIVE));
+    }
+
+    /// @notice Test underbonded execution concurrent with a pending active joining
+    function test_d3_2_underbondedWithPendingActivation() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 30 ether, "bob");
+        address charliePool = _createRegisterAndJoin(charlie, 50 ether, "charlie");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // David joins (pending)
+        address davidPool = _createAndRegisterValidator(david, 60 ether, "david");
+        vm.prank(david);
+        validatorManager.joinValidatorSet(davidPool);
+
+        // Gov raises limit to 40
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            40 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        // Alice & Bob out; Charlie & David active
+        assertEq(validatorManager.getActiveValidatorCount(), 2);
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(charliePool)), uint8(ValidatorStatus.ACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(davidPool)), uint8(ValidatorStatus.ACTIVE));
+    }
+
+    /// @notice Test that underbond eviction runs even if autoEvictEnabled is false
+    function test_d3_2_underbondedEviction_independentOfAutoEvictEnabled() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 50 ether, "bob");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // Gov raises limit to 40, disables autoEvict explicitly
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            40 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.ACTIVE));
+    }
+
+    /// @notice Test that both underbonded and underperforming validators are evicted
+    function test_d3_2_underbondedAndUnderperforming_bothEvicted() public {
+        address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 50 ether, "bob");
+        address charliePool = _createRegisterAndJoin(charlie, 80 ether, "charlie");
+        _processEpoch();
+        _processEpoch(); // Advance to epoch 2 (eviction skips epoch <= 1)
+
+        // Gov raises limit to 40, enables autoEvict with threshold 10
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            40 ether, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, true, 10
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Mock performance: arrays match active length.
+        // Active validators are Alice, Bob, Charlie (in whatever order they are indexed).
+        // For simplicity, we get and match their indices if we want precise tests, but Mocking all helps.
+        // Get actual indices to mock correctly.
+        uint256 len = validatorManager.getActiveValidatorCount();
+        IValidatorPerformanceTracker.IndividualPerformance[] memory perfs =
+            new IValidatorPerformanceTracker.IndividualPerformance[](len);
+
+        for (uint64 i = 0; i < len; i++) {
+            ValidatorConsensusInfo memory info = validatorManager.getActiveValidatorByIndex(i);
+            if (info.validator == alicePool) {
+                perfs[i] = IValidatorPerformanceTracker.IndividualPerformance(0, 0); // Alice: underbonded & underperforming
+            } else if (info.validator == bobPool) {
+                perfs[i] = IValidatorPerformanceTracker.IndividualPerformance(0, 0); // Bob: underperforming
+            } else if (info.validator == charliePool) {
+                perfs[i] = IValidatorPerformanceTracker.IndividualPerformance(15, 0); // Charlie: good
+            }
+        }
+
+        vm.mockCall(
+            SystemAddresses.PERFORMANCE_TRACKER,
+            abi.encodeWithSelector(IValidatorPerformanceTracker.getAllPerformances.selector),
+            abi.encode(perfs)
+        );
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+        _processEpoch();
+
+        // Alice (underbonded), Bob (underperforming) are out. Charlie remains
+        assertEq(validatorManager.getActiveValidatorCount(), 1);
+        assertEq(uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.INACTIVE));
+        assertEq(uint8(validatorManager.getValidatorStatus(charliePool)), uint8(ValidatorStatus.ACTIVE));
     }
 }
 

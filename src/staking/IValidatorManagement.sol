@@ -67,6 +67,12 @@ interface IValidatorManagement {
     /// @param successfulProposals Number of successful proposals the validator had
     event ValidatorAutoEvicted(address indexed stakePool, uint256 successfulProposals);
 
+    /// @notice Emitted when a validator is evicted for dropping below minimum bond
+    /// @param stakePool Address of the validator's stake pool
+    /// @param votingPower The validator's current voting power
+    /// @param minimumBond The expected minimum bond threshold
+    event ValidatorUnderbondedEvicted(address indexed stakePool, uint256 votingPower, uint256 minimumBond);
+
     /// @notice Emitted when performance data array length doesn't match active validator count
     event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
 
