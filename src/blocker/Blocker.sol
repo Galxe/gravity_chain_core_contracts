@@ -94,8 +94,8 @@ contract Blocker {
         // Performance scores must be updated before the epoch transition check,
         // as the transaction that triggers the transition is the last block in the previous epoch.
         try IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER)
-            .updateStatistics(proposerIndex, failedProposerIndices)
-        {} catch (bytes memory reason) {
+            .updateStatistics(proposerIndex, failedProposerIndices) { }
+        catch (bytes memory reason) {
             emit ComponentUpdateFailed(SystemAddresses.PERFORMANCE_TRACKER, reason);
         }
 
@@ -112,8 +112,8 @@ contract Blocker {
         // 3. Check and potentially start epoch transition
         //    Reconfiguration handles all transition logic internally
         //    Wrapped in try-catch to prevent epoch transition failures from blocking block production (Issue #59)
-        try IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition()
-        {} catch (bytes memory reason) {
+        try IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition() { }
+        catch (bytes memory reason) {
             emit ComponentUpdateFailed(SystemAddresses.RECONFIGURATION, reason);
         }
 

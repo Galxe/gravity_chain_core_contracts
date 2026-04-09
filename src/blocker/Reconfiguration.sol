@@ -106,8 +106,8 @@ contract Reconfiguration is IReconfiguration {
 
         // 3. Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
         //    Non-fatal: if eviction fails, skip it and proceed with epoch transition
-        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators()
-        {} catch (bytes memory reason) {
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators() { }
+        catch (bytes memory reason) {
             emit ReconfigurationStepFailed("evictUnderperformingValidators", reason);
         }
 
@@ -122,10 +122,10 @@ contract Reconfiguration is IReconfiguration {
         } else {
             // Async reconfiguration with DKG: start DKG session
             // If DKG start fails, fall back to immediate reconfigure to preserve liveness
-            try this._startDkgSessionExternal(config)
-            {
-                // DKG started successfully
-            } catch (bytes memory reason) {
+            try this._startDkgSessionExternal(config) {
+            // DKG started successfully
+            }
+            catch (bytes memory reason) {
                 emit ReconfigurationStepFailed("startDkgSession", reason);
                 // Fallback: do immediate reconfigure without DKG
                 _doImmediateReconfigure();
@@ -150,13 +150,13 @@ contract Reconfiguration is IReconfiguration {
 
         // 2. Finish DKG session if result provided
         if (dkgResult.length > 0) {
-            try IDKG(SystemAddresses.DKG).finish(dkgResult)
-            {} catch (bytes memory reason) {
+            try IDKG(SystemAddresses.DKG).finish(dkgResult) { }
+            catch (bytes memory reason) {
                 emit ReconfigurationStepFailed("dkg.finish", reason);
             }
         }
-        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession()
-        {} catch (bytes memory reason) {
+        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession() { }
+        catch (bytes memory reason) {
             emit ReconfigurationStepFailed("dkg.tryClearIncompleteSession", reason);
         }
 
@@ -175,8 +175,8 @@ contract Reconfiguration is IReconfiguration {
         }
 
         // Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
-        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators()
-        {} catch (bytes memory reason) {
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators() { }
+        catch (bytes memory reason) {
             emit ReconfigurationStepFailed("evictUnderperformingValidators", reason);
         }
 
@@ -192,10 +192,10 @@ contract Reconfiguration is IReconfiguration {
         } else {
             // DKG enabled: start DKG session
             // If DKG start fails, fall back to immediate reconfigure
-            try this._startDkgSessionExternal(config)
-            {
-                // DKG started successfully
-            } catch (bytes memory reason) {
+            try this._startDkgSessionExternal(config) {
+            // DKG started successfully
+            }
+            catch (bytes memory reason) {
                 emit ReconfigurationStepFailed("startDkgSession", reason);
                 _doImmediateReconfigure();
             }
@@ -299,8 +299,8 @@ contract Reconfiguration is IReconfiguration {
     /// @dev Used by checkAndStartTransition() and governanceReconfigure() when randomness variant is Off
     function _doImmediateReconfigure() internal {
         // Clear any stale DKG session (non-fatal)
-        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession()
-        {} catch (bytes memory reason) {
+        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession() { }
+        catch (bytes memory reason) {
             emit ReconfigurationStepFailed("dkg.tryClearIncompleteSession", reason);
         }
 
@@ -330,8 +330,8 @@ contract Reconfiguration is IReconfiguration {
         //    before config_ref.epoch is incremented. This ensures validator set
         //    changes are processed in the context of the current epoch.
         //    Non-fatal: if this fails, the old validator set continues for the next epoch.
-        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch()
-        {} catch (bytes memory reason) {
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch() { }
+        catch (bytes memory reason) {
             emit ReconfigurationStepFailed("validatorManagement.onNewEpoch", reason);
         }
 
@@ -342,8 +342,8 @@ contract Reconfiguration is IReconfiguration {
         try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount() returns (
             uint256 newValidatorCount
         ) {
-            try IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount)
-            {} catch (bytes memory reason) {
+            try IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount) { }
+            catch (bytes memory reason) {
                 emit ReconfigurationStepFailed("performanceTracker.onNewEpoch", reason);
             }
         } catch (bytes memory reason) {
@@ -393,7 +393,10 @@ contract Reconfiguration is IReconfiguration {
     /// @notice Try to apply pending config for a given config contract (non-fatal)
     /// @param configAddr Address of the config contract
     /// @param name Human-readable name for error reporting
-    function _tryApplyConfig(address configAddr, string memory name) internal {
+    function _tryApplyConfig(
+        address configAddr,
+        string memory name
+    ) internal {
         // All config contracts share the same applyPendingConfig() signature via IApplyConfig
         // Use low-level call since config contracts don't share a common interface
         (bool success, bytes memory reason) = configAddr.call(abi.encodeWithSignature("applyPendingConfig()"));
