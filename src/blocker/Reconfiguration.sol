@@ -121,15 +121,7 @@ contract Reconfiguration is IReconfiguration {
             _doImmediateReconfigure();
         } else {
             // Async reconfiguration with DKG: start DKG session
-            // If DKG start fails, fall back to immediate reconfigure to preserve liveness
-            try this._startDkgSessionExternal(config) {
-            // DKG started successfully
-            }
-            catch (bytes memory reason) {
-                emit ReconfigurationStepFailed("startDkgSession", reason);
-                // Fallback: do immediate reconfigure without DKG
-                _doImmediateReconfigure();
-            }
+            _startDkgSession(config);
         }
 
         return true;
@@ -150,15 +142,9 @@ contract Reconfiguration is IReconfiguration {
 
         // 2. Finish DKG session if result provided
         if (dkgResult.length > 0) {
-            try IDKG(SystemAddresses.DKG).finish(dkgResult) { }
-            catch (bytes memory reason) {
-                emit ReconfigurationStepFailed("dkg.finish", reason);
-            }
+            IDKG(SystemAddresses.DKG).finish(dkgResult);
         }
-        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession() { }
-        catch (bytes memory reason) {
-            emit ReconfigurationStepFailed("dkg.tryClearIncompleteSession", reason);
-        }
+        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
 
         // 3. Apply reconfiguration (configs + validator manager + epoch increment)
         _applyReconfiguration();
@@ -191,14 +177,7 @@ contract Reconfiguration is IReconfiguration {
             _doImmediateReconfigure();
         } else {
             // DKG enabled: start DKG session
-            // If DKG start fails, fall back to immediate reconfigure
-            try this._startDkgSessionExternal(config) {
-            // DKG started successfully
-            }
-            catch (bytes memory reason) {
-                emit ReconfigurationStepFailed("startDkgSession", reason);
-                _doImmediateReconfigure();
-            }
+            _startDkgSession(config);
         }
     }
 
@@ -260,15 +239,6 @@ contract Reconfiguration is IReconfiguration {
         if (!_initialized) {
             revert Errors.ReconfigurationNotInitialized();
         }
-    }
-
-    /// @notice External wrapper for _startDkgSession to enable try-catch
-    /// @dev Solidity try-catch only works on external calls. This is only callable by this contract itself.
-    function _startDkgSessionExternal(
-        RandomnessConfig.RandomnessConfigData memory config
-    ) external {
-        require(msg.sender == address(this), "Reconfiguration: self-call only");
-        _startDkgSession(config);
     }
 
     /// @notice Start a DKG session for epoch transition
