@@ -68,6 +68,10 @@ pub struct GenesisConfig {
     /// Lockup expiration timestamp for initial validator stake pools (microseconds)
     #[serde(rename = "initialLockedUntilMicros")]
     pub initial_locked_until_micros: u64,
+
+    /// Genesis block timestamp (Unix seconds). Falls back to template default if unset.
+    #[serde(rename = "genesisTimestampSecs", default)]
+    pub genesis_timestamp_secs: Option<u64>,
 }
 
 fn default_chain_id() -> u64 {
