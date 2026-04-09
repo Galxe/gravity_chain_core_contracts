@@ -36,6 +36,15 @@ contract Reconfiguration is IReconfiguration {
     uint64 public constant MICRO_CONVERSION_FACTOR = 1_000_000;
 
     // ========================================================================
+    // FAULT-TOLERANCE EVENTS
+    // ========================================================================
+
+    /// @notice Emitted when a non-fatal step fails during reconfiguration
+    /// @param step Human-readable step identifier
+    /// @param reason ABI-encoded revert reason
+    event ReconfigurationStepFailed(string step, bytes reason);
+
+    // ========================================================================
     // STATE
     // ========================================================================
 
@@ -96,19 +105,31 @@ contract Reconfiguration is IReconfiguration {
         }
 
         // 3. Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
+        //    Non-fatal: if eviction fails, skip it and proceed with epoch transition
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators()
+        {} catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("evictUnderperformingValidators", reason);
+        }
 
         // 4. Get randomness config to check if DKG is enabled
         RandomnessConfig.RandomnessConfigData memory config =
             IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).getCurrentConfig();
 
-        // 4. Handle based on DKG mode
+        // 5. Handle based on DKG mode
         if (config.variant == RandomnessConfig.ConfigVariant.Off) {
             // Simple reconfiguration: DKG disabled, do immediate epoch transition
             _doImmediateReconfigure();
         } else {
             // Async reconfiguration with DKG: start DKG session
-            _startDkgSession(config);
+            // If DKG start fails, fall back to immediate reconfigure to preserve liveness
+            try this._startDkgSessionExternal(config)
+            {
+                // DKG started successfully
+            } catch (bytes memory reason) {
+                emit ReconfigurationStepFailed("startDkgSession", reason);
+                // Fallback: do immediate reconfigure without DKG
+                _doImmediateReconfigure();
+            }
         }
 
         return true;
@@ -129,9 +150,15 @@ contract Reconfiguration is IReconfiguration {
 
         // 2. Finish DKG session if result provided
         if (dkgResult.length > 0) {
-            IDKG(SystemAddresses.DKG).finish(dkgResult);
+            try IDKG(SystemAddresses.DKG).finish(dkgResult)
+            {} catch (bytes memory reason) {
+                emit ReconfigurationStepFailed("dkg.finish", reason);
+            }
         }
-        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
+        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession()
+        {} catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("dkg.tryClearIncompleteSession", reason);
+        }
 
         // 3. Apply reconfiguration (configs + validator manager + epoch increment)
         _applyReconfiguration();
@@ -148,7 +175,10 @@ contract Reconfiguration is IReconfiguration {
         }
 
         // Pre-transition actions: evict underperforming validators based on closing epoch's performance and rules
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators();
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators()
+        {} catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("evictUnderperformingValidators", reason);
+        }
 
         // Get randomness config to check if DKG is enabled
         RandomnessConfig.RandomnessConfigData memory config =
@@ -161,7 +191,14 @@ contract Reconfiguration is IReconfiguration {
             _doImmediateReconfigure();
         } else {
             // DKG enabled: start DKG session
-            _startDkgSession(config);
+            // If DKG start fails, fall back to immediate reconfigure
+            try this._startDkgSessionExternal(config)
+            {
+                // DKG started successfully
+            } catch (bytes memory reason) {
+                emit ReconfigurationStepFailed("startDkgSession", reason);
+                _doImmediateReconfigure();
+            }
         }
     }
 
@@ -225,6 +262,15 @@ contract Reconfiguration is IReconfiguration {
         }
     }
 
+    /// @notice External wrapper for _startDkgSession to enable try-catch
+    /// @dev Solidity try-catch only works on external calls. This is only callable by this contract itself.
+    function _startDkgSessionExternal(
+        RandomnessConfig.RandomnessConfigData memory config
+    ) external {
+        require(msg.sender == address(this), "Reconfiguration: self-call only");
+        _startDkgSession(config);
+    }
+
     /// @notice Start a DKG session for epoch transition
     /// @param config Randomness config for DKG
     function _startDkgSession(
@@ -252,8 +298,11 @@ contract Reconfiguration is IReconfiguration {
     /// @notice Perform immediate reconfigure when DKG is disabled
     /// @dev Used by checkAndStartTransition() and governanceReconfigure() when randomness variant is Off
     function _doImmediateReconfigure() internal {
-        // Clear any stale DKG session
-        IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
+        // Clear any stale DKG session (non-fatal)
+        try IDKG(SystemAddresses.DKG).tryClearIncompleteSession()
+        {} catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("dkg.tryClearIncompleteSession", reason);
+        }
 
         // Apply reconfiguration (no start event for immediate reconfigure)
         _applyReconfiguration();
@@ -261,50 +310,96 @@ contract Reconfiguration is IReconfiguration {
 
     /// @notice Apply pending configs, notify validator manager, and increment epoch
     /// @dev Core reconfiguration logic shared by finishTransition() and _doImmediateReconfigure()
-    ///      Following Aptos pattern: all config modules apply pending changes at epoch boundary
+    ///      Following Aptos pattern: all config modules apply pending changes at epoch boundary.
+    ///      All non-fatal steps are wrapped in try-catch to prevent chain deadlock (Issue #59).
+    ///      The epoch MUST always increment to guarantee liveness.
     function _applyReconfiguration() internal {
-        // 1. Apply pending configs
-        IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
-        ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
-        ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
-        VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
-        GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
-        StakingConfig(SystemAddresses.STAKE_CONFIG).applyPendingConfig();
-        EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig();
+        // 1. Apply pending configs (each independently, non-fatal)
+        //    If any config fails to apply, the old config remains active for the next epoch.
+        _tryApplyConfig(SystemAddresses.RANDOMNESS_CONFIG, "RandomnessConfig");
+        _tryApplyConfig(SystemAddresses.CONSENSUS_CONFIG, "ConsensusConfig");
+        _tryApplyConfig(SystemAddresses.EXECUTION_CONFIG, "ExecutionConfig");
+        _tryApplyConfig(SystemAddresses.VALIDATOR_CONFIG, "ValidatorConfig");
+        _tryApplyConfig(SystemAddresses.VERSION_CONFIG, "VersionConfig");
+        _tryApplyConfig(SystemAddresses.GOVERNANCE_CONFIG, "GovernanceConfig");
+        _tryApplyConfig(SystemAddresses.STAKE_CONFIG, "StakingConfig");
+        _tryApplyConfig(SystemAddresses.EPOCH_CONFIG, "EpochConfig");
 
         // 2. Notify validator manager BEFORE incrementing epoch (Aptos pattern)
         //    Following Aptos reconfiguration.move: stake::on_new_epoch() is called
         //    before config_ref.epoch is incremented. This ensures validator set
         //    changes are processed in the context of the current epoch.
-        IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();
+        //    Non-fatal: if this fails, the old validator set continues for the next epoch.
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch()
+        {} catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("validatorManagement.onNewEpoch", reason);
+        }
 
         // 3. Reset performance tracker for the new epoch
         //    ORDERING INVARIANT: This call destructively erases all epoch performance data.
         //    It MUST happen AFTER ValidatorManagement.onNewEpoch().
-        //    Note: evictUnderperformingValidators() is now called BEFORE DKG starts,
-        //    so its readings naturally precede this reset.
-        uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();
-        IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);
+        //    Non-fatal: if this fails, stale performance data may persist but chain stays live.
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount() returns (
+            uint256 newValidatorCount
+        ) {
+            try IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount)
+            {} catch (bytes memory reason) {
+                emit ReconfigurationStepFailed("performanceTracker.onNewEpoch", reason);
+            }
+        } catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("validatorManagement.getActiveValidatorCount", reason);
+        }
 
         // 4. Increment epoch and update timestamp
+        //    CRITICAL: This section MUST succeed to guarantee chain liveness.
+        //    Pure storage writes — cannot revert under normal conditions.
         uint64 newEpoch = currentEpoch + 1;
         currentEpoch = newEpoch;
-        lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
+        // Timestamp read is safe (pure view on storage), but wrap defensively
+        try ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds() returns (uint64 ts) {
+            lastReconfigurationTime = ts;
+        } catch {
+            // If timestamp read fails, use previous timestamp to avoid blocking epoch increment
+            // lastReconfigurationTime stays unchanged
+        }
 
         // 5. Reset state
         _transitionState = TransitionState.Idle;
 
-        // 6. Get finalized validator set for NewEpochEvent
-        ValidatorConsensusInfo[] memory validatorSet =
-            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
-        uint256 totalVotingPower = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower();
+        // 6. Get finalized validator set for NewEpochEvent (non-fatal)
+        //    If queries fail, emit EpochTransitioned with minimal info but still advance the epoch.
+        ValidatorConsensusInfo[] memory validatorSet;
+        uint256 totalVotingPower;
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators() returns (
+            ValidatorConsensusInfo[] memory vs
+        ) {
+            validatorSet = vs;
+        } catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("validatorManagement.getActiveValidators", reason);
+        }
+        try IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower() returns (uint256 tvp) {
+            totalVotingPower = tvp;
+        } catch (bytes memory reason) {
+            emit ReconfigurationStepFailed("validatorManagement.getTotalVotingPower", reason);
+        }
 
         // 7. Emit events
         //    - EpochTransitioned: simple event for internal tracking
         //    - NewEpochEvent: full validator set for consensus engine
         emit EpochTransitioned(newEpoch, lastReconfigurationTime);
         emit NewEpochEvent(newEpoch, validatorSet, totalVotingPower, lastReconfigurationTime);
+    }
+
+    /// @notice Try to apply pending config for a given config contract (non-fatal)
+    /// @param configAddr Address of the config contract
+    /// @param name Human-readable name for error reporting
+    function _tryApplyConfig(address configAddr, string memory name) internal {
+        // All config contracts share the same applyPendingConfig() signature via IApplyConfig
+        // Use low-level call since config contracts don't share a common interface
+        (bool success, bytes memory reason) = configAddr.call(abi.encodeWithSignature("applyPendingConfig()"));
+        if (!success) {
+            emit ReconfigurationStepFailed(name, reason);
+        }
     }
 }
 
