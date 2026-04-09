@@ -49,7 +49,7 @@ def create_genesis_json(
     print(f"📖 Loading account allocation from {account_alloc_file}")
     account_alloc = load_json_file(account_alloc_file)
     
-    # Override chainId from config if provided
+    # Override chainId and timestamp from config if provided
     if config_file:
         print(f"📖 Loading genesis config from {config_file}")
         config = load_json_file(config_file)
@@ -58,6 +58,11 @@ def create_genesis_json(
             new_chain_id = config["chainId"]
             genesis["config"]["chainId"] = new_chain_id
             print(f"🔧 Overriding chainId: {old_chain_id} -> {new_chain_id}")
+        if "genesisTimestampSecs" in config and config["genesisTimestampSecs"] is not None:
+            old_ts = genesis.get("timestamp", "unknown")
+            new_ts = hex(config["genesisTimestampSecs"])
+            genesis["timestamp"] = new_ts
+            print(f"🔧 Overriding timestamp: {old_ts} -> {new_ts}")
     
     # Merge account allocation into genesis alloc field
     print("🔧 Merging account allocation into genesis...")
