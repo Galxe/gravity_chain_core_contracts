@@ -30,6 +30,12 @@ contract ValidatorConfig {
     // ========================================================================
 
     /// @notice Pending configuration data structure
+    /// @dev Field order is load-bearing for hardfork storage layout compatibility:
+    ///      `autoEvictThresholdPct` is wedged between `autoEvictEnabled` (bool, 1B)
+    ///      and `__deprecated_autoEvictThreshold` (uint256) so it packs with
+    ///      autoEvictEnabled in the same slot. This keeps the struct at 6 slots,
+    ///      matching the v1.3 layout and avoiding a shift of the trailing
+    ///      `hasPendingConfig` / `_initialized` slots in the parent contract.
     struct PendingConfig {
         uint256 minimumBond;
         uint256 maximumBond;
@@ -38,8 +44,8 @@ contract ValidatorConfig {
         uint64 votingPowerIncreaseLimitPct;
         uint256 maxValidatorSetSize;
         bool autoEvictEnabled;
-        uint256 __deprecated_autoEvictThreshold;
         uint64 autoEvictThresholdPct;
+        uint256 __deprecated_autoEvictThreshold;
     }
 
     // ========================================================================
@@ -67,6 +73,14 @@ contract ValidatorConfig {
     /// @notice Whether auto-eviction of underperforming validators is enabled
     bool public autoEvictEnabled;
 
+    /// @notice Minimum success percentage required to avoid auto-eviction (0-100)
+    /// @dev Validators with success rate < this threshold are evicted at epoch boundary.
+    ///      E.g., 50 means validators with < 50% success rate are evicted.
+    /// @dev Declared immediately after `autoEvictEnabled` so it packs into the same
+    ///      storage slot (1 + 8 = 9 bytes), preserving the v1.3 slot layout for
+    ///      hardfork bytecode-replacement compatibility.
+    uint64 public autoEvictThresholdPct;
+
     /// @dev Deprecated: preserved for storage layout compatibility. Do not use.
     uint256 private __deprecated_autoEvictThreshold;
 
@@ -78,11 +92,6 @@ contract ValidatorConfig {
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
-
-    /// @notice Minimum success percentage required to avoid auto-eviction (0-100)
-    /// @dev Validators with success rate < this threshold are evicted at epoch boundary.
-    ///      E.g., 50 means validators with < 50% success rate are evicted.
-    uint64 public autoEvictThresholdPct;
 
     // ========================================================================
     // EVENTS
@@ -214,8 +223,8 @@ contract ValidatorConfig {
             votingPowerIncreaseLimitPct: _votingPowerIncreaseLimitPct,
             maxValidatorSetSize: _maxValidatorSetSize,
             autoEvictEnabled: _autoEvictEnabled,
-            __deprecated_autoEvictThreshold: 0,
-            autoEvictThresholdPct: _autoEvictThresholdPct
+            autoEvictThresholdPct: _autoEvictThresholdPct,
+            __deprecated_autoEvictThreshold: 0
         });
         hasPendingConfig = true;
 

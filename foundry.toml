@@ -14,6 +14,9 @@ optimizer_runs = 200
 via_ir = true
 verbosity = 3
 
+# Allow hardfork tests to load fixture bytecodes from test/hardfork/fixtures/
+fs_permissions = [{ access = "read", path = "./test/hardfork/fixtures" }]
+
 [fmt]
 line_length = 120
 tab_width = 4
