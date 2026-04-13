@@ -17,7 +17,8 @@ import { SystemAddresses } from "../../src/foundation/SystemAddresses.sol";
 ///         The tests use `vm.expectCall` to assert that
 ///         `evictUnderperformingValidators()` is invoked from the new sites.
 contract EpsilonReconfigurationUpgradeTest is EpsilonHardforkBase {
-    bytes internal constant EVICT_SELECTOR = abi.encodeWithSelector(ValidatorManagement.evictUnderperformingValidators.selector);
+    bytes internal constant EVICT_SELECTOR =
+        abi.encodeWithSelector(ValidatorManagement.evictUnderperformingValidators.selector);
 
     /// @notice After the hardfork, `governanceReconfigure` must call
     ///         `evictUnderperformingValidators()` before any DKG / epoch logic.

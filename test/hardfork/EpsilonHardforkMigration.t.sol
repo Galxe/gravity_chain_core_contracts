@@ -64,19 +64,20 @@ contract EpsilonHardforkMigrationTest is HardforkTestBase {
         stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
 
         // ValidatorConfig — call v1.3 signature explicitly
-        (bool ok, ) = SystemAddresses.VALIDATOR_CONFIG.call(
-            abi.encodeWithSignature(
-                "initialize(uint256,uint256,uint64,bool,uint64,uint256,bool,uint256)",
-                MIN_BOND,
-                MAX_BOND,
-                UNBONDING_DELAY,
-                true,
-                VOTING_POWER_INCREASE_LIMIT,
-                MAX_VALIDATOR_SET_SIZE,
-                false,
-                uint256(0)
-            )
-        );
+        (bool ok,) = SystemAddresses.VALIDATOR_CONFIG
+            .call(
+                abi.encodeWithSignature(
+                    "initialize(uint256,uint256,uint64,bool,uint64,uint256,bool,uint256)",
+                    MIN_BOND,
+                    MAX_BOND,
+                    UNBONDING_DELAY,
+                    true,
+                    VOTING_POWER_INCREASE_LIMIT,
+                    MAX_VALIDATOR_SET_SIZE,
+                    false,
+                    uint256(0)
+                )
+            );
         require(ok, "v1.3 ValidatorConfig.initialize failed");
 
         epochConfig.initialize(TWO_HOURS);
@@ -142,13 +143,13 @@ contract EpsilonHardforkMigrationTest is HardforkTestBase {
 
     function test_migration_oldAutoEvictThresholdSelectorRemoved() public {
         // Pre: v1.3 exposed autoEvictThreshold()(uint256)
-        (bool okBefore, ) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
+        (bool okBefore,) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
         assertTrue(okBefore, "v1.3 should expose autoEvictThreshold()");
 
         _applyEpsilonHardfork();
 
         // Post: v1.4 must NOT expose it
-        (bool okAfter, ) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
+        (bool okAfter,) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
         assertFalse(okAfter, "v1.4 must not expose autoEvictThreshold()");
     }
 
@@ -157,7 +158,7 @@ contract EpsilonHardforkMigrationTest is HardforkTestBase {
         // Epsilon, the selector should not be reachable.
         _applyEpsilonHardfork();
 
-        (bool ok, ) = GBRIDGE_RECEIVER_ADDR.call(abi.encodeWithSignature("isProcessed(uint128)", uint128(1)));
+        (bool ok,) = GBRIDGE_RECEIVER_ADDR.call(abi.encodeWithSignature("isProcessed(uint128)", uint128(1)));
         assertFalse(ok, "post-hardfork: isProcessed should not be in dispatcher");
     }
 

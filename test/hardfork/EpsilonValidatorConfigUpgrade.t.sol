@@ -134,7 +134,7 @@ contract EpsilonValidatorConfigUpgradeTest is EpsilonHardforkBase {
         _applyEpsilonHardfork();
         // The old v1.3 selector `autoEvictThreshold()(uint256)` should not be in
         // the dispatcher; the field is now `__deprecated_autoEvictThreshold` (private).
-        (bool ok, ) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
+        (bool ok,) = SystemAddresses.VALIDATOR_CONFIG.call(abi.encodeWithSignature("autoEvictThreshold()"));
         assertFalse(ok, "autoEvictThreshold() selector must not be reachable post-hardfork");
     }
 }

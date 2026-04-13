@@ -39,7 +39,7 @@ contract EpsilonGBridgeReceiverUpgradeTest is EpsilonHardforkBase {
     function test_isProcessed_selectorRemoved() public {
         _applyEpsilonHardfork();
 
-        (bool ok, ) = GBRIDGE_RECEIVER_ADDR.call(abi.encodeWithSignature("isProcessed(uint128)", uint128(1)));
+        (bool ok,) = GBRIDGE_RECEIVER_ADDR.call(abi.encodeWithSignature("isProcessed(uint128)", uint128(1)));
         assertFalse(ok, "isProcessed selector should not be in dispatcher");
     }
 
