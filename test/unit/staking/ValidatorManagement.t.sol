@@ -252,6 +252,31 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test revert when validator set changes are disabled
+    /// @notice Audit #187: registerValidator must be blocked during reconfiguration
+    ///         to prevent consensus pubkey writes from interleaving with a live DKG session,
+    ///         which would produce nondeterministic DKG reads across validators.
+    function test_RevertWhen_registerValidator_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Simulate a reconfiguration (DKG) in progress
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Once reconfiguration completes, registration succeeds again
+        mockReconfiguration.setTransitionInProgress(false);
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Should register successfully after reconfig ends");
+    }
+
     function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
         // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);

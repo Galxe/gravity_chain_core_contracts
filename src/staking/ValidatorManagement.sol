@@ -238,7 +238,7 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
-    ) external {
+    ) external whenNotReconfiguring {
         // Check that validator set changes are allowed
         if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
             revert Errors.ValidatorSetChangesDisabled();
