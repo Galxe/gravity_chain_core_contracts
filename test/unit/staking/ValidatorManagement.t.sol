@@ -252,6 +252,57 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test revert when validator set changes are disabled
+    /// @notice Audit #83: votingPowerIncreaseLimitPct base must exclude PENDING_INACTIVE.
+    ///         Including them inflates the limit denominator by 1/stayingRatio, letting
+    ///         more new voting power activate in a single epoch than the BFT safety
+    ///         analysis allows. Aptos's stake.move::on_new_epoch clears pending_inactive
+    ///         before computing total_voting_power; this test asserts we match.
+    function test_audit_votingPowerLimit_excludesPendingInactive() public {
+        // Two 500-ether actives (total 1000 with bug, 500 staying without bug)
+        address alicePool = _createRegisterAndJoin(alice, 500 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 500 ether, "bob");
+        _processEpoch(); // both ACTIVE
+
+        // bob leaves → PENDING_INACTIVE (still in _activeValidators until next epoch)
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(bobPool);
+
+        // Two pending validators, 100 ether each.
+        //
+        // votingPowerIncreaseLimitPct = 20 (from setUp).
+        //
+        // With bug: base = 1000 (includes bob), maxIncrease = 200.
+        //   - charlie: 100 > 200? no, whale-bypass activates → addedPower = 100
+        //   - david:   100+100 = 200 > 200? false → activated    → addedPower = 200
+        //   => after epoch: alice, charlie, david ACTIVE (count = 3)
+        //
+        // With fix: base = 500 (excludes bob), maxIncrease = 100.
+        //   - charlie: 100, whale-bypass activates                → addedPower = 100
+        //   - david:   100+100 = 200 > 100? true → kept pending
+        //   => after epoch: alice, charlie ACTIVE (count = 2), david still PENDING_ACTIVE
+        _createRegisterAndJoin(charlie, 100 ether, "charlie");
+        address davidPool = _createRegisterAndJoin(david, 100 ether, "david");
+
+        _processEpoch(); // applies deactivations and activations based on staying total
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "PENDING_INACTIVE must not inflate base");
+        assertEq(
+            uint8(validatorManager.getValidator(alicePool).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "alice stays active"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(bobPool).status),
+            uint8(ValidatorStatus.INACTIVE),
+            "bob is deactivated"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(davidPool).status),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "david must be kept PENDING_ACTIVE (limit hit against staying-power base)"
+        );
+    }
+
     /// @notice Audit #85: a pending fee recipient set before leave→deactivate must not
     ///         silently activate when the pool later rejoins. Without the fix, an operator
     ///         (who can call setFeeRecipient unilaterally) can plant a stale recipient,
