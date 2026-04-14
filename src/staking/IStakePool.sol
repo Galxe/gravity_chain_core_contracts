@@ -74,6 +74,24 @@ interface IStakePool {
     /// @param newStaker New staker address
     event StakerChanged(address indexed pool, address oldStaker, address newStaker);
 
+    /// @notice Emitted when a role change is proposed
+    /// @param pool Address of this pool
+    /// @param role The role being changed ("staker", "operator", or "voter")
+    /// @param newAddress Proposed new address for the role
+    /// @param effectiveAt Timestamp when the change can be accepted
+    event RoleChangeProposed(address indexed pool, string role, address indexed newAddress, uint64 effectiveAt);
+
+    /// @notice Emitted when a pending role change is cancelled
+    /// @param pool Address of this pool
+    /// @param role The role whose change was cancelled
+    event RoleChangeCancelled(address indexed pool, string role);
+
+    /// @notice Emitted when the role change delay is updated
+    /// @param pool Address of this pool
+    /// @param oldDelay Previous delay in seconds
+    /// @param newDelay New delay in seconds
+    event RoleChangeDelayUpdated(address indexed pool, uint64 oldDelay, uint64 newDelay);
+
     /// @notice Emitted when rewards are withdrawn
     /// @param pool Address of this pool
     /// @param amount Amount of rewards withdrawn
@@ -167,26 +185,50 @@ interface IStakePool {
     // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
 
-    /// @notice Change the operator address
-    /// @dev Only callable by owner
-    /// @param newOperator New operator address
-    function setOperator(
-        address newOperator
-    ) external;
+    /// @notice Propose a new staker address (starts timelock)
+    /// @dev Only callable by owner. The new staker must call acceptStaker() after the delay.
+    /// @param newStaker Proposed new staker address
+    function proposeStaker(address newStaker) external;
 
-    /// @notice Change the delegated voter address
-    /// @dev Only callable by owner
-    /// @param newVoter New voter address
-    function setVoter(
-        address newVoter
-    ) external;
+    /// @notice Accept the pending staker role change
+    /// @dev Only callable by the pending staker, after the timelock delay has elapsed.
+    ///      Reverts if there are unclaimed pending withdrawals (protects old staker's funds).
+    function acceptStaker() external;
 
-    /// @notice Change the staker address
+    /// @notice Cancel the pending staker change
     /// @dev Only callable by owner
-    /// @param newStaker New staker address
-    function setStaker(
-        address newStaker
-    ) external;
+    function cancelStakerChange() external;
+
+    /// @notice Propose a new operator address (starts timelock)
+    /// @dev Only callable by owner. The new operator must call acceptOperator() after the delay.
+    /// @param newOperator Proposed new operator address
+    function proposeOperator(address newOperator) external;
+
+    /// @notice Accept the pending operator role change
+    /// @dev Only callable by the pending operator, after the timelock delay has elapsed.
+    function acceptOperator() external;
+
+    /// @notice Cancel the pending operator change
+    /// @dev Only callable by owner
+    function cancelOperatorChange() external;
+
+    /// @notice Propose a new voter address (starts timelock)
+    /// @dev Only callable by owner. The new voter must call acceptVoter() after the delay.
+    /// @param newVoter Proposed new voter address
+    function proposeVoter(address newVoter) external;
+
+    /// @notice Accept the pending voter role change
+    /// @dev Only callable by the pending voter, after the timelock delay has elapsed.
+    function acceptVoter() external;
+
+    /// @notice Cancel the pending voter change
+    /// @dev Only callable by owner
+    function cancelVoterChange() external;
+
+    /// @notice Update the role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setRoleChangeDelay(uint64 newDelay) external;
 
     // ========================================================================
     // STAKER FUNCTIONS
