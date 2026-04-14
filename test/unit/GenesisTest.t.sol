@@ -98,6 +98,7 @@ contract GenesisTest is Test {
         validators[0] = Genesis.InitialValidator({
             operator: makeAddr("operator1"),
             owner: makeAddr("owner1"),
+            staker: makeAddr("staker1"),
             stakeAmount: 200 ether,
             moniker: "Validator 1",
             consensusPubkey: hex"9112af1a4ef4038dfe24c5371e40b5bcfce16146bfc4ab819244ce57f5d002c4c3f06eca7273e733c0f78aada8c13deb",
