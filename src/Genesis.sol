@@ -86,7 +86,8 @@ contract Genesis {
 
     struct InitialValidator {
         address operator;
-        address owner; // Used for owner, voter, and feeRecipient
+        address owner; // Also used as voter and feeRecipient
+        address staker;
         uint256 stakeAmount;
         string moniker;
         bytes consensusPubkey;
@@ -283,7 +284,7 @@ contract Genesis {
 
             address pool = Staking(SystemAddresses.STAKING).createPool{ value: v.stakeAmount }(
                 v.owner, // owner
-                v.owner, // staker (initially same as owner)
+                v.staker, // staker
                 v.operator, // operator
                 v.owner, // voter (initially same as owner)
                 initialLockedUntilMicros

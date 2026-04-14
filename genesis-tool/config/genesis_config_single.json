@@ -89,6 +89,7 @@
     {
       "operator": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
       "owner": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
+      "staker": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
       "stakeAmount": "20000000000000000000000",
       "moniker": "validator-1",
       "consensusPubkey": "0x851d41932d866f5fabed6673898e15473e6a0adcf5033d2c93816c6b115c85ad3451e0bac61d570d5ed9f23e1e7f77c4",

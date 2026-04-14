@@ -217,6 +217,7 @@ pub struct RSA_JWK_Json {
 pub struct InitialValidator {
     pub operator: String,
     pub owner: String,
+    pub staker: String,
 
     #[serde(rename = "stakeAmount")]
     pub stake_amount: String,
@@ -314,6 +315,7 @@ sol! {
     struct SolInitialValidator {
         address operator;
         address owner;
+        address staker;
         uint256 stakeAmount;
         string moniker;
         bytes consensusPubkey;
@@ -506,6 +508,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         .map(|v| SolInitialValidator {
             operator: parse_address(&v.operator),
             owner: parse_address(&v.owner),
+            staker: parse_address(&v.staker),
             stakeAmount: parse_u256(&v.stake_amount),
             moniker: v.moniker.clone(),
             consensusPubkey: parse_hex_bytes(&v.consensus_pubkey).into(),
