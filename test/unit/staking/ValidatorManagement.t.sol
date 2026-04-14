@@ -252,6 +252,80 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test revert when validator set changes are disabled
+    /// @notice Audit #154: evictUnderperformingValidators must honor allowValidatorSetChange.
+    ///         When the freeze switch is off, eviction must be a no-op — otherwise an
+    ///         incident-response freeze is meaningless because the active set can only
+    ///         shrink (no replenishment via join) and may fall below the BFT quorum.
+    function test_audit_evict_honorsAllowValidatorSetChange() public {
+        // Setup: 3 active validators, each with baseline bond
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        _processEpoch(); // activates all 3 (epoch 0 -> 1)
+        _processEpoch(); // no-op, but currentEpoch -> 2 so evict's closingEpoch>1 guard passes
+
+        // Raise minimumBond so all 3 become underbonded AND freeze the set
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND * 10, // huge minimumBond — everyone underbonded
+            MAX_BOND,
+            UNBONDING_DELAY,
+            false, // allowValidatorSetChange = false  (FREEZE)
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Call eviction under freeze — must be no-op
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "Freeze must block eviction");
+        assertEq(
+            uint8(validatorManager.getValidator(pool1).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "alice must remain ACTIVE under freeze"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(pool2).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "bob must remain ACTIVE under freeze"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(pool3).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "charlie must remain ACTIVE under freeze"
+        );
+
+        // Un-freeze and re-run — now underbonded eviction runs (liveness guard protects last one)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND * 10,
+            MAX_BOND,
+            UNBONDING_DELAY,
+            true, // un-freeze
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        // Baseline: without freeze, 2 of 3 get evicted (liveness guard keeps the last one ACTIVE)
+        uint256 stillActive;
+        if (validatorManager.getValidator(pool1).status == ValidatorStatus.ACTIVE) stillActive++;
+        if (validatorManager.getValidator(pool2).status == ValidatorStatus.ACTIVE) stillActive++;
+        if (validatorManager.getValidator(pool3).status == ValidatorStatus.ACTIVE) stillActive++;
+        assertEq(stillActive, 1, "Without freeze, eviction must run and leave exactly 1 validator");
+    }
+
     /// @notice Audit #187: registerValidator must be blocked during reconfiguration
     ///         to prevent consensus pubkey writes from interleaving with a live DKG session,
     ///         which would produce nondeterministic DKG reads across validators.

@@ -610,6 +610,14 @@ contract ValidatorManagement is IValidatorManagement {
     function evictUnderperformingValidators() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
+        // Audit #154: honor allowValidatorSetChange freeze. The freeze switch is the
+        // operator's incident-response tool ("stop all validator set mutation"). Letting
+        // eviction still run while join/leave are blocked defeats the freeze, because the
+        // active set can only shrink (no replenishment) and may fall below the BFT quorum.
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            return;
+        }
+
         // Skip eviction for epoch 1 — the first epoch after genesis has insufficient
         // performance data (validators are still bootstrapping), so eviction starts from epoch 2.
         uint64 closingEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
