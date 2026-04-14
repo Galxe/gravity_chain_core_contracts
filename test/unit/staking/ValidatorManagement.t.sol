@@ -252,6 +252,64 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test revert when validator set changes are disabled
+    /// @notice Audit #85: a pending fee recipient set before leave→deactivate must not
+    ///         silently activate when the pool later rejoins. Without the fix, an operator
+    ///         (who can call setFeeRecipient unilaterally) can plant a stale recipient,
+    ///         the owner kicks them out, and the stale recipient takes effect on rejoin.
+    function test_audit_pendingFeeRecipient_clearedOnDeactivation() public {
+        // Two pools so leaveValidatorSet doesn't hit the "last validator" guard
+        address alicePool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch(); // both ACTIVE
+
+        address staleRecipient = makeAddr("staleRecipient");
+
+        // Operator plants a pending fee recipient
+        vm.prank(alice);
+        validatorManager.setFeeRecipient(alicePool, staleRecipient);
+        assertEq(
+            validatorManager.getValidator(alicePool).pendingFeeRecipient,
+            staleRecipient,
+            "pending should be set"
+        );
+        address originalRecipient = validatorManager.getValidator(alicePool).feeRecipient;
+
+        // Pool owner leaves the set, validator deactivates at epoch boundary
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(alicePool);
+        _processEpoch(); // apply deactivation
+
+        ValidatorRecord memory afterDeactivate = validatorManager.getValidator(alicePool);
+        assertEq(uint8(afterDeactivate.status), uint8(ValidatorStatus.INACTIVE), "must be INACTIVE");
+        assertEq(
+            afterDeactivate.pendingFeeRecipient,
+            address(0),
+            "pendingFeeRecipient must be cleared on deactivation"
+        );
+        assertEq(
+            afterDeactivate.feeRecipient,
+            originalRecipient,
+            "feeRecipient must remain unchanged through deactivation"
+        );
+
+        // Rejoin and process another epoch — stale recipient must NOT activate
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        _processEpoch(); // PENDING_ACTIVE -> ACTIVE, _applyPendingFeeRecipients runs
+
+        ValidatorRecord memory afterRejoin = validatorManager.getValidator(alicePool);
+        assertEq(uint8(afterRejoin.status), uint8(ValidatorStatus.ACTIVE), "must be ACTIVE again");
+        assertEq(
+            afterRejoin.feeRecipient,
+            originalRecipient,
+            "stale recipient must not activate on rejoin"
+        );
+        assertTrue(
+            afterRejoin.feeRecipient != staleRecipient,
+            "stale recipient must not leak through deactivate/rejoin cycle"
+        );
+    }
+
     /// @notice Audit #154: evictUnderperformingValidators must honor allowValidatorSetChange.
     ///         When the freeze switch is off, eviction must be a no-op — otherwise an
     ///         incident-response freeze is meaningless because the active set can only

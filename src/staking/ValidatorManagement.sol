@@ -738,6 +738,11 @@ contract ValidatorManagement is IValidatorManagement {
             validator.status = ValidatorStatus.INACTIVE;
             validator.validatorIndex = type(uint64).max; // Clear index
 
+            // Audit #85: clear pending fee recipient on deactivation so a stale value
+            // set by a (potentially compromised) operator before deactivation cannot
+            // silently activate when the pool later rejoins the validator set.
+            validator.pendingFeeRecipient = address(0);
+
             emit ValidatorDeactivated(pool);
         }
         delete _pendingInactive;
