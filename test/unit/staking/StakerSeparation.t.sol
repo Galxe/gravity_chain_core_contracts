@@ -12,14 +12,23 @@ import { ValidatorStatus } from "../../../src/foundation/Types.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 
 contract MockValidatorManagement2 {
-    function isValidator(address) external pure returns (bool) { return false; }
-    function getValidatorStatus(address) external pure returns (ValidatorStatus) {
+    function isValidator(
+        address
+    ) external pure returns (bool) {
+        return false;
+    }
+
+    function getValidatorStatus(
+        address
+    ) external pure returns (ValidatorStatus) {
         return ValidatorStatus.INACTIVE;
     }
 }
 
 contract MockReconfiguration2 {
-    function isTransitionInProgress() external pure returns (bool) { return false; }
+    function isTransitionInProgress() external pure returns (bool) {
+        return false;
+    }
 }
 
 /// @title StakerSeparationTest
@@ -32,11 +41,11 @@ contract StakerSeparationTest is Test {
     StakingConfig public stakingConfig;
     Timestamp public timestamp;
 
-    address public ownerAddr   = makeAddr("distinctOwner");
-    address public stakerAddr  = makeAddr("distinctStaker");
+    address public ownerAddr = makeAddr("distinctOwner");
+    address public stakerAddr = makeAddr("distinctStaker");
     address public operatorAddr = makeAddr("distinctOperator");
-    address public voterAddr   = makeAddr("distinctVoter");
-    address public stranger    = makeAddr("stranger");
+    address public voterAddr = makeAddr("distinctVoter");
+    address public stranger = makeAddr("stranger");
 
     uint256 constant MIN_STAKE = 1 ether;
     uint64 constant LOCKUP_DURATION = 14 days * 1_000_000;
@@ -71,13 +80,7 @@ contract StakerSeparationTest is Test {
     function _createDistinctPool() internal returns (address pool) {
         uint64 lockedUntil = INITIAL_TIMESTAMP + LOCKUP_DURATION;
         vm.prank(ownerAddr);
-        pool = staking.createPool{ value: MIN_STAKE }(
-            ownerAddr,
-            stakerAddr,
-            operatorAddr,
-            voterAddr,
-            lockedUntil
-        );
+        pool = staking.createPool{ value: MIN_STAKE }(ownerAddr, stakerAddr, operatorAddr, voterAddr, lockedUntil);
     }
 
     function test_createPool_DistinctRolesStored() public {
