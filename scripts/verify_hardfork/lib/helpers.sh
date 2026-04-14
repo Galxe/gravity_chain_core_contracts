@@ -43,7 +43,7 @@ check_call() {
     shift 4
     local args=("$@")
 
-    result=$(cast call "$addr" "$sig" "${args[@]}" --rpc-url "$RPC_URL" 2>/dev/null || echo "REVERT")
+    result=$(cast call "$addr" "$sig" ${args[@]+"${args[@]}"} --rpc-url "$RPC_URL" 2>/dev/null || echo "REVERT")
 
     if [ "$result" = "REVERT" ]; then
         fail "${label}: call reverted"
@@ -69,7 +69,7 @@ check_reverts() {
     shift 3
     local args=("$@")
 
-    result=$(cast call "$addr" "$sig" "${args[@]}" --rpc-url "$RPC_URL" 2>&1 || true)
+    result=$(cast call "$addr" "$sig" ${args[@]+"${args[@]}"} --rpc-url "$RPC_URL" 2>&1 || true)
 
     if echo "$result" | grep -qi "revert\|error\|execution reverted"; then
         pass "${label}: correctly reverts"
@@ -87,7 +87,7 @@ check_exists() {
     shift 3
     local args=("$@")
 
-    result=$(cast call "$addr" "$sig" "${args[@]}" --rpc-url "$RPC_URL" 2>/dev/null || echo "REVERT")
+    result=$(cast call "$addr" "$sig" ${args[@]+"${args[@]}"} --rpc-url "$RPC_URL" 2>/dev/null || echo "REVERT")
 
     if [ "$result" = "REVERT" ]; then
         fail "${label}: call reverted (function may not exist)"

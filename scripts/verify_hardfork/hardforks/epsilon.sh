@@ -61,15 +61,20 @@ run_smoke_tests() {
     echo "--- ValidatorManagement (PR #56) ---"
     # No new public getters; codehash check is the primary signal. The function
     # signature itself must still resolve so its selector is in the dispatcher.
-    check_exists  "evictUnderperformingValidators() ABI"  "$VALIDATOR_MANAGER" "evictUnderperformingValidators()"
+    # evictUnderperformingValidators() requires caller == Reconfiguration (requireAllowed),
+    # so we use --from to impersonate the allowed caller; the call may still revert
+    # due to state (e.g. epoch <= 1), but a NotAllowed revert means the selector exists.
+    check_exists  "evictUnderperformingValidators() ABI"  "$VALIDATOR_MANAGER" "evictUnderperformingValidators()" --from "$RECONFIGURATION"
     check_exists  "getActiveValidatorCount()"             "$VALIDATOR_MANAGER" "getActiveValidatorCount()(uint256)"
     echo ""
 
     echo "--- Reconfiguration (PR #63) ---"
     # Call sites moved but ABI unchanged; ensure dispatcher still has both entry points.
+    # checkAndStartTransition() requires caller == Blocker; governanceReconfigure() requires
+    # caller == Governance. Use --from to satisfy requireAllowed access control.
     check_exists  "currentEpoch()"                        "$RECONFIGURATION" "currentEpoch()(uint64)"
-    check_exists  "checkAndStartTransition() ABI"         "$RECONFIGURATION" "checkAndStartTransition()"
-    check_exists  "governanceReconfigure() ABI"           "$RECONFIGURATION" "governanceReconfigure()"
+    check_exists  "checkAndStartTransition() ABI"         "$RECONFIGURATION" "checkAndStartTransition()" --from "$BLOCKER"
+    check_exists  "governanceReconfigure() ABI"           "$RECONFIGURATION" "governanceReconfigure()" --from "$GOVERNANCE"
     echo ""
 
     echo "--- GBridgeReceiver (PR #66) ---"
