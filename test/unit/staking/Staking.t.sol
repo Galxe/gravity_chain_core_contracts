@@ -1055,12 +1055,12 @@ contract StakingTest is Test {
 
     // ── Role change delay configuration ─────────────────────────────
 
-    function test_setRoleChangeDelay() public {
+    function test_setOperatorChangeDelay() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        IStakePool(pool).setRoleChangeDelay(14 days);
+        IStakePool(pool).setOperatorChangeDelay(14 days);
 
         // Propose with new 14-day delay
         uint256 proposeTime = block.timestamp;
@@ -1080,7 +1080,7 @@ contract StakingTest is Test {
         assertEq(IStakePool(pool).getOperator(), bob);
     }
 
-    function test_RevertWhen_setRoleChangeDelay_belowMinimum() public {
+    function test_RevertWhen_setChangeDelay_belowMinimum() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
@@ -1088,7 +1088,7 @@ contract StakingTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(1 days))
         );
-        IStakePool(pool).setRoleChangeDelay(1 hours);
+        IStakePool(pool).setStakerChangeDelay(1 hours);
     }
 
     // ========================================================================

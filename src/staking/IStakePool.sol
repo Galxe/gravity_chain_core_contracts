@@ -86,11 +86,12 @@ interface IStakePool {
     /// @param role The role whose change was cancelled
     event RoleChangeCancelled(address indexed pool, string role);
 
-    /// @notice Emitted when the role change delay is updated
+    /// @notice Emitted when a per-role change delay is updated
     /// @param pool Address of this pool
+    /// @param role The role whose delay was changed ("staker", "operator", or "voter")
     /// @param oldDelay Previous delay in seconds
     /// @param newDelay New delay in seconds
-    event RoleChangeDelayUpdated(address indexed pool, uint64 oldDelay, uint64 newDelay);
+    event RoleChangeDelayUpdated(address indexed pool, string role, uint64 oldDelay, uint64 newDelay);
 
 
     /// @notice Emitted when rewards are withdrawn
@@ -232,12 +233,20 @@ interface IStakePool {
     /// @dev Only callable by owner
     function cancelVoterChange() external;
 
-    /// @notice Update the role change delay
+    /// @notice Update the staker role change delay
     /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
     /// @param newDelay New delay in seconds
-    function setRoleChangeDelay(
-        uint64 newDelay
-    ) external;
+    function setStakerChangeDelay(uint64 newDelay) external;
+
+    /// @notice Update the operator role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setOperatorChangeDelay(uint64 newDelay) external;
+
+    /// @notice Update the voter role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setVoterChangeDelay(uint64 newDelay) external;
 
 
     // ========================================================================
