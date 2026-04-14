@@ -264,7 +264,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ── Staker role change (2-step + timelock + pending withdrawal guard) ──
 
     /// @inheritdoc IStakePool
-    function proposeStaker(address newStaker) external onlyOwner {
+    function proposeStaker(
+        address newStaker
+    ) external onlyOwner {
         if (newStaker == address(0)) revert Errors.ZeroAddress();
         uint64 effectiveAt = uint64(block.timestamp) + roleChangeDelay;
         pendingStaker = newStaker;
@@ -276,7 +278,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function acceptStaker() external {
         if (pendingStaker == address(0)) revert Errors.NoPendingRoleChange();
         if (msg.sender != pendingStaker) revert Errors.NotPendingRole(msg.sender, pendingStaker);
-        if (block.timestamp < stakerChangeAt) revert Errors.RoleChangeTooEarly(stakerChangeAt, uint64(block.timestamp));
+        if (block.timestamp < stakerChangeAt) {
+            revert Errors.RoleChangeTooEarly(stakerChangeAt, uint64(block.timestamp));
+        }
 
         // Guard: no unclaimed pending withdrawals from the old staker
         uint256 totalPending = _totalPendingAmount();
@@ -300,7 +304,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ── Operator role change (2-step + timelock) ────────────────────────
 
     /// @inheritdoc IStakePool
-    function proposeOperator(address newOperator) external onlyOwner {
+    function proposeOperator(
+        address newOperator
+    ) external onlyOwner {
         if (newOperator == address(0)) revert Errors.ZeroAddress();
         uint64 effectiveAt = uint64(block.timestamp) + roleChangeDelay;
         pendingOperator = newOperator;
@@ -312,7 +318,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function acceptOperator() external {
         if (pendingOperator == address(0)) revert Errors.NoPendingRoleChange();
         if (msg.sender != pendingOperator) revert Errors.NotPendingRole(msg.sender, pendingOperator);
-        if (block.timestamp < operatorChangeAt) revert Errors.RoleChangeTooEarly(operatorChangeAt, uint64(block.timestamp));
+        if (block.timestamp < operatorChangeAt) {
+            revert Errors.RoleChangeTooEarly(operatorChangeAt, uint64(block.timestamp));
+        }
 
         address oldOperator = operator;
         operator = pendingOperator;
@@ -332,7 +340,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ── Voter role change (2-step + timelock) ───────────────────────────
 
     /// @inheritdoc IStakePool
-    function proposeVoter(address newVoter) external onlyOwner {
+    function proposeVoter(
+        address newVoter
+    ) external onlyOwner {
         if (newVoter == address(0)) revert Errors.ZeroAddress();
         uint64 effectiveAt = uint64(block.timestamp) + roleChangeDelay;
         pendingVoter = newVoter;
@@ -364,7 +374,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ── Role change delay configuration ─────────────────────────────────
 
     /// @inheritdoc IStakePool
-    function setRoleChangeDelay(uint64 newDelay) external onlyOwner {
+    function setRoleChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = roleChangeDelay;
         roleChangeDelay = newDelay;

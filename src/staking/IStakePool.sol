@@ -188,7 +188,9 @@ interface IStakePool {
     /// @notice Propose a new staker address (starts timelock)
     /// @dev Only callable by owner. The new staker must call acceptStaker() after the delay.
     /// @param newStaker Proposed new staker address
-    function proposeStaker(address newStaker) external;
+    function proposeStaker(
+        address newStaker
+    ) external;
 
     /// @notice Accept the pending staker role change
     /// @dev Only callable by the pending staker, after the timelock delay has elapsed.
@@ -202,7 +204,9 @@ interface IStakePool {
     /// @notice Propose a new operator address (starts timelock)
     /// @dev Only callable by owner. The new operator must call acceptOperator() after the delay.
     /// @param newOperator Proposed new operator address
-    function proposeOperator(address newOperator) external;
+    function proposeOperator(
+        address newOperator
+    ) external;
 
     /// @notice Accept the pending operator role change
     /// @dev Only callable by the pending operator, after the timelock delay has elapsed.
@@ -215,7 +219,9 @@ interface IStakePool {
     /// @notice Propose a new voter address (starts timelock)
     /// @dev Only callable by owner. The new voter must call acceptVoter() after the delay.
     /// @param newVoter Proposed new voter address
-    function proposeVoter(address newVoter) external;
+    function proposeVoter(
+        address newVoter
+    ) external;
 
     /// @notice Accept the pending voter role change
     /// @dev Only callable by the pending voter, after the timelock delay has elapsed.
@@ -228,7 +234,9 @@ interface IStakePool {
     /// @notice Update the role change delay
     /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
     /// @param newDelay New delay in seconds
-    function setRoleChangeDelay(uint64 newDelay) external;
+    function setRoleChangeDelay(
+        uint64 newDelay
+    ) external;
 
     // ========================================================================
     // STAKER FUNCTIONS

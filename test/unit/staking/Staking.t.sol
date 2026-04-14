@@ -1085,7 +1085,9 @@ contract StakingTest is Test {
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(2 days)));
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(2 days))
+        );
         IStakePool(pool).setRoleChangeDelay(1 hours);
     }
 

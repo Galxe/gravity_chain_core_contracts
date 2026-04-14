@@ -146,7 +146,11 @@ contract GovernanceTest is Test {
         return staking.createPool{ value: amount }(poolOwner, poolOwner, poolOwner, poolOwner, lockedUntil);
     }
 
-    function _delegateVoter(address poolOwner, address pool, address newVoter) internal {
+    function _delegateVoter(
+        address poolOwner,
+        address pool,
+        address newVoter
+    ) internal {
         vm.prank(poolOwner);
         IStakePool(pool).proposeVoter(newVoter);
         vm.warp(block.timestamp + 7 days);
