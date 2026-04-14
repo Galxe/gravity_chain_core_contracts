@@ -92,6 +92,7 @@ interface IStakePool {
     /// @param newDelay New delay in seconds
     event RoleChangeDelayUpdated(address indexed pool, uint64 oldDelay, uint64 newDelay);
 
+
     /// @notice Emitted when rewards are withdrawn
     /// @param pool Address of this pool
     /// @param amount Amount of rewards withdrawn
@@ -237,6 +238,7 @@ interface IStakePool {
     function setRoleChangeDelay(
         uint64 newDelay
     ) external;
+
 
     // ========================================================================
     // STAKER FUNCTIONS

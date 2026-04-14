@@ -37,11 +37,8 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     /// @notice Maximum number of pending withdrawal buckets
     uint256 public constant MAX_PENDING_BUCKETS = 1000;
 
-    /// @notice Minimum allowed role change delay (2 days)
-    uint64 public constant MIN_ROLE_CHANGE_DELAY = 2 days;
-
-    /// @notice Default role change delay (7 days)
-    uint64 public constant DEFAULT_ROLE_CHANGE_DELAY = 7 days;
+    /// @notice Minimum allowed role change delay (cannot set roleChangeDelay below this)
+    uint64 public constant MIN_ROLE_CHANGE_DELAY = 1 days;
 
     // ========================================================================
     // IMMUTABLES
@@ -78,7 +75,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     uint256 public claimedAmount;
 
     /// @notice Configurable delay for role changes (seconds)
-    uint64 public roleChangeDelay = DEFAULT_ROLE_CHANGE_DELAY;
+    uint64 public roleChangeDelay;
 
     /// @notice Pending staker role change
     address public pendingStaker;
@@ -132,7 +129,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     /// @param _operator Operator address (for validator operations)
     /// @param _voter Voter address (for governance voting)
     /// @param _lockedUntil Initial lockup expiration (must be >= now + minLockup)
-    /// @dev Called by factory during CREATE2 deployment
+    /// @dev Called by factory during CREATE2 deployment.
+    ///      Role change delays default to DEFAULT_ROLE_CHANGE_DELAY (1 day).
+    ///      Owner can adjust via setRoleChangeDelay() / setMinRoleChangeDelay() after creation.
     constructor(
         address _owner,
         address _staker,
@@ -154,6 +153,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         voter = _voter;
         lockedUntil = _lockedUntil;
         activeStake = msg.value;
+        roleChangeDelay = MIN_ROLE_CHANGE_DELAY;
 
         emit StakeAdded(address(this), msg.value);
     }

@@ -900,7 +900,7 @@ contract StakingTest is Test {
         vm.prank(alice);
         IStakePool(pool).proposeOperator(bob);
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(bob);
         IStakePool(pool).acceptOperator();
 
@@ -913,7 +913,7 @@ contract StakingTest is Test {
 
         vm.prank(alice);
         vm.expectEmit(true, true, false, true);
-        emit IStakePool.RoleChangeProposed(pool, "operator", bob, uint64(block.timestamp + 7 days));
+        emit IStakePool.RoleChangeProposed(pool, "operator", bob, uint64(block.timestamp + 1 days));
         IStakePool(pool).proposeOperator(bob);
     }
 
@@ -924,7 +924,7 @@ contract StakingTest is Test {
         vm.prank(alice);
         IStakePool(pool).proposeOperator(bob);
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(bob);
         vm.expectEmit(true, false, false, true);
         emit IStakePool.OperatorChanged(pool, alice, bob);
@@ -959,7 +959,7 @@ contract StakingTest is Test {
         vm.prank(alice);
         IStakePool(pool).proposeOperator(bob);
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(charlie);
         vm.expectRevert(abi.encodeWithSelector(Errors.NotPendingRole.selector, charlie, bob));
         IStakePool(pool).acceptOperator();
@@ -976,7 +976,7 @@ contract StakingTest is Test {
         IStakePool(pool).cancelOperatorChange();
 
         // Should revert since pending was cleared
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(bob);
         vm.expectRevert(Errors.NoPendingRoleChange.selector);
         IStakePool(pool).acceptOperator();
@@ -991,7 +991,7 @@ contract StakingTest is Test {
         vm.prank(alice);
         IStakePool(pool).proposeVoter(bob);
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(bob);
         IStakePool(pool).acceptVoter();
 
@@ -1016,7 +1016,7 @@ contract StakingTest is Test {
         vm.prank(alice);
         IStakePool(pool).proposeStaker(bob);
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(bob);
         IStakePool(pool).acceptStaker();
 
@@ -1045,7 +1045,7 @@ contract StakingTest is Test {
         IStakePool(pool).proposeStaker(bob);
 
         // Warp past delay
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
 
         // Should revert due to pending withdrawals
         vm.prank(bob);
@@ -1086,7 +1086,7 @@ contract StakingTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(2 days))
+            abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(1 days))
         );
         IStakePool(pool).setRoleChangeDelay(1 hours);
     }

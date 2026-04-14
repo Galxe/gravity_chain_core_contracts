@@ -153,7 +153,7 @@ contract GovernanceTest is Test {
     ) internal {
         vm.prank(poolOwner);
         IStakePool(pool).proposeVoter(newVoter);
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(newVoter);
         IStakePool(pool).acceptVoter();
     }
