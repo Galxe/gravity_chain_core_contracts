@@ -287,14 +287,10 @@ contract ValidatorManagementTest is Test {
 
         assertEq(validatorManager.getActiveValidatorCount(), 2, "PENDING_INACTIVE must not inflate base");
         assertEq(
-            uint8(validatorManager.getValidator(alicePool).status),
-            uint8(ValidatorStatus.ACTIVE),
-            "alice stays active"
+            uint8(validatorManager.getValidator(alicePool).status), uint8(ValidatorStatus.ACTIVE), "alice stays active"
         );
         assertEq(
-            uint8(validatorManager.getValidator(bobPool).status),
-            uint8(ValidatorStatus.INACTIVE),
-            "bob is deactivated"
+            uint8(validatorManager.getValidator(bobPool).status), uint8(ValidatorStatus.INACTIVE), "bob is deactivated"
         );
         assertEq(
             uint8(validatorManager.getValidator(davidPool).status),
@@ -318,11 +314,7 @@ contract ValidatorManagementTest is Test {
         // Operator plants a pending fee recipient
         vm.prank(alice);
         validatorManager.setFeeRecipient(alicePool, staleRecipient);
-        assertEq(
-            validatorManager.getValidator(alicePool).pendingFeeRecipient,
-            staleRecipient,
-            "pending should be set"
-        );
+        assertEq(validatorManager.getValidator(alicePool).pendingFeeRecipient, staleRecipient, "pending should be set");
         address originalRecipient = validatorManager.getValidator(alicePool).feeRecipient;
 
         // Pool owner leaves the set, validator deactivates at epoch boundary
@@ -332,15 +324,9 @@ contract ValidatorManagementTest is Test {
 
         ValidatorRecord memory afterDeactivate = validatorManager.getValidator(alicePool);
         assertEq(uint8(afterDeactivate.status), uint8(ValidatorStatus.INACTIVE), "must be INACTIVE");
+        assertEq(afterDeactivate.pendingFeeRecipient, address(0), "pendingFeeRecipient must be cleared on deactivation");
         assertEq(
-            afterDeactivate.pendingFeeRecipient,
-            address(0),
-            "pendingFeeRecipient must be cleared on deactivation"
-        );
-        assertEq(
-            afterDeactivate.feeRecipient,
-            originalRecipient,
-            "feeRecipient must remain unchanged through deactivation"
+            afterDeactivate.feeRecipient, originalRecipient, "feeRecipient must remain unchanged through deactivation"
         );
 
         // Rejoin and process another epoch — stale recipient must NOT activate
@@ -350,14 +336,9 @@ contract ValidatorManagementTest is Test {
 
         ValidatorRecord memory afterRejoin = validatorManager.getValidator(alicePool);
         assertEq(uint8(afterRejoin.status), uint8(ValidatorStatus.ACTIVE), "must be ACTIVE again");
-        assertEq(
-            afterRejoin.feeRecipient,
-            originalRecipient,
-            "stale recipient must not activate on rejoin"
-        );
+        assertEq(afterRejoin.feeRecipient, originalRecipient, "stale recipient must not activate on rejoin");
         assertTrue(
-            afterRejoin.feeRecipient != staleRecipient,
-            "stale recipient must not leak through deactivate/rejoin cycle"
+            afterRejoin.feeRecipient != staleRecipient, "stale recipient must not leak through deactivate/rejoin cycle"
         );
     }
 
@@ -457,7 +438,9 @@ contract ValidatorManagementTest is Test {
             pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
         ValidatorRecord memory record = validatorManager.getValidator(pool);
-        assertEq(uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Should register successfully after reconfig ends");
+        assertEq(
+            uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Should register successfully after reconfig ends"
+        );
     }
 
     function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
