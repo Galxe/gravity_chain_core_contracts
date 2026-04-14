@@ -419,7 +419,10 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
         if (validatorMgmt.isValidator(address(this))) {
             ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
-            if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+            if (
+                status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE
+                    || status == ValidatorStatus.PENDING_ACTIVE
+            ) {
                 uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
 
                 // Simple check: activeStake after unstake must be >= minBond
