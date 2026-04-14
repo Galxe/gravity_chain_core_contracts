@@ -965,6 +965,34 @@ contract ValidatorManagementTest is Test {
         assertEq(validatorManager.getPendingActiveValidators().length, 0, "Should have no pending active validators");
     }
 
+    /// @notice PENDING_ACTIVE validators must honor the minBond invariant on unstake.
+    /// @dev Regression test for Coacker finding #277: previously only ACTIVE/PENDING_INACTIVE
+    ///      were checked, so a staker could join the set then unstake all the way to zero,
+    ///      violating the "always >= minBond while in any validator lifecycle state" invariant.
+    function test_RevertWhen_unstake_pendingActiveBelowMinBond() public {
+        // Create pool with enough stake that unstaking would breach minBond.
+        address pool = _createRegisterAndJoin(alice, MIN_BOND + 5 ether, "alice");
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
+
+        // Unstaking 6 ether would leave 9 ether < MIN_BOND (10 ether) — must revert.
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.WithdrawalWouldBreachMinimumBond.selector, MIN_BOND - 1 ether, MIN_BOND)
+        );
+        IStakePool(pool).unstake(6 ether);
+    }
+
+    /// @notice PENDING_ACTIVE validators can still unstake above the minBond floor.
+    function test_unstake_pendingActiveAboveMinBond_succeeds() public {
+        address pool = _createRegisterAndJoin(alice, MIN_BOND + 5 ether, "alice");
+        assertEq(uint8(validatorManager.getValidatorStatus(pool)), uint8(ValidatorStatus.PENDING_ACTIVE));
+
+        // Unstaking exactly 5 ether keeps activeStake == MIN_BOND — allowed.
+        vm.prank(alice);
+        IStakePool(pool).unstake(5 ether);
+        assertEq(IStakePool(pool).getActiveStake(), MIN_BOND, "activeStake should equal minBond");
+    }
+
     /// @notice Test that operations are blocked during reconfiguration
     function test_RevertWhen_joinValidatorSet_duringReconfiguration() public {
         address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
