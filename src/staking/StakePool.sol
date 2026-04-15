@@ -378,7 +378,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ── Role change delay configuration ─────────────────────────────────
 
     /// @inheritdoc IStakePool
-    function setStakerChangeDelay(uint64 newDelay) external onlyOwner {
+    function setStakerChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = stakerChangeDelay;
         stakerChangeDelay = newDelay;
@@ -386,7 +388,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     }
 
     /// @inheritdoc IStakePool
-    function setOperatorChangeDelay(uint64 newDelay) external onlyOwner {
+    function setOperatorChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = operatorChangeDelay;
         operatorChangeDelay = newDelay;
@@ -394,7 +398,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     }
 
     /// @inheritdoc IStakePool
-    function setVoterChangeDelay(uint64 newDelay) external onlyOwner {
+    function setVoterChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = voterChangeDelay;
         voterChangeDelay = newDelay;
