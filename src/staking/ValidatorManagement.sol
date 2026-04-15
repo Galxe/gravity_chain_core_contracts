@@ -238,7 +238,7 @@ contract ValidatorManagement is IValidatorManagement {
         bytes calldata consensusPop,
         bytes calldata networkAddresses,
         bytes calldata fullnodeAddresses
-    ) external {
+    ) external whenNotReconfiguring {
         // Check that validator set changes are allowed
         if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
             revert Errors.ValidatorSetChangesDisabled();
@@ -610,6 +610,14 @@ contract ValidatorManagement is IValidatorManagement {
     function evictUnderperformingValidators() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
 
+        // Audit #154: honor allowValidatorSetChange freeze. The freeze switch is the
+        // operator's incident-response tool ("stop all validator set mutation"). Letting
+        // eviction still run while join/leave are blocked defeats the freeze, because the
+        // active set can only shrink (no replenishment) and may fall below the BFT quorum.
+        if (!IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange()) {
+            return;
+        }
+
         // Skip eviction for epoch 1 — the first epoch after genesis has insufficient
         // performance data (validators are still bootstrapping), so eviction starts from epoch 2.
         uint64 closingEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
@@ -729,6 +737,11 @@ contract ValidatorManagement is IValidatorManagement {
 
             validator.status = ValidatorStatus.INACTIVE;
             validator.validatorIndex = type(uint64).max; // Clear index
+
+            // Audit #85: clear pending fee recipient on deactivation so a stale value
+            // set by a (potentially compromised) operator before deactivation cannot
+            // silently activate when the pool later rejoins the validator set.
+            validator.pendingFeeRecipient = address(0);
 
             emit ValidatorDeactivated(pool);
         }
@@ -895,12 +908,21 @@ contract ValidatorManagement is IValidatorManagement {
         }
     }
 
-    /// @notice Calculate total voting power of active validators
-    function _calculateTotalVotingPower() internal view returns (uint256) {
+    /// @notice Calculate the voting power of validators that will STAY active next epoch
+    /// @dev Audit #83: when used as the base for votingPowerIncreaseLimitPct, the denominator
+    ///      must exclude PENDING_INACTIVE (they are leaving and will not be part of next epoch).
+    ///      Including them inflates the base by a factor of 1/stayingRatio, which weakens the
+    ///      BFT-level cap on voting power churn per epoch. Aptos's stake.move::on_new_epoch
+    ///      clears pending_inactive before computing total_voting_power for the same reason.
+    function _calculateStayingVotingPower() internal view returns (uint256) {
         uint256 total = 0;
         uint256 length = _activeValidators.length;
         for (uint256 i = 0; i < length; i++) {
-            total += _getValidatorVotingPower(_activeValidators[i]);
+            address pool = _activeValidators[i];
+            if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {
+                continue;
+            }
+            total += _getValidatorVotingPower(pool);
         }
         return total;
     }
@@ -953,8 +975,11 @@ contract ValidatorManagement is IValidatorManagement {
             stayingActiveCount++;
         }
 
-        // Step 3: Compute pending activation with voting power limits
-        uint256 currentTotal = _calculateTotalVotingPower();
+        // Step 3: Compute pending activation with voting power limits.
+        // Audit #83: base must be "staying" voting power (excludes PENDING_INACTIVE),
+        // so the increase-limit denominator reflects the set that will actually be
+        // active in the next epoch, not the inflated current-epoch total.
+        uint256 currentTotal = _calculateStayingVotingPower();
         uint64 limitPct = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).votingPowerIncreaseLimitPct();
         uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);
         uint256 addedPower = 0;

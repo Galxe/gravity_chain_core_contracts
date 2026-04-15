@@ -252,6 +252,197 @@ contract ValidatorManagementTest is Test {
     }
 
     /// @notice Test revert when validator set changes are disabled
+    /// @notice Audit #83: votingPowerIncreaseLimitPct base must exclude PENDING_INACTIVE.
+    ///         Including them inflates the limit denominator by 1/stayingRatio, letting
+    ///         more new voting power activate in a single epoch than the BFT safety
+    ///         analysis allows. Aptos's stake.move::on_new_epoch clears pending_inactive
+    ///         before computing total_voting_power; this test asserts we match.
+    function test_audit_votingPowerLimit_excludesPendingInactive() public {
+        // Two 500-ether actives (total 1000 with bug, 500 staying without bug)
+        address alicePool = _createRegisterAndJoin(alice, 500 ether, "alice");
+        address bobPool = _createRegisterAndJoin(bob, 500 ether, "bob");
+        _processEpoch(); // both ACTIVE
+
+        // bob leaves → PENDING_INACTIVE (still in _activeValidators until next epoch)
+        vm.prank(bob);
+        validatorManager.leaveValidatorSet(bobPool);
+
+        // Two pending validators, 100 ether each.
+        //
+        // votingPowerIncreaseLimitPct = 20 (from setUp).
+        //
+        // With bug: base = 1000 (includes bob), maxIncrease = 200.
+        //   - charlie: 100 > 200? no, whale-bypass activates → addedPower = 100
+        //   - david:   100+100 = 200 > 200? false → activated    → addedPower = 200
+        //   => after epoch: alice, charlie, david ACTIVE (count = 3)
+        //
+        // With fix: base = 500 (excludes bob), maxIncrease = 100.
+        //   - charlie: 100, whale-bypass activates                → addedPower = 100
+        //   - david:   100+100 = 200 > 100? true → kept pending
+        //   => after epoch: alice, charlie ACTIVE (count = 2), david still PENDING_ACTIVE
+        _createRegisterAndJoin(charlie, 100 ether, "charlie");
+        address davidPool = _createRegisterAndJoin(david, 100 ether, "david");
+
+        _processEpoch(); // applies deactivations and activations based on staying total
+
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "PENDING_INACTIVE must not inflate base");
+        assertEq(
+            uint8(validatorManager.getValidator(alicePool).status), uint8(ValidatorStatus.ACTIVE), "alice stays active"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(bobPool).status), uint8(ValidatorStatus.INACTIVE), "bob is deactivated"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(davidPool).status),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "david must be kept PENDING_ACTIVE (limit hit against staying-power base)"
+        );
+    }
+
+    /// @notice Audit #85: a pending fee recipient set before leave→deactivate must not
+    ///         silently activate when the pool later rejoins. Without the fix, an operator
+    ///         (who can call setFeeRecipient unilaterally) can plant a stale recipient,
+    ///         the owner kicks them out, and the stale recipient takes effect on rejoin.
+    function test_audit_pendingFeeRecipient_clearedOnDeactivation() public {
+        // Two pools so leaveValidatorSet doesn't hit the "last validator" guard
+        address alicePool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        _processEpoch(); // both ACTIVE
+
+        address staleRecipient = makeAddr("staleRecipient");
+
+        // Operator plants a pending fee recipient
+        vm.prank(alice);
+        validatorManager.setFeeRecipient(alicePool, staleRecipient);
+        assertEq(validatorManager.getValidator(alicePool).pendingFeeRecipient, staleRecipient, "pending should be set");
+        address originalRecipient = validatorManager.getValidator(alicePool).feeRecipient;
+
+        // Pool owner leaves the set, validator deactivates at epoch boundary
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(alicePool);
+        _processEpoch(); // apply deactivation
+
+        ValidatorRecord memory afterDeactivate = validatorManager.getValidator(alicePool);
+        assertEq(uint8(afterDeactivate.status), uint8(ValidatorStatus.INACTIVE), "must be INACTIVE");
+        assertEq(afterDeactivate.pendingFeeRecipient, address(0), "pendingFeeRecipient must be cleared on deactivation");
+        assertEq(
+            afterDeactivate.feeRecipient, originalRecipient, "feeRecipient must remain unchanged through deactivation"
+        );
+
+        // Rejoin and process another epoch — stale recipient must NOT activate
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        _processEpoch(); // PENDING_ACTIVE -> ACTIVE, _applyPendingFeeRecipients runs
+
+        ValidatorRecord memory afterRejoin = validatorManager.getValidator(alicePool);
+        assertEq(uint8(afterRejoin.status), uint8(ValidatorStatus.ACTIVE), "must be ACTIVE again");
+        assertEq(afterRejoin.feeRecipient, originalRecipient, "stale recipient must not activate on rejoin");
+        assertTrue(
+            afterRejoin.feeRecipient != staleRecipient, "stale recipient must not leak through deactivate/rejoin cycle"
+        );
+    }
+
+    /// @notice Audit #154: evictUnderperformingValidators must honor allowValidatorSetChange.
+    ///         When the freeze switch is off, eviction must be a no-op — otherwise an
+    ///         incident-response freeze is meaningless because the active set can only
+    ///         shrink (no replenishment via join) and may fall below the BFT quorum.
+    function test_audit_evict_honorsAllowValidatorSetChange() public {
+        // Setup: 3 active validators, each with baseline bond
+        address pool1 = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address pool2 = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        address pool3 = _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+        _processEpoch(); // activates all 3 (epoch 0 -> 1)
+        _processEpoch(); // no-op, but currentEpoch -> 2 so evict's closingEpoch>1 guard passes
+
+        // Raise minimumBond so all 3 become underbonded AND freeze the set
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND * 10, // huge minimumBond — everyone underbonded
+            MAX_BOND,
+            UNBONDING_DELAY,
+            false, // allowValidatorSetChange = false  (FREEZE)
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Call eviction under freeze — must be no-op
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        assertEq(validatorManager.getActiveValidatorCount(), 3, "Freeze must block eviction");
+        assertEq(
+            uint8(validatorManager.getValidator(pool1).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "alice must remain ACTIVE under freeze"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(pool2).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "bob must remain ACTIVE under freeze"
+        );
+        assertEq(
+            uint8(validatorManager.getValidator(pool3).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "charlie must remain ACTIVE under freeze"
+        );
+
+        // Un-freeze and re-run — now underbonded eviction runs (liveness guard protects last one)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND * 10,
+            MAX_BOND,
+            UNBONDING_DELAY,
+            true, // un-freeze
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        // Baseline: without freeze, 2 of 3 get evicted (liveness guard keeps the last one ACTIVE)
+        uint256 stillActive;
+        if (validatorManager.getValidator(pool1).status == ValidatorStatus.ACTIVE) stillActive++;
+        if (validatorManager.getValidator(pool2).status == ValidatorStatus.ACTIVE) stillActive++;
+        if (validatorManager.getValidator(pool3).status == ValidatorStatus.ACTIVE) stillActive++;
+        assertEq(stillActive, 1, "Without freeze, eviction must run and leave exactly 1 validator");
+    }
+
+    /// @notice Audit #187: registerValidator must be blocked during reconfiguration
+    ///         to prevent consensus pubkey writes from interleaving with a live DKG session,
+    ///         which would produce nondeterministic DKG reads across validators.
+    function test_RevertWhen_registerValidator_duringReconfiguration() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        // Simulate a reconfiguration (DKG) in progress
+        mockReconfiguration.setTransitionInProgress(true);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ReconfigurationInProgress.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Once reconfiguration completes, registration succeeds again
+        mockReconfiguration.setTransitionInProgress(false);
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        ValidatorRecord memory record = validatorManager.getValidator(pool);
+        assertEq(
+            uint8(record.status), uint8(ValidatorStatus.INACTIVE), "Should register successfully after reconfig ends"
+        );
+    }
+
     function test_RevertWhen_registerValidator_validatorSetChangesDisabled() public {
         // Disable validator set changes via pending pattern
         vm.prank(SystemAddresses.GOVERNANCE);
