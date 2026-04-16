@@ -16,6 +16,17 @@ pragma solidity ^0.8.30;
 ///      - All operations are O(log n) using prefix-sum buckets with binary search
 interface IStakePool {
     // ========================================================================
+    // ENUMS
+    // ========================================================================
+
+    /// @notice Role identifier for role-change events and helpers
+    enum Role {
+        Staker,
+        Operator,
+        Voter
+    }
+
+    // ========================================================================
     // STRUCTS
     // ========================================================================
 
@@ -76,22 +87,22 @@ interface IStakePool {
 
     /// @notice Emitted when a role change is proposed
     /// @param pool Address of this pool
-    /// @param role The role being changed ("staker", "operator", or "voter")
+    /// @param role The role being changed
     /// @param newAddress Proposed new address for the role
     /// @param effectiveAt Timestamp when the change can be accepted
-    event RoleChangeProposed(address indexed pool, string role, address indexed newAddress, uint64 effectiveAt);
+    event RoleChangeProposed(address indexed pool, Role indexed role, address indexed newAddress, uint64 effectiveAt);
 
     /// @notice Emitted when a pending role change is cancelled
     /// @param pool Address of this pool
     /// @param role The role whose change was cancelled
-    event RoleChangeCancelled(address indexed pool, string role);
+    event RoleChangeCancelled(address indexed pool, Role indexed role);
 
     /// @notice Emitted when a per-role change delay is updated
     /// @param pool Address of this pool
-    /// @param role The role whose delay was changed ("staker", "operator", or "voter")
+    /// @param role The role whose delay was changed
     /// @param oldDelay Previous delay in seconds
     /// @param newDelay New delay in seconds
-    event RoleChangeDelayUpdated(address indexed pool, string role, uint64 oldDelay, uint64 newDelay);
+    event RoleChangeDelayUpdated(address indexed pool, Role indexed role, uint64 oldDelay, uint64 newDelay);
 
     /// @notice Emitted when rewards are withdrawn
     /// @param pool Address of this pool

@@ -271,20 +271,16 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function proposeStaker(
         address newStaker
     ) external onlyOwner {
-        if (newStaker == address(0)) revert Errors.ZeroAddress();
-        uint64 effectiveAt = uint64(block.timestamp) + stakerChangeDelay;
+        if (newStaker == staker) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newStaker, pendingStaker, stakerChangeDelay, Role.Staker);
         pendingStaker = newStaker;
         stakerChangeAt = effectiveAt;
-        emit RoleChangeProposed(address(this), "staker", newStaker, effectiveAt);
+        emit RoleChangeProposed(address(this), Role.Staker, newStaker, effectiveAt);
     }
 
     /// @inheritdoc IStakePool
     function acceptStaker() external {
-        if (pendingStaker == address(0)) revert Errors.NoPendingRoleChange();
-        if (msg.sender != pendingStaker) revert Errors.NotPendingRole(msg.sender, pendingStaker);
-        if (block.timestamp < stakerChangeAt) {
-            revert Errors.RoleChangeTooEarly(stakerChangeAt, uint64(block.timestamp));
-        }
+        _validateAccept(pendingStaker, stakerChangeAt);
 
         // Guard: no unclaimed pending withdrawals from the old staker
         uint256 totalPending = _totalPendingAmount();
@@ -302,7 +298,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (pendingStaker == address(0)) revert Errors.NoPendingRoleChange();
         pendingStaker = address(0);
         stakerChangeAt = 0;
-        emit RoleChangeCancelled(address(this), "staker");
+        emit RoleChangeCancelled(address(this), Role.Staker);
     }
 
     // ── Operator role change (2-step + timelock) ────────────────────────
@@ -311,20 +307,16 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function proposeOperator(
         address newOperator
     ) external onlyOwner {
-        if (newOperator == address(0)) revert Errors.ZeroAddress();
-        uint64 effectiveAt = uint64(block.timestamp) + operatorChangeDelay;
+        if (newOperator == operator) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newOperator, pendingOperator, operatorChangeDelay, Role.Operator);
         pendingOperator = newOperator;
         operatorChangeAt = effectiveAt;
-        emit RoleChangeProposed(address(this), "operator", newOperator, effectiveAt);
+        emit RoleChangeProposed(address(this), Role.Operator, newOperator, effectiveAt);
     }
 
     /// @inheritdoc IStakePool
     function acceptOperator() external {
-        if (pendingOperator == address(0)) revert Errors.NoPendingRoleChange();
-        if (msg.sender != pendingOperator) revert Errors.NotPendingRole(msg.sender, pendingOperator);
-        if (block.timestamp < operatorChangeAt) {
-            revert Errors.RoleChangeTooEarly(operatorChangeAt, uint64(block.timestamp));
-        }
+        _validateAccept(pendingOperator, operatorChangeAt);
 
         address oldOperator = operator;
         operator = pendingOperator;
@@ -338,7 +330,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (pendingOperator == address(0)) revert Errors.NoPendingRoleChange();
         pendingOperator = address(0);
         operatorChangeAt = 0;
-        emit RoleChangeCancelled(address(this), "operator");
+        emit RoleChangeCancelled(address(this), Role.Operator);
     }
 
     // ── Voter role change (2-step + timelock) ───────────────────────────
@@ -347,18 +339,16 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     function proposeVoter(
         address newVoter
     ) external onlyOwner {
-        if (newVoter == address(0)) revert Errors.ZeroAddress();
-        uint64 effectiveAt = uint64(block.timestamp) + voterChangeDelay;
+        if (newVoter == voter) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newVoter, pendingVoter, voterChangeDelay, Role.Voter);
         pendingVoter = newVoter;
         voterChangeAt = effectiveAt;
-        emit RoleChangeProposed(address(this), "voter", newVoter, effectiveAt);
+        emit RoleChangeProposed(address(this), Role.Voter, newVoter, effectiveAt);
     }
 
     /// @inheritdoc IStakePool
     function acceptVoter() external {
-        if (pendingVoter == address(0)) revert Errors.NoPendingRoleChange();
-        if (msg.sender != pendingVoter) revert Errors.NotPendingRole(msg.sender, pendingVoter);
-        if (block.timestamp < voterChangeAt) revert Errors.RoleChangeTooEarly(voterChangeAt, uint64(block.timestamp));
+        _validateAccept(pendingVoter, voterChangeAt);
 
         address oldVoter = voter;
         voter = pendingVoter;
@@ -372,7 +362,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (pendingVoter == address(0)) revert Errors.NoPendingRoleChange();
         pendingVoter = address(0);
         voterChangeAt = 0;
-        emit RoleChangeCancelled(address(this), "voter");
+        emit RoleChangeCancelled(address(this), Role.Voter);
     }
 
     // ── Role change delay configuration ─────────────────────────────────
@@ -384,7 +374,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = stakerChangeDelay;
         stakerChangeDelay = newDelay;
-        emit RoleChangeDelayUpdated(address(this), "staker", oldDelay, newDelay);
+        emit RoleChangeDelayUpdated(address(this), Role.Staker, oldDelay, newDelay);
     }
 
     /// @inheritdoc IStakePool
@@ -394,7 +384,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = operatorChangeDelay;
         operatorChangeDelay = newDelay;
-        emit RoleChangeDelayUpdated(address(this), "operator", oldDelay, newDelay);
+        emit RoleChangeDelayUpdated(address(this), Role.Operator, oldDelay, newDelay);
     }
 
     /// @inheritdoc IStakePool
@@ -404,7 +394,7 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
         uint64 oldDelay = voterChangeDelay;
         voterChangeDelay = newDelay;
-        emit RoleChangeDelayUpdated(address(this), "voter", oldDelay, newDelay);
+        emit RoleChangeDelayUpdated(address(this), Role.Voter, oldDelay, newDelay);
     }
 
     // ========================================================================
@@ -530,6 +520,42 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
+
+    /// @notice Returns the effective delay, treating 0 as MIN_ROLE_CHANGE_DELAY.
+    /// @dev On hardfork-upgraded pools the constructor does not run, so delay slots
+    ///      remain at 0.  This lazy default ensures the timelock is always enforced
+    ///      without requiring a state-patching step in the fork's apply function.
+    function _effectiveDelay(
+        uint64 delay
+    ) internal pure returns (uint64) {
+        return delay == 0 ? MIN_ROLE_CHANGE_DELAY : delay;
+    }
+
+    /// @notice Shared validation for propose* functions.
+    /// @dev Reverts on zero address.  If a prior proposal exists for this role,
+    ///      emits RoleChangeCancelled before the caller emits the new proposal.
+    /// @return effectiveAt Timestamp when the role change can be accepted
+    function _validateProposal(
+        address newAddress,
+        address currentPending,
+        uint64 delay,
+        Role role
+    ) internal returns (uint64 effectiveAt) {
+        if (newAddress == address(0)) revert Errors.ZeroAddress();
+        if (currentPending != address(0)) {
+            emit RoleChangeCancelled(address(this), role);
+        }
+        effectiveAt = uint64(block.timestamp) + _effectiveDelay(delay);
+    }
+
+    /// @notice Shared validation for accept* functions.
+    function _validateAccept(address pendingAddr, uint64 changeAt) internal view {
+        if (pendingAddr == address(0)) revert Errors.NoPendingRoleChange();
+        if (msg.sender != pendingAddr) revert Errors.NotPendingRole(msg.sender, pendingAddr);
+        if (block.timestamp < changeAt) {
+            revert Errors.RoleChangeTooEarly(changeAt, uint64(block.timestamp));
+        }
+    }
 
     /// @notice Get the total cumulative pending amount (before subtracting claimed)
     /// @return Total cumulative pending amount

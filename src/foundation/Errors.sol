@@ -560,6 +560,9 @@ library Errors {
     /// @notice No pending role change to accept or cancel
     error NoPendingRoleChange();
 
+    /// @notice Proposed role address is the same as the current holder
+    error RoleAlreadySet();
+
     // ========================================================================
     // GENERAL ERRORS
     // ========================================================================
