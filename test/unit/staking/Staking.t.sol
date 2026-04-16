@@ -1136,9 +1136,7 @@ contract StakingTest is Test {
         vm.expectEmit(true, true, false, true);
         emit IStakePool.RoleChangeCancelled(pool, IStakePool.Role.Operator);
         vm.expectEmit(true, true, true, true);
-        emit IStakePool.RoleChangeProposed(
-            pool, IStakePool.Role.Operator, charlie, uint64(block.timestamp + 1 days)
-        );
+        emit IStakePool.RoleChangeProposed(pool, IStakePool.Role.Operator, charlie, uint64(block.timestamp + 1 days));
         IStakePool(pool).proposeOperator(charlie);
 
         // bob can no longer accept

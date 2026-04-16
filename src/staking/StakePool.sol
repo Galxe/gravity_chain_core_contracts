@@ -549,7 +549,10 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Shared validation for accept* functions.
-    function _validateAccept(address pendingAddr, uint64 changeAt) internal view {
+    function _validateAccept(
+        address pendingAddr,
+        uint64 changeAt
+    ) internal view {
         if (pendingAddr == address(0)) revert Errors.NoPendingRoleChange();
         if (msg.sender != pendingAddr) revert Errors.NotPendingRole(msg.sender, pendingAddr);
         if (block.timestamp < changeAt) {
