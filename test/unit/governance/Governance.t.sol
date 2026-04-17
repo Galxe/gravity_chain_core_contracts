@@ -146,6 +146,18 @@ contract GovernanceTest is Test {
         return staking.createPool{ value: amount }(poolOwner, poolOwner, poolOwner, poolOwner, lockedUntil);
     }
 
+    function _delegateVoter(
+        address poolOwner,
+        address pool,
+        address newVoter
+    ) internal {
+        vm.prank(poolOwner);
+        IStakePool(pool).proposeVoter(newVoter);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(newVoter);
+        IStakePool(pool).acceptVoter();
+    }
+
     function _computeExecutionHash(
         address target,
         bytes memory data
@@ -665,8 +677,7 @@ contract GovernanceTest is Test {
         // Alice creates pool and delegates voting to Bob
         address pool = _createStakePool(alice, 100 ether);
 
-        vm.prank(alice);
-        IStakePool(pool).setVoter(bob);
+        _delegateVoter(alice, pool, bob);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
@@ -987,8 +998,7 @@ contract GovernanceTest is Test {
         address bobPool = _createStakePool(bob, 50 ether);
 
         // Bob delegates voting to alice so she can vote with both pools
-        vm.prank(bob);
-        IStakePool(bobPool).setVoter(alice);
+        _delegateVoter(bob, bobPool, alice);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
@@ -1018,8 +1028,7 @@ contract GovernanceTest is Test {
         address bobPool = _createStakePool(bob, 50 ether);
 
         // Bob delegates voting to alice
-        vm.prank(bob);
-        IStakePool(bobPool).setVoter(alice);
+        _delegateVoter(bob, bobPool, alice);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
@@ -1070,8 +1079,7 @@ contract GovernanceTest is Test {
         address bobPool = _createStakePool(bob, 50 ether);
 
         // Bob delegates voting to alice
-        vm.prank(bob);
-        IStakePool(bobPool).setVoter(alice);
+        _delegateVoter(bob, bobPool, alice);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
@@ -1101,8 +1109,7 @@ contract GovernanceTest is Test {
         address bobPool = _createStakePool(bob, 20 ether);
 
         // Bob delegates voting to alice
-        vm.prank(bob);
-        IStakePool(bobPool).setVoter(alice);
+        _delegateVoter(bob, bobPool, alice);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
@@ -1216,8 +1223,7 @@ contract GovernanceTest is Test {
         address bobPool = _createStakePool(bob, 50 ether);
 
         // Bob delegates voting to alice
-        vm.prank(bob);
-        IStakePool(bobPool).setVoter(alice);
+        _delegateVoter(bob, bobPool, alice);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 

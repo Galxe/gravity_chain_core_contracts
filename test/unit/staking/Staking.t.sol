@@ -891,91 +891,313 @@ contract StakingTest is Test {
     // STAKE POOL TESTS - Owner Functions (Role Management)
     // ========================================================================
 
-    function test_setOperator_changesOperator() public {
+    // ── Operator: propose → accept ────────────────────────────────────
+
+    function test_proposeOperator_and_acceptOperator() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        IStakePool(pool).setOperator(bob);
+        IStakePool(pool).proposeOperator(bob);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        IStakePool(pool).acceptOperator();
 
         assertEq(IStakePool(pool).getOperator(), bob);
     }
 
-    function test_setOperator_emitsOperatorChangedEvent() public {
+    function test_proposeOperator_emitsRoleChangeProposed() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        vm.expectEmit(true, false, false, true);
-        emit IStakePool.OperatorChanged(pool, alice, bob);
-        IStakePool(pool).setOperator(bob);
+        vm.expectEmit(true, true, true, true);
+        emit IStakePool.RoleChangeProposed(pool, IStakePool.Role.Operator, bob, uint64(block.timestamp + 1 days));
+        IStakePool(pool).proposeOperator(bob);
     }
 
-    function test_RevertWhen_setOperator_notOwner() public {
+    function test_acceptOperator_emitsOperatorChanged() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        vm.expectEmit(true, false, false, true);
+        emit IStakePool.OperatorChanged(pool, alice, bob);
+        IStakePool(pool).acceptOperator();
+    }
+
+    function test_RevertWhen_proposeOperator_notOwner() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
-        IStakePool(pool).setOperator(charlie);
+        IStakePool(pool).proposeOperator(charlie);
     }
 
-    function test_setVoter_changesVoter() public {
+    function test_RevertWhen_acceptOperator_tooEarly() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        IStakePool(pool).setVoter(bob);
+        IStakePool(pool).proposeOperator(bob);
+
+        vm.prank(bob);
+        vm.expectRevert();
+        IStakePool(pool).acceptOperator();
+    }
+
+    function test_RevertWhen_acceptOperator_wrongCaller() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(charlie);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotPendingRole.selector, charlie, bob));
+        IStakePool(pool).acceptOperator();
+    }
+
+    function test_cancelOperatorChange() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        vm.prank(alice);
+        IStakePool(pool).cancelOperatorChange();
+
+        // Should revert since pending was cleared
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        vm.expectRevert(Errors.NoPendingRoleChange.selector);
+        IStakePool(pool).acceptOperator();
+    }
+
+    // ── Voter: propose → accept ─────────────────────────────────────
+
+    function test_proposeVoter_and_acceptVoter() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        IStakePool(pool).proposeVoter(bob);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        IStakePool(pool).acceptVoter();
 
         assertEq(IStakePool(pool).getVoter(), bob);
     }
 
-    function test_setVoter_emitsVoterChangedEvent() public {
-        vm.prank(alice);
-        address pool = _createPool(alice, MIN_STAKE);
-
-        vm.prank(alice);
-        vm.expectEmit(true, false, false, true);
-        emit IStakePool.VoterChanged(pool, alice, bob);
-        IStakePool(pool).setVoter(bob);
-    }
-
-    function test_RevertWhen_setVoter_notOwner() public {
+    function test_RevertWhen_proposeVoter_notOwner() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
-        IStakePool(pool).setVoter(charlie);
+        IStakePool(pool).proposeVoter(charlie);
     }
 
-    function test_setStaker_changesStaker() public {
+    // ── Staker: propose → accept (with pending withdrawal guard) ────
+
+    function test_proposeStaker_and_acceptStaker() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(alice);
-        IStakePool(pool).setStaker(bob);
+        IStakePool(pool).proposeStaker(bob);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        IStakePool(pool).acceptStaker();
 
         assertEq(IStakePool(pool).getStaker(), bob);
     }
 
-    function test_setStaker_emitsStakerChangedEvent() public {
-        vm.prank(alice);
-        address pool = _createPool(alice, MIN_STAKE);
-
-        vm.prank(alice);
-        vm.expectEmit(true, false, false, true);
-        emit IStakePool.StakerChanged(pool, alice, bob);
-        IStakePool(pool).setStaker(bob);
-    }
-
-    function test_RevertWhen_setStaker_notOwner() public {
+    function test_RevertWhen_proposeStaker_notOwner() public {
         vm.prank(alice);
         address pool = _createPool(alice, MIN_STAKE);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
-        IStakePool(pool).setStaker(charlie);
+        IStakePool(pool).proposeStaker(charlie);
+    }
+
+    function test_RevertWhen_acceptStaker_hasPendingWithdrawals() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        // Unstake some to create pending withdrawal
+        vm.prank(alice);
+        IStakePool(pool).unstake(1 ether);
+
+        // Propose new staker
+        vm.prank(alice);
+        IStakePool(pool).proposeStaker(bob);
+
+        // Warp past delay
+        vm.warp(block.timestamp + 1 days);
+
+        // Should revert due to pending withdrawals
+        vm.prank(bob);
+        vm.expectRevert();
+        IStakePool(pool).acceptStaker();
+    }
+
+    // ── Role change delay configuration ─────────────────────────────
+
+    function test_setOperatorChangeDelay() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        IStakePool(pool).setOperatorChangeDelay(14 days);
+
+        // Propose with new 14-day delay
+        uint256 proposeTime = block.timestamp;
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        // 7 days is no longer enough
+        vm.warp(proposeTime + 7 days);
+        vm.prank(bob);
+        vm.expectRevert();
+        IStakePool(pool).acceptOperator();
+
+        // 14 days works
+        vm.warp(proposeTime + 14 days);
+        vm.prank(bob);
+        IStakePool(pool).acceptOperator();
+        assertEq(IStakePool(pool).getOperator(), bob);
+    }
+
+    function test_RevertWhen_setChangeDelay_belowMinimum() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.RoleChangeDelayTooShort.selector, uint64(1 hours), uint64(1 days))
+        );
+        IStakePool(pool).setStakerChangeDelay(1 hours);
+    }
+
+    // ── Edge-case: propose current role holder reverts ──────────────────
+
+    function test_RevertWhen_proposeOperator_sameAsCurrent() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        // alice is already the operator (set by _createPool)
+        vm.prank(alice);
+        vm.expectRevert(Errors.RoleAlreadySet.selector);
+        IStakePool(pool).proposeOperator(alice);
+    }
+
+    function test_RevertWhen_proposeStaker_sameAsCurrent() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.RoleAlreadySet.selector);
+        IStakePool(pool).proposeStaker(alice);
+    }
+
+    function test_RevertWhen_proposeVoter_sameAsCurrent() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.RoleAlreadySet.selector);
+        IStakePool(pool).proposeVoter(alice);
+    }
+
+    // ── Edge-case: re-propose emits cancellation then new proposal ──────
+
+    function test_repropose_emitsCancelThenPropose() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        // First proposal
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        // Re-propose with charlie — should emit cancel for bob, then propose for charlie
+        vm.prank(alice);
+        vm.expectEmit(true, true, false, true);
+        emit IStakePool.RoleChangeCancelled(pool, IStakePool.Role.Operator);
+        vm.expectEmit(true, true, true, true);
+        emit IStakePool.RoleChangeProposed(pool, IStakePool.Role.Operator, charlie, uint64(block.timestamp + 1 days));
+        IStakePool(pool).proposeOperator(charlie);
+
+        // bob can no longer accept
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.NotPendingRole.selector, bob, charlie));
+        IStakePool(pool).acceptOperator();
+
+        // charlie can accept
+        vm.prank(charlie);
+        IStakePool(pool).acceptOperator();
+        assertEq(IStakePool(pool).getOperator(), charlie);
+    }
+
+    // ── Edge-case: delay change does not affect in-flight proposal ──────
+
+    function test_delayChangeDoesNotAffectInflightProposal() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        // Propose with default 1-day delay
+        uint256 proposeTime = block.timestamp;
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        // Owner increases delay to 14 days — should NOT affect the in-flight proposal
+        vm.prank(alice);
+        IStakePool(pool).setOperatorChangeDelay(14 days);
+
+        // Original 1-day delay should still work for the existing proposal
+        vm.warp(proposeTime + 1 days);
+        vm.prank(bob);
+        IStakePool(pool).acceptOperator();
+        assertEq(IStakePool(pool).getOperator(), bob);
+    }
+
+    // ── Edge-case: ownership transfer mid-proposal ──────────────────────
+
+    function test_ownershipTransferMidProposal_newOwnerCanCancel() public {
+        vm.prank(alice);
+        address pool = _createPool(alice, MIN_STAKE);
+
+        // alice proposes operator change
+        vm.prank(alice);
+        IStakePool(pool).proposeOperator(bob);
+
+        // alice transfers ownership to charlie (2-step)
+        vm.prank(alice);
+        Ownable2Step(pool).transferOwnership(charlie);
+        vm.prank(charlie);
+        Ownable2Step(pool).acceptOwnership();
+
+        // charlie (new owner) should be able to cancel the pending change
+        vm.prank(charlie);
+        IStakePool(pool).cancelOperatorChange();
+
+        // bob can no longer accept
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(bob);
+        vm.expectRevert(Errors.NoPendingRoleChange.selector);
+        IStakePool(pool).acceptOperator();
     }
 
     // ========================================================================

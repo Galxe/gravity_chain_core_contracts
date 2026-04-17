@@ -37,6 +37,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     /// @notice Maximum number of pending withdrawal buckets
     uint256 public constant MAX_PENDING_BUCKETS = 1000;
 
+    /// @notice Minimum allowed role change delay (cannot set roleChangeDelay below this)
+    uint64 public constant MIN_ROLE_CHANGE_DELAY = 1 days;
+
     // ========================================================================
     // IMMUTABLES
     // ========================================================================
@@ -70,6 +73,23 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     /// @notice Cumulative amount that has been claimed from pending buckets
     /// @dev Acts as a claim pointer - no need to delete buckets
     uint256 public claimedAmount;
+
+    /// @notice Pending staker role change
+    address public pendingStaker;
+    uint64 public stakerChangeAt;
+
+    /// @notice Pending operator role change
+    address public pendingOperator;
+    uint64 public operatorChangeAt;
+
+    /// @notice Pending voter role change
+    address public pendingVoter;
+    uint64 public voterChangeAt;
+
+    /// @notice Per-role configurable delays (seconds)
+    uint64 public stakerChangeDelay;
+    uint64 public operatorChangeDelay;
+    uint64 public voterChangeDelay;
 
     // ========================================================================
     // MODIFIERS
@@ -111,7 +131,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     /// @param _operator Operator address (for validator operations)
     /// @param _voter Voter address (for governance voting)
     /// @param _lockedUntil Initial lockup expiration (must be >= now + minLockup)
-    /// @dev Called by factory during CREATE2 deployment
+    /// @dev Called by factory during CREATE2 deployment.
+    ///      Role change delays default to DEFAULT_ROLE_CHANGE_DELAY (1 day).
+    ///      Owner can adjust via setRoleChangeDelay() / setMinRoleChangeDelay() after creation.
     constructor(
         address _owner,
         address _staker,
@@ -133,6 +155,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         voter = _voter;
         lockedUntil = _lockedUntil;
         activeStake = msg.value;
+        stakerChangeDelay = MIN_ROLE_CHANGE_DELAY;
+        operatorChangeDelay = MIN_ROLE_CHANGE_DELAY;
+        voterChangeDelay = MIN_ROLE_CHANGE_DELAY;
 
         emit StakeAdded(address(this), msg.value);
     }
@@ -163,11 +188,9 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
 
     /// @inheritdoc IStakePool
     function getTotalPending() external view returns (uint256) {
-        if (_pendingBuckets.length == 0) {
-            return 0;
-        }
-        // Total pending = last bucket's cumulativeAmount - claimedAmount
-        return _pendingBuckets[_pendingBuckets.length - 1].cumulativeAmount - claimedAmount;
+        uint256 total = _totalPendingAmount();
+        if (total <= claimedAmount) return 0;
+        return total - claimedAmount;
     }
 
     /// @inheritdoc IStakePool
@@ -242,37 +265,136 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
 
-    /// @inheritdoc IStakePool
-    function setOperator(
-        address newOperator
-    ) external onlyOwner {
-        if (newOperator == address(0)) revert Errors.ZeroAddress();
-        if (newOperator == operator) return; // Skip no-op
-        address oldOperator = operator;
-        operator = newOperator;
-        emit OperatorChanged(address(this), oldOperator, newOperator);
-    }
+    // ── Staker role change (2-step + timelock + pending withdrawal guard) ──
 
     /// @inheritdoc IStakePool
-    function setVoter(
-        address newVoter
-    ) external onlyOwner {
-        if (newVoter == address(0)) revert Errors.ZeroAddress();
-        if (newVoter == voter) return; // Skip no-op
-        address oldVoter = voter;
-        voter = newVoter;
-        emit VoterChanged(address(this), oldVoter, newVoter);
-    }
-
-    /// @inheritdoc IStakePool
-    function setStaker(
+    function proposeStaker(
         address newStaker
     ) external onlyOwner {
-        if (newStaker == address(0)) revert Errors.ZeroAddress();
-        if (newStaker == staker) return; // Skip no-op
+        if (newStaker == staker) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newStaker, pendingStaker, stakerChangeDelay, Role.Staker);
+        pendingStaker = newStaker;
+        stakerChangeAt = effectiveAt;
+        emit RoleChangeProposed(address(this), Role.Staker, newStaker, effectiveAt);
+    }
+
+    /// @inheritdoc IStakePool
+    function acceptStaker() external {
+        _validateAccept(pendingStaker, stakerChangeAt);
+
+        // Guard: no unclaimed pending withdrawals from the old staker
+        uint256 totalPending = _totalPendingAmount();
+        if (totalPending > claimedAmount) revert Errors.HasPendingWithdrawals(totalPending - claimedAmount);
+
         address oldStaker = staker;
-        staker = newStaker;
-        emit StakerChanged(address(this), oldStaker, newStaker);
+        staker = pendingStaker;
+        pendingStaker = address(0);
+        stakerChangeAt = 0;
+        emit StakerChanged(address(this), oldStaker, staker);
+    }
+
+    /// @inheritdoc IStakePool
+    function cancelStakerChange() external onlyOwner {
+        if (pendingStaker == address(0)) revert Errors.NoPendingRoleChange();
+        pendingStaker = address(0);
+        stakerChangeAt = 0;
+        emit RoleChangeCancelled(address(this), Role.Staker);
+    }
+
+    // ── Operator role change (2-step + timelock) ────────────────────────
+
+    /// @inheritdoc IStakePool
+    function proposeOperator(
+        address newOperator
+    ) external onlyOwner {
+        if (newOperator == operator) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newOperator, pendingOperator, operatorChangeDelay, Role.Operator);
+        pendingOperator = newOperator;
+        operatorChangeAt = effectiveAt;
+        emit RoleChangeProposed(address(this), Role.Operator, newOperator, effectiveAt);
+    }
+
+    /// @inheritdoc IStakePool
+    function acceptOperator() external {
+        _validateAccept(pendingOperator, operatorChangeAt);
+
+        address oldOperator = operator;
+        operator = pendingOperator;
+        pendingOperator = address(0);
+        operatorChangeAt = 0;
+        emit OperatorChanged(address(this), oldOperator, operator);
+    }
+
+    /// @inheritdoc IStakePool
+    function cancelOperatorChange() external onlyOwner {
+        if (pendingOperator == address(0)) revert Errors.NoPendingRoleChange();
+        pendingOperator = address(0);
+        operatorChangeAt = 0;
+        emit RoleChangeCancelled(address(this), Role.Operator);
+    }
+
+    // ── Voter role change (2-step + timelock) ───────────────────────────
+
+    /// @inheritdoc IStakePool
+    function proposeVoter(
+        address newVoter
+    ) external onlyOwner {
+        if (newVoter == voter) revert Errors.RoleAlreadySet();
+        uint64 effectiveAt = _validateProposal(newVoter, pendingVoter, voterChangeDelay, Role.Voter);
+        pendingVoter = newVoter;
+        voterChangeAt = effectiveAt;
+        emit RoleChangeProposed(address(this), Role.Voter, newVoter, effectiveAt);
+    }
+
+    /// @inheritdoc IStakePool
+    function acceptVoter() external {
+        _validateAccept(pendingVoter, voterChangeAt);
+
+        address oldVoter = voter;
+        voter = pendingVoter;
+        pendingVoter = address(0);
+        voterChangeAt = 0;
+        emit VoterChanged(address(this), oldVoter, voter);
+    }
+
+    /// @inheritdoc IStakePool
+    function cancelVoterChange() external onlyOwner {
+        if (pendingVoter == address(0)) revert Errors.NoPendingRoleChange();
+        pendingVoter = address(0);
+        voterChangeAt = 0;
+        emit RoleChangeCancelled(address(this), Role.Voter);
+    }
+
+    // ── Role change delay configuration ─────────────────────────────────
+
+    /// @inheritdoc IStakePool
+    function setStakerChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
+        if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
+        uint64 oldDelay = stakerChangeDelay;
+        stakerChangeDelay = newDelay;
+        emit RoleChangeDelayUpdated(address(this), Role.Staker, oldDelay, newDelay);
+    }
+
+    /// @inheritdoc IStakePool
+    function setOperatorChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
+        if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
+        uint64 oldDelay = operatorChangeDelay;
+        operatorChangeDelay = newDelay;
+        emit RoleChangeDelayUpdated(address(this), Role.Operator, oldDelay, newDelay);
+    }
+
+    /// @inheritdoc IStakePool
+    function setVoterChangeDelay(
+        uint64 newDelay
+    ) external onlyOwner {
+        if (newDelay < MIN_ROLE_CHANGE_DELAY) revert Errors.RoleChangeDelayTooShort(newDelay, MIN_ROLE_CHANGE_DELAY);
+        uint64 oldDelay = voterChangeDelay;
+        voterChangeDelay = newDelay;
+        emit RoleChangeDelayUpdated(address(this), Role.Voter, oldDelay, newDelay);
     }
 
     // ========================================================================
@@ -398,6 +520,52 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
     // ========================================================================
     // INTERNAL FUNCTIONS
     // ========================================================================
+
+    /// @notice Returns the effective delay, treating 0 as MIN_ROLE_CHANGE_DELAY.
+    /// @dev On hardfork-upgraded pools the constructor does not run, so delay slots
+    ///      remain at 0.  This lazy default ensures the timelock is always enforced
+    ///      without requiring a state-patching step in the fork's apply function.
+    function _effectiveDelay(
+        uint64 delay
+    ) internal pure returns (uint64) {
+        return delay == 0 ? MIN_ROLE_CHANGE_DELAY : delay;
+    }
+
+    /// @notice Shared validation for propose* functions.
+    /// @dev Reverts on zero address.  If a prior proposal exists for this role,
+    ///      emits RoleChangeCancelled before the caller emits the new proposal.
+    /// @return effectiveAt Timestamp when the role change can be accepted
+    function _validateProposal(
+        address newAddress,
+        address currentPending,
+        uint64 delay,
+        Role role
+    ) internal returns (uint64 effectiveAt) {
+        if (newAddress == address(0)) revert Errors.ZeroAddress();
+        if (currentPending != address(0)) {
+            emit RoleChangeCancelled(address(this), role);
+        }
+        effectiveAt = uint64(block.timestamp) + _effectiveDelay(delay);
+    }
+
+    /// @notice Shared validation for accept* functions.
+    function _validateAccept(
+        address pendingAddr,
+        uint64 changeAt
+    ) internal view {
+        if (pendingAddr == address(0)) revert Errors.NoPendingRoleChange();
+        if (msg.sender != pendingAddr) revert Errors.NotPendingRole(msg.sender, pendingAddr);
+        if (block.timestamp < changeAt) {
+            revert Errors.RoleChangeTooEarly(changeAt, uint64(block.timestamp));
+        }
+    }
+
+    /// @notice Get the total cumulative pending amount (before subtracting claimed)
+    /// @return Total cumulative pending amount
+    function _totalPendingAmount() internal view returns (uint256) {
+        if (_pendingBuckets.length == 0) return 0;
+        return _pendingBuckets[_pendingBuckets.length - 1].cumulativeAmount;
+    }
 
     /// @notice Internal unstake implementation
     /// @param amount Amount to unstake

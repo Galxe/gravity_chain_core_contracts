@@ -535,6 +535,35 @@ library Errors {
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
 
     // ========================================================================
+    // ROLE CHANGE ERRORS
+    // ========================================================================
+
+    /// @notice Role change delay is below the minimum allowed
+    /// @param provided Delay provided (seconds)
+    /// @param minimum Minimum allowed delay (seconds)
+    error RoleChangeDelayTooShort(uint64 provided, uint64 minimum);
+
+    /// @notice Role change has not reached the required delay
+    /// @param effectiveAt When the role change becomes effective (timestamp)
+    /// @param currentTime Current block timestamp
+    error RoleChangeTooEarly(uint64 effectiveAt, uint64 currentTime);
+
+    /// @notice Caller is not the pending role recipient
+    /// @param caller Actual caller address
+    /// @param expected Expected pending role address
+    error NotPendingRole(address caller, address expected);
+
+    /// @notice Cannot change staker while there are unclaimed pending withdrawals
+    /// @param pendingAmount Total unclaimed pending withdrawal amount
+    error HasPendingWithdrawals(uint256 pendingAmount);
+
+    /// @notice No pending role change to accept or cancel
+    error NoPendingRoleChange();
+
+    /// @notice Proposed role address is the same as the current holder
+    error RoleAlreadySet();
+
+    // ========================================================================
     // GENERAL ERRORS
     // ========================================================================
 

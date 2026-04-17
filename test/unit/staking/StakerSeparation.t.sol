@@ -115,40 +115,47 @@ contract StakerSeparationTest is Test {
         IStakePool(pool).addStake{ value: 1 ether }();
     }
 
-    function test_setStaker_OnlyOwnerSucceeds() public {
+    function test_proposeStaker_OnlyOwnerSucceeds() public {
         address pool = _createDistinctPool();
         address newStaker = makeAddr("newStaker");
 
-        // Staker cannot rotate itself
+        // Staker cannot propose
         vm.prank(stakerAddr);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stakerAddr));
-        IStakePool(pool).setStaker(newStaker);
+        IStakePool(pool).proposeStaker(newStaker);
 
-        // Operator cannot
+        // Operator cannot propose
         vm.prank(operatorAddr);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, operatorAddr));
-        IStakePool(pool).setStaker(newStaker);
+        IStakePool(pool).proposeStaker(newStaker);
 
-        // Owner succeeds
+        // Owner proposes, new staker accepts after delay
         vm.prank(ownerAddr);
-        IStakePool(pool).setStaker(newStaker);
-        assertEq(IStakePool(pool).getStaker(), newStaker, "setStaker did not apply");
+        IStakePool(pool).proposeStaker(newStaker);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(newStaker);
+        IStakePool(pool).acceptStaker();
+        assertEq(IStakePool(pool).getStaker(), newStaker, "proposeStaker did not apply");
     }
 
-    function test_setOperator_OnlyOwnerSucceeds() public {
+    function test_proposeOperator_OnlyOwnerSucceeds() public {
         address pool = _createDistinctPool();
         address newOperator = makeAddr("newOperator");
 
         vm.prank(operatorAddr);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, operatorAddr));
-        IStakePool(pool).setOperator(newOperator);
+        IStakePool(pool).proposeOperator(newOperator);
 
         vm.prank(stakerAddr);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stakerAddr));
-        IStakePool(pool).setOperator(newOperator);
+        IStakePool(pool).proposeOperator(newOperator);
 
+        // Owner proposes, new operator accepts after delay
         vm.prank(ownerAddr);
-        IStakePool(pool).setOperator(newOperator);
-        assertEq(IStakePool(pool).getOperator(), newOperator, "setOperator did not apply");
+        IStakePool(pool).proposeOperator(newOperator);
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(newOperator);
+        IStakePool(pool).acceptOperator();
+        assertEq(IStakePool(pool).getOperator(), newOperator, "proposeOperator did not apply");
     }
 }

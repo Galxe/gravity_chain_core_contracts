@@ -16,6 +16,17 @@ pragma solidity ^0.8.30;
 ///      - All operations are O(log n) using prefix-sum buckets with binary search
 interface IStakePool {
     // ========================================================================
+    // ENUMS
+    // ========================================================================
+
+    /// @notice Role identifier for role-change events and helpers
+    enum Role {
+        Staker,
+        Operator,
+        Voter
+    }
+
+    // ========================================================================
     // STRUCTS
     // ========================================================================
 
@@ -73,6 +84,25 @@ interface IStakePool {
     /// @param oldStaker Previous staker address
     /// @param newStaker New staker address
     event StakerChanged(address indexed pool, address oldStaker, address newStaker);
+
+    /// @notice Emitted when a role change is proposed
+    /// @param pool Address of this pool
+    /// @param role The role being changed
+    /// @param newAddress Proposed new address for the role
+    /// @param effectiveAt Timestamp when the change can be accepted
+    event RoleChangeProposed(address indexed pool, Role indexed role, address indexed newAddress, uint64 effectiveAt);
+
+    /// @notice Emitted when a pending role change is cancelled
+    /// @param pool Address of this pool
+    /// @param role The role whose change was cancelled
+    event RoleChangeCancelled(address indexed pool, Role indexed role);
+
+    /// @notice Emitted when a per-role change delay is updated
+    /// @param pool Address of this pool
+    /// @param role The role whose delay was changed
+    /// @param oldDelay Previous delay in seconds
+    /// @param newDelay New delay in seconds
+    event RoleChangeDelayUpdated(address indexed pool, Role indexed role, uint64 oldDelay, uint64 newDelay);
 
     /// @notice Emitted when rewards are withdrawn
     /// @param pool Address of this pool
@@ -167,25 +197,71 @@ interface IStakePool {
     // OWNER FUNCTIONS (via Ownable2Step)
     // ========================================================================
 
-    /// @notice Change the operator address
+    /// @notice Propose a new staker address (starts timelock)
+    /// @dev Only callable by owner. The new staker must call acceptStaker() after the delay.
+    /// @param newStaker Proposed new staker address
+    function proposeStaker(
+        address newStaker
+    ) external;
+
+    /// @notice Accept the pending staker role change
+    /// @dev Only callable by the pending staker, after the timelock delay has elapsed.
+    ///      Reverts if there are unclaimed pending withdrawals (protects old staker's funds).
+    function acceptStaker() external;
+
+    /// @notice Cancel the pending staker change
     /// @dev Only callable by owner
-    /// @param newOperator New operator address
-    function setOperator(
+    function cancelStakerChange() external;
+
+    /// @notice Propose a new operator address (starts timelock)
+    /// @dev Only callable by owner. The new operator must call acceptOperator() after the delay.
+    /// @param newOperator Proposed new operator address
+    function proposeOperator(
         address newOperator
     ) external;
 
-    /// @notice Change the delegated voter address
+    /// @notice Accept the pending operator role change
+    /// @dev Only callable by the pending operator, after the timelock delay has elapsed.
+    function acceptOperator() external;
+
+    /// @notice Cancel the pending operator change
     /// @dev Only callable by owner
-    /// @param newVoter New voter address
-    function setVoter(
+    function cancelOperatorChange() external;
+
+    /// @notice Propose a new voter address (starts timelock)
+    /// @dev Only callable by owner. The new voter must call acceptVoter() after the delay.
+    /// @param newVoter Proposed new voter address
+    function proposeVoter(
         address newVoter
     ) external;
 
-    /// @notice Change the staker address
+    /// @notice Accept the pending voter role change
+    /// @dev Only callable by the pending voter, after the timelock delay has elapsed.
+    function acceptVoter() external;
+
+    /// @notice Cancel the pending voter change
     /// @dev Only callable by owner
-    /// @param newStaker New staker address
-    function setStaker(
-        address newStaker
+    function cancelVoterChange() external;
+
+    /// @notice Update the staker role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setStakerChangeDelay(
+        uint64 newDelay
+    ) external;
+
+    /// @notice Update the operator role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setOperatorChangeDelay(
+        uint64 newDelay
+    ) external;
+
+    /// @notice Update the voter role change delay
+    /// @dev Only callable by owner. Cannot be set below MIN_ROLE_CHANGE_DELAY.
+    /// @param newDelay New delay in seconds
+    function setVoterChangeDelay(
+        uint64 newDelay
     ) external;
 
     // ========================================================================
