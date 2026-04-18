@@ -315,6 +315,12 @@ library Errors {
     /// @param proposalId ID of the unresolved proposal
     error ProposalNotResolved(uint64 proposalId);
 
+    /// @notice A proposal cannot target the Governance contract itself.
+    /// @dev Prevents a passing proposal from calling transferOwnership / addExecutor / removeExecutor
+    ///      on Governance via execute(), which would escalate or transfer control.
+    /// @param index Index of the offending target in the proposal batch
+    error ProposalTargetsGovernance(uint256 index);
+
     // ========================================================================
     // TIMESTAMP ERRORS
     // ========================================================================
@@ -533,6 +539,10 @@ library Errors {
     /// @param index The requested index
     /// @param count The total number of providers
     error JWKProviderIndexOutOfBounds(uint256 index, uint256 count);
+
+    /// @notice JWK failed structural validation (empty issuer, kid, modulus, or exponent)
+    /// @param issuer The issuer URL of the offending entry
+    error InvalidJWK(bytes issuer);
 
     // ========================================================================
     // ROLE CHANGE ERRORS

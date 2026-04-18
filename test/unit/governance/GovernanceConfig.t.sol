@@ -266,7 +266,7 @@ contract GovernanceConfigTest is Test {
         uint64 votingDurationMicros
     ) public {
         vm.assume(minVotingThreshold > 0 && minVotingThreshold < type(uint128).max);
-        vm.assume(requiredProposerStake > 0 && requiredProposerStake < type(uint256).max);
+        vm.assume(requiredProposerStake > 0 && requiredProposerStake <= type(uint128).max);
         vm.assume(votingDurationMicros >= GOV_MIN_VOTING_DURATION && votingDurationMicros <= GOV_MAX_VOTING_DURATION);
 
         vm.prank(SystemAddresses.GENESIS);
@@ -285,7 +285,7 @@ contract GovernanceConfigTest is Test {
         _initializeConfig();
 
         vm.assume(minVotingThreshold > 0 && minVotingThreshold < type(uint128).max);
-        vm.assume(requiredProposerStake > 0 && requiredProposerStake < type(uint256).max);
+        vm.assume(requiredProposerStake > 0 && requiredProposerStake <= type(uint128).max);
         vm.assume(
             votingDurationMicros >= config.MIN_VOTING_DURATION() && votingDurationMicros <= config.MAX_VOTING_DURATION()
         );

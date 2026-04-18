@@ -200,8 +200,10 @@ contract GovernanceConfig {
         if (_requiredProposerStake == 0) {
             revert Errors.InvalidProposerStake();
         }
-        // Prevent setting proposer stake to type(uint256).max which would block all proposals
-        if (_requiredProposerStake == type(uint256).max) {
+        // Pool voting power is clamped to uint128 in Governance.getRemainingVotingPower, so any
+        // requiredProposerStake above uint128.max is unreachable — effectively blocking all new
+        // proposals and freezing governance. Reject such values.
+        if (_requiredProposerStake > type(uint128).max) {
             revert Errors.ExcessiveRequiredProposerStake();
         }
         if (_votingDurationMicros < MIN_VOTING_DURATION) {
