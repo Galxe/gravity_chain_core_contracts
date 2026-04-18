@@ -214,17 +214,20 @@ Gravity Core Contracts form the on-chain infrastructure for the Gravity blockcha
 
 ## Quick Reference
 
-| Layer | Contracts | System Address(es) |
-|-------|-----------|-------------------|
-| Foundation | SystemAddresses, Types, Errors | — |
-| Runtime | Timestamp, StakingConfig, ValidatorConfig, etc. | `0x...2017`, `0x...2011`, `0x...2015` |
-| Staking | Staking, StakePool | `0x...2012` |
-| Validator | ValidatorManagement | `0x...2013` |
-| Blocker | Blocker, Reconfiguration | `0x...2016`, `0x...2010` |
-| Governance | Governance, GovernanceConfig | `0x...2014`, `0x...2026` |
-| Oracle | NativeOracle | `0x...2023` |
+| Layer       | Contracts                                                                                         | System Address Range   |
+|-------------|---------------------------------------------------------------------------------------------------|------------------------|
+| Foundation  | SystemAddresses, Types, Errors, SystemAccessControl                                               | — (libraries)          |
+| Runtime     | Timestamp, StakingConfig, ValidatorConfig, RandomnessConfig, GovernanceConfig, EpochConfig, VersionConfig, ConsensusConfig, ExecutionConfig, OracleTaskConfig, OnDemandOracleTaskConfig | `0x...1625F1xxx`       |
+| Staking     | Staking (factory), StakePool                                                                      | `0x...1625F2000`       |
+| Validator   | ValidatorManagement, DKG                                                                          | `0x...1625F2001`, `...2002` |
+| Blocker     | Reconfiguration, Blocker, ValidatorPerformanceTracker                                             | `0x...1625F2003-2005`  |
+| Governance  | Governance (GovernanceConfig lives in Runtime)                                                    | `0x...1625F3000`       |
+| Oracle      | NativeOracle, JWKManager, OracleRequestQueue, EVM bridge components                               | `0x...1625F4xxx`       |
+| Precompiles | NativeMint, BLS12-381 PoP verify                                                                  | `0x...1625F5xxx`       |
 
-*All addresses follow the `0x...1625F2xxx` pattern reserved at genesis.*
+*System addresses are grouped by layer: `0x1625F0xxx` consensus/caller, `0x1625F1xxx` runtime configs,
+`0x1625F2xxx` staking & validator, `0x1625F3xxx` governance, `0x1625F4xxx` oracle, `0x1625F5xxx` precompiles.
+See [foundation.spec.md](./foundation.spec.md) for the full table.*
 
 ---
 

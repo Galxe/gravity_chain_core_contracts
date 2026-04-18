@@ -99,8 +99,8 @@ flowchart TD
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `BLOCK` | `0x0000000000000000000000000001625F2016` | Blocker contract |
-| `RECONFIGURATION` | `0x0000000000000000000000000001625F2010` | Reconfiguration contract |
+| `RECONFIGURATION` | `0x0000000000000000000000000001625F2003` | Reconfiguration contract |
+| `BLOCK` | `0x0000000000000000000000000001625F2004` | Blocker contract |
 | `PERFORMANCE_TRACKER` | `0x0000000000000000000000000001625F2005` | Validator performance tracker |
 
 ---
@@ -126,7 +126,7 @@ Central orchestrator for epoch transitions. Coordinates with DKG, RandomnessConf
 ### State Variables
 
 ```solidity
-/// @notice Current epoch number (starts at 0)
+/// @notice Current epoch number (starts at 1 after genesis initialization)
 uint64 public currentEpoch;
 
 /// @notice Timestamp of last reconfiguration (microseconds)
@@ -142,7 +142,7 @@ uint64 private _transitionStartedAtEpoch;
 bool private _initialized;
 ```
 
-> **Note**: `epochIntervalMicros` is now stored in `EpochConfig` (Runtime layer), not in Reconfiguration.
+> **Note**: `epochIntervalMicros` is stored in `EpochConfig` (Runtime layer), not in Reconfiguration. On genesis, `initialize()` sets `currentEpoch = 1` and emits `EpochTransitioned(0, timestamp)` for the genesis block.
 
 ### Interface
 
@@ -156,6 +156,12 @@ interface IReconfiguration {
     // Events
     event EpochTransitionStarted(uint64 indexed epoch);
     event EpochTransitioned(uint64 indexed newEpoch, uint64 transitionTime);
+    event NewEpochEvent(
+        uint64 indexed epoch,
+        ValidatorConsensusInfo[] validators,
+        uint256 totalVotingPower,
+        uint64 timestampMicros
+    );
 
     // Initialization
     function initialize() external;
@@ -163,6 +169,7 @@ interface IReconfiguration {
     // Transition Control
     function checkAndStartTransition() external returns (bool started);
     function finishTransition(bytes calldata dkgResult) external;
+    function governanceReconfigure() external;
 
     // View Functions
     function currentEpoch() external view returns (uint64);
@@ -187,12 +194,12 @@ Initialize the contract at genesis.
 **Access Control**: GENESIS only
 
 **Behavior**:
-1. Set `currentEpoch = 0`
+1. Set `currentEpoch = 1` (post-genesis active epoch)
 2. Set `lastReconfigurationTime` to current timestamp
 3. Set `transitionState = Idle`
-4. Emit `EpochTransitioned(0, timestamp)`
+4. Emit `EpochTransitioned(0, timestamp)` (epoch 0 = genesis marker)
 
-> **Note**: `epochIntervalMicros` is no longer set here; it is initialized separately in `EpochConfig`.
+> **Note**: `epochIntervalMicros` is not set here; it is initialized separately in `EpochConfig`.
 
 **Reverts**:
 - `AlreadyInitialized` - Contract already initialized
@@ -207,17 +214,15 @@ Check and start epoch transition if conditions are met.
 
 **Behavior**:
 1. If `transitionState == DkgInProgress`, return false (no-op)
-2. Check if time has elapsed: `currentTime >= lastReconfigurationTime + EpochConfig.epochIntervalMicros()`
-3. If not ready, return false
-4. Get current validator set from ValidatorManagement
-5. Get randomness config from RandomnessConfig
-6. Clear any stale DKG session
-7. Start DKG session with validators and config
-8. Set `transitionState = DkgInProgress`
-9. Emit `EpochTransitionStarted(currentEpoch)`
-10. Return true
+2. Check if time has elapsed: `currentTime >= lastReconfigurationTime + EpochConfig.epochIntervalMicros()`. If not, return false.
+3. **Evict underperforming validators** via `ValidatorManagement.evictUnderperformingValidators()` (uses the closing epoch's performance data, which is still available because the perf tracker has not yet been reset).
+4. Read randomness variant from `RandomnessConfig.getCurrentConfig()`.
+5. Branch:
+   - **If variant == Off (DKG disabled)**: call `_doImmediateReconfigure()` (clears any stale DKG session, then runs `_applyReconfiguration()` inline — no `EpochTransitionStarted` event, no state transition through `DkgInProgress`).
+   - **If variant != Off**: call `_startDkgSession(config)` — fetch dealer/target consensus infos, clear stale DKG session, `DKG.start(...)`, set `transitionState = DkgInProgress`, emit `EpochTransitionStarted(currentEpoch)`.
+6. Return true.
 
-**Returns**: `bool started` - True if DKG was started
+**Returns**: `bool started` - True if a transition was started (DKG path) or applied (immediate path).
 
 ---
 
@@ -225,34 +230,52 @@ Check and start epoch transition if conditions are met.
 
 Finish epoch transition after DKG completes.
 
-**Access Control**: SYSTEM_CALLER (consensus engine) or GOVERNANCE (governance)
+**Access Control**: SYSTEM_CALLER (consensus engine) or GOVERNANCE (force-end)
 
 **Parameters**:
-- `dkgResult` - DKG transcript (empty bytes for force-end or if DKG disabled)
+- `dkgResult` - DKG transcript (empty bytes = governance force-end without transcript)
 
 **Behavior**:
-1. Require `transitionState == DkgInProgress`
-2. If `dkgResult` is non-empty, finish DKG session
-3. Clear any incomplete DKG session
-4. Apply pending RandomnessConfig
-5. **Auto-evict underperforming validators** via `ValidatorManagement.evictUnderperformingValidators()`
-6. **Call `ValidatorManagement.onNewEpoch()` BEFORE incrementing epoch** (Aptos pattern)
-7. Reset `ValidatorPerformanceTracker.onNewEpoch(activeValidatorCount)`
-8. Increment epoch: `currentEpoch++`
-9. Update `lastReconfigurationTime`
-10. Set `transitionState = Idle`
-11. Emit `EpochTransitioned(newEpoch, timestamp)`
-
-> **Important**: The ordering matters:
-> - Config is applied first so that `autoEvictEnabled` reflects the latest governance decision
-> - Auto-eviction runs after config apply and before `onNewEpoch()` so evicted validators go ACTIVE → PENDING_INACTIVE here, then PENDING_INACTIVE → INACTIVE in `onNewEpoch()` — all within one epoch transition
-> - `ValidatorManagement.onNewEpoch()` is called before the epoch is incremented, matching Aptos's `reconfiguration.move`
-> - Performance tracker is reset after `onNewEpoch()` so perf data is available during epoch processing
+1. Require `transitionState == DkgInProgress`.
+2. If `dkgResult.length > 0`, call `DKG.finish(dkgResult)`.
+3. `DKG.tryClearIncompleteSession()`.
+4. Call `_applyReconfiguration()` (see below).
 
 **Reverts**:
 - `ReconfigurationNotInProgress` - No transition in progress
 
 ---
+
+### `governanceReconfigure()`
+
+Force an immediate reconfiguration from governance (bypasses the time check).
+
+**Access Control**: GOVERNANCE only
+
+**Behavior**:
+1. Require `transitionState != DkgInProgress` (if one is in progress, governance should call `finishTransition` instead). Revert with `ReconfigurationInProgress` otherwise.
+2. Evict underperforming validators.
+3. Read randomness variant.
+4. If `Off`, run `_doImmediateReconfigure()`; otherwise `_startDkgSession(config)` — governance must follow up with `finishTransition(...)`.
+
+---
+
+### `_applyReconfiguration()` (internal)
+
+Core reconfiguration body shared by `finishTransition()` and `_doImmediateReconfigure()`:
+
+1. **Apply pending configs** (order: RandomnessConfig → ConsensusConfig → ExecutionConfig → ValidatorConfig → VersionConfig → GovernanceConfig → StakingConfig → EpochConfig).
+2. **`ValidatorManagement.onNewEpoch()`** (before epoch increment, matching Aptos).
+3. **Reset performance tracker**: read `getActiveValidatorCount()` and call `PerformanceTracker.onNewEpoch(newCount)`. MUST happen after `onNewEpoch()` — it destructively erases the closing epoch's perf data.
+4. Increment epoch: `currentEpoch++`.
+5. `lastReconfigurationTime = now`.
+6. `transitionState = Idle`.
+7. Emit `EpochTransitioned(newEpoch, timestamp)` and `NewEpochEvent(newEpoch, validators, totalVotingPower, timestamp)`.
+
+> **Important ordering notes**:
+> - Eviction is performed in `checkAndStartTransition()` / `governanceReconfigure()` (before DKG starts), NOT inside `_applyReconfiguration()`. This ensures the closing epoch's performance data is consulted before the perf tracker is reset.
+> - `onNewEpoch()` is called before the epoch number is incremented, matching Aptos's `reconfiguration.move`.
+> - `NewEpochEvent` carries the finalized validator set for the consensus engine.
 
 ---
 
@@ -304,15 +327,15 @@ Called by VM runtime at the start of each block.
 - `failedProposerIndices` - Indices of validators who failed to propose (for future performance tracking)
 - `timestampMicros` - Block timestamp in microseconds
 
-**Behavior**:
-1. Resolve proposer address:
-   - If `proposerIndex == type(uint64).max` (NIL block): use `SYSTEM_CALLER`
-   - Otherwise: query `ValidatorManagement.getActiveValidatorByIndex(proposerIndex).validator`
-2. Update global timestamp via `Timestamp.updateGlobalTime(validatorAddr, timestampMicros)`
-3. Update `ValidatorPerformanceTracker.updateStatistics(proposerIndex, failedProposerIndices)`
-4. Call `Reconfiguration.checkAndStartTransition()`
-5. Get current epoch from Reconfiguration
-6. Emit `BlockStarted(block.number, epoch, validatorAddr, timestampMicros)`
+**Behavior** (in this exact order — perf tracker update MUST precede the reconfig check because the block that triggers the transition is the last block of the closing epoch):
+1. `ValidatorPerformanceTracker.updateStatistics(proposerIndex, failedProposerIndices)` — record the closing epoch's proposal outcomes first.
+2. Resolve proposer address:
+   - If `proposerIndex == NIL_PROPOSER_INDEX (type(uint64).max)` (NIL block): use `SYSTEM_CALLER`.
+   - Otherwise: `ValidatorManagement.getActiveValidatorByIndex(proposerIndex).validator` (returns the stake-pool address).
+3. `Timestamp.updateGlobalTime(validatorAddr, timestampMicros)` — normal blocks must advance time; NIL blocks keep the same timestamp.
+4. `Reconfiguration.checkAndStartTransition()` — may trigger auto-eviction + DKG/immediate reconfigure.
+5. Read `Reconfiguration.currentEpoch()`.
+6. Emit `BlockStarted(block.number, epoch, validatorAddr, timestampMicros)`.
 
 > **Note**: Using validator indices (instead of consensus public keys) aligns with Aptos's `block_prologue` approach where the consensus layer passes proposer indices.
 
@@ -325,6 +348,7 @@ Called by VM runtime at the start of each block.
 | `Reconfiguration.initialize()` | GENESIS only |
 | `Reconfiguration.checkAndStartTransition()` | BLOCK only |
 | `Reconfiguration.finishTransition()` | SYSTEM_CALLER or GOVERNANCE |
+| `Reconfiguration.governanceReconfigure()` | GOVERNANCE only |
 | `Reconfiguration` view functions | Anyone |
 | `Blocker.initialize()` | GENESIS only |
 | `Blocker.onBlockStart()` | SYSTEM_CALLER only |
@@ -345,29 +369,39 @@ Called by VM runtime at the start of each block.
 │                        EPOCH TRANSITION LIFECYCLE                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  PHASE 1: DETECTION & DKG START                                              │
-│  ─────────────────────────────                                               │
+│  PHASE 1: DETECTION, EVICTION, DKG START                                     │
+│  ────────────────────────────────────                                        │
 │                                                                              │
 │    VM Runtime                                                                │
 │       │                                                                      │
-│       │ onBlockStart(proposer, failed, timestamp)                            │
+│       │ onBlockStart(proposerIndex, failed, timestamp)                       │
 │       ▼                                                                      │
 │    Blocker                                                                   │
 │       │                                                                      │
-│       ├─► Timestamp.updateGlobalTime()                                       │
+│       ├─► PerformanceTracker.updateStatistics(proposer, failed)  (FIRST)    │
+│       ├─► resolveProposer(proposerIndex) (NIL → SYSTEM_CALLER)               │
+│       ├─► Timestamp.updateGlobalTime(validatorAddr, ts)                      │
 │       │                                                                      │
 │       └─► Reconfiguration.checkAndStartTransition()                          │
 │               │                                                              │
 │               ├── Check: time elapsed && state == Idle?                      │
 │               │     └── If NO → return false                                 │
 │               │                                                              │
-│               ├── ValidatorManagement.getActiveValidators()                  │
+│               ├── ValidatorManagement.evictUnderperformingValidators()       │
 │               ├── RandomnessConfig.getCurrentConfig()                        │
-│               ├── DKG.tryClearIncompleteSession()                            │
-│               ├── DKG.start(epoch, config, validators, validators)           │
-│               │     └── Emits DKGStartEvent                                  │
-│               ├── transitionState = DkgInProgress                            │
-│               └── Emit EpochTransitionStarted                                │
+│               │                                                              │
+│               ├── IF variant == Off (DKG disabled):                          │
+│               │     ├── DKG.tryClearIncompleteSession()                      │
+│               │     └── _applyReconfiguration() ──► jump to Phase 2 body    │
+│               │                                                              │
+│               └── ELSE (DKG enabled):                                        │
+│                     ├── ValidatorManagement.getCurValidatorConsensusInfos()  │
+│                     ├── ValidatorManagement.getNextValidatorConsensusInfos() │
+│                     ├── DKG.tryClearIncompleteSession()                      │
+│                     ├── DKG.start(currentEpoch, config, dealers, targets)    │
+│                     │     └── Emits DKGStartEvent                            │
+│                     ├── transitionState = DkgInProgress                      │
+│                     └── Emit EpochTransitionStarted                          │
 │                                                                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
@@ -375,8 +409,8 @@ Called by VM runtime at the start of each block.
 │                                                                              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  PHASE 2: FINISH TRANSITION                                                  │
-│  ─────────────────────────                                                   │
+│  PHASE 2: FINISH TRANSITION (_applyReconfiguration body)                     │
+│  ───────────────────────────────────────────────────                         │
 │                                                                              │
 │    Consensus Engine / Governance                                             │
 │       │                                                                      │
@@ -387,16 +421,22 @@ Called by VM runtime at the start of each block.
 │       ├── Validate: state == DkgInProgress                                   │
 │       ├── DKG.finish(dkgResult) (if result provided)                         │
 │       ├── DKG.tryClearIncompleteSession()                                    │
+│       │                                                                      │
+│       │  [ _applyReconfiguration() shared body ]                             │
 │       ├── RandomnessConfig.applyPendingConfig()                              │
+│       ├── ConsensusConfig.applyPendingConfig()                               │
+│       ├── ExecutionConfig.applyPendingConfig()                               │
+│       ├── ValidatorConfig.applyPendingConfig()                               │
+│       ├── VersionConfig.applyPendingConfig()                                 │
 │       ├── GovernanceConfig.applyPendingConfig()                              │
+│       ├── StakingConfig.applyPendingConfig()                                 │
 │       ├── EpochConfig.applyPendingConfig()                                   │
-│       ├── ValidatorManagement.evictUnderperformingValidators()  ◄── NEW      │
 │       ├── ValidatorManagement.onNewEpoch() (BEFORE incrementing epoch)       │
-│       ├── ValidatorPerformanceTracker.onNewEpoch(activeCount)                │
+│       ├── PerformanceTracker.onNewEpoch(getActiveValidatorCount())           │
 │       ├── currentEpoch++                                                     │
 │       ├── lastReconfigurationTime = now                                      │
 │       ├── transitionState = Idle                                             │
-│       └── Emit EpochTransitioned + NewEpochEvent                             │
+│       └── Emit EpochTransitioned + NewEpochEvent(validators, totalPower)     │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

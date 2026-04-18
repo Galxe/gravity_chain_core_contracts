@@ -79,7 +79,7 @@ src/runtime/
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F2024` | Randomness configuration |
+| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F1003` | Randomness configuration |
 
 ### Types
 
@@ -132,43 +132,45 @@ bool private _initialized;
 ### Interface
 
 ```solidity
-interface IRandomnessConfig {
+/// @dev RandomnessConfig is deployed as a standalone contract (no separate interface).
+///      Cross-contract callers read/write via the concrete contract API shown below.
+contract RandomnessConfig {
     // ========== Initialization ==========
-    
+
     /// @notice Initialize with config (genesis only)
     function initialize(RandomnessConfigData calldata config) external;
-    
+
     // ========== View Functions ==========
-    
+
     /// @notice Check if randomness is enabled
     function enabled() external view returns (bool);
-    
+
     /// @notice Get current config
     function getCurrentConfig() external view returns (RandomnessConfigData memory);
-    
+
     /// @notice Get pending config if any
     function getPendingConfig() external view returns (bool hasPending, RandomnessConfigData memory config);
-    
+
     /// @notice Check if initialized
     function isInitialized() external view returns (bool);
-    
-    // ========== Governance (TIMELOCK only) ==========
-    
+
+    // ========== Governance (GOVERNANCE only) ==========
+
     /// @notice Set config for next epoch
     function setForNextEpoch(RandomnessConfigData calldata newConfig) external;
-    
+
     // ========== Epoch Transition (RECONFIGURATION only) ==========
-    
+
     /// @notice Apply pending config at epoch boundary
     function applyPendingConfig() external;
-    
-    // ========== Config Builders (Pure) ==========
-    
+
+    // ========== Config Builders (Pure Helpers) ==========
+
     /// @notice Create Off config
     function newOff() external pure returns (RandomnessConfigData memory);
-    
+
     /// @notice Create V2 config
-    function newV2(uint128 secrecy, uint128 reconstruction, uint128 fastPath) 
+    function newV2(uint128 secrecy, uint128 reconstruction, uint128 fastPath)
         external pure returns (RandomnessConfigData memory);
 }
 ```
@@ -212,7 +214,7 @@ event PendingRandomnessConfigCleared();
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `DKG` | `0x0000000000000000000000000001625F2025` | DKG session management |
+| `DKG` | `0x0000000000000000000000000001625F2002` | DKG session management |
 
 ### Types
 

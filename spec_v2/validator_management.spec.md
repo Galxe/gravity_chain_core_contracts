@@ -196,8 +196,10 @@ graph TD
 
 | Constant | Address | Description |
 | --- | --- | --- |
-| `VALIDATOR_MANAGER` | `0x0000000000000000000000000001625F2013` | Validator set management |
-| `VALIDATOR_CONFIG` | `0x0000000000000000000000000001625F2015` | Validator configuration |
+| `VALIDATOR_MANAGER` | `0x0000000000000000000000000001625F2001` | Validator set management |
+| `VALIDATOR_CONFIG` | `0x0000000000000000000000000001625F1002` | Validator configuration |
+| `RECONFIGURATION`   | `0x0000000000000000000000000001625F2003` | Epoch lifecycle (caller of `onNewEpoch`) |
+| `PERFORMANCE_TRACKER` | `0x0000000000000000000000000001625F2005` | Per-epoch proposal stats source |
 
 ---
 
@@ -316,17 +318,38 @@ bool private _initialized;
 ### Interface
 
 ```solidity
+struct GenesisValidator {
+    address stakePool;
+    string moniker;
+    bytes consensusPubkey;
+    bytes consensusPop;
+    bytes networkAddresses;
+    bytes fullnodeAddresses;
+    address feeRecipient;
+    uint256 votingPower;
+}
+
 interface IValidatorManagement {
     // === Events ===
     event ValidatorRegistered(address indexed stakePool, string moniker);
     event ValidatorJoinRequested(address indexed stakePool);
     event ValidatorActivated(address indexed stakePool, uint64 validatorIndex, uint256 votingPower);
     event ValidatorLeaveRequested(address indexed stakePool);
+    event ValidatorForceLeaveRequested(address indexed stakePool);
     event ValidatorDeactivated(address indexed stakePool);
-    event ValidatorAutoEvicted(address indexed stakePool, uint64 successfulProposals);
+    event ValidatorAutoEvicted(address indexed stakePool, uint256 successfulProposals);
+    event ValidatorUnderbondedEvicted(address indexed stakePool, uint256 votingPower, uint256 minimumBond);
+    event ValidatorRevertedInactive(address indexed stakePool);
+    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
     event ConsensusKeyRotated(address indexed stakePool, bytes newPubkey);
     event FeeRecipientUpdated(address indexed stakePool, address newRecipient);
+    event FeeRecipientApplied(address indexed stakePool, address oldRecipient, address newRecipient);
     event EpochProcessed(uint64 epoch, uint256 activeCount, uint256 totalVotingPower);
+    event ValidatorManagementInitialized(uint256 validatorCount, uint256 totalVotingPower);
+
+    // === Initialization (genesis only) ===
+    function initialize(GenesisValidator[] calldata validators) external;
+    function isInitialized() external view returns (bool);
 
     // === Registration ===
     function registerValidator(
@@ -341,15 +364,16 @@ interface IValidatorManagement {
     // === Lifecycle ===
     function joinValidatorSet(address stakePool) external;
     function leaveValidatorSet(address stakePool) external;
-    
+    function forceLeaveValidatorSet(address stakePool) external;         // GOVERNANCE only
+
     // === Operator Functions ===
     function rotateConsensusKey(address stakePool, bytes calldata newPubkey, bytes calldata newPop) external;
     function setFeeRecipient(address stakePool, address newRecipient) external;
-    
+
     // === Epoch Processing ===
     function onNewEpoch() external;
     function evictUnderperformingValidators() external;
-    
+
     // === View Functions ===
     function getValidator(address stakePool) external view returns (ValidatorRecord memory);
     function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
@@ -359,8 +383,12 @@ interface IValidatorManagement {
     function isValidator(address stakePool) external view returns (bool);
     function getValidatorStatus(address stakePool) external view returns (ValidatorStatus);
     function getCurrentEpoch() external view returns (uint64);
-    function getPendingActiveValidators() external view returns (address[] memory);
-    function getPendingInactiveValidators() external view returns (address[] memory);
+    function getPendingActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
+    function getPendingInactiveValidators() external view returns (ValidatorConsensusInfo[] memory);
+
+    // === DKG support ===
+    function getCurValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
+    function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
 }
 ```
 
@@ -460,6 +488,32 @@ Request to leave the active validator set. Can also cancel a pending join reques
 
 ---
 
+### `forceLeaveValidatorSet(address stakePool)`
+
+Governance emergency hook to remove a validator without operator cooperation.
+
+**Access Control**: GOVERNANCE only
+
+**Behavior**:
+- Verify validator exists.
+- **If status is PENDING_ACTIVE** — immediately revert to INACTIVE (removes from the pending queue).
+- **If status is ACTIVE** — mark PENDING_INACTIVE for deactivation at the next epoch boundary.
+- Emits `ValidatorForceLeaveRequested(pool)`.
+- Unlike voluntary `leaveValidatorSet`, this CAN remove the last active validator — intentional so
+  governance can respond to a compromised single-node set. Use with extreme care.
+
+### `initialize(GenesisValidator[] calldata validators)`
+
+One-shot genesis initializer, callable only by `SystemAddresses.GENESIS`. Seeds the validator set
+directly into ACTIVE state with the provided consensus keys, monikers, network / fullnode addresses,
+fee recipient, and voting power. Reverts with `AlreadyInitialized` on re-call, and runs BLS PoP /
+length checks on each entry. Emits `ValidatorManagementInitialized(count, totalVotingPower)` and a
+`ValidatorActivated` event per genesis validator. Mirrors `GenesisValidator` in
+`src/staking/IValidatorManagement.sol`. Post-genesis, `isInitialized() == true`; new validators
+must join via the normal `registerValidator` → `joinValidatorSet` flow.
+
+---
+
 ### `onNewEpoch()`
 
 Process epoch transition.
@@ -476,45 +530,65 @@ Process epoch transition.
 2. Process PENDING_ACTIVE → ACTIVE:
    - Check voting power increase limit
    - Validators exceeding limit remain pending
-   - Validators below minimum revert to INACTIVE
+   - Validators below minimum revert to INACTIVE (emits `ValidatorRevertedInactive`)
    - Emit `ValidatorActivated` event
-3. **Auto-renew lockups for active validators** (Aptos-style):
+3. Apply revert-inactive sweep for validators whose bond dropped under `minimumBond`
+   between join request and activation.
+4. **Auto-renew lockups for active validators** (Aptos-style):
    - Call `Staking.renewPoolLockup(pool)` for each active validator
    - Ensures voting power never drops to zero due to lockup expiration
-   - Matches Aptos `stake.move` lines 1435-1449
-4. Apply pending fee recipient changes
-5. Sync owner/operator from stake pools
-6. Reassign indices (0 to n-1) for all active validators
-7. Read and store current epoch from `IReconfiguration.currentEpoch()`
-8. Update total voting power
-9. Emit `EpochProcessed` event
+5. Apply pending fee recipient changes (emits `FeeRecipientApplied` per update).
+6. Apply pending consensus key rotations queued by `rotateConsensusKey()` — old key is
+   unmapped and the pending key becomes the active `consensusPubkey` / `consensusPop`.
+7. Reassign indices (0 to n-1) for all active validators.
+8. Read and store current epoch from `IReconfiguration.currentEpoch()`.
+9. Update total voting power.
+10. Emit `EpochProcessed` event.
 
-> **Note**: The epoch is not passed as a parameter; instead, `ValidatorManagement` reads it from `Reconfiguration.currentEpoch()`. This aligns with Aptos's pattern where `stake::on_new_epoch()` is called before the epoch is incremented in `reconfiguration.move`.
+> **Note**: The epoch is not passed as a parameter; instead, `ValidatorManagement` reads it from
+> `Reconfiguration.currentEpoch()`. This aligns with Aptos's pattern where `stake::on_new_epoch()` is
+> called before the epoch is incremented in `reconfiguration.move`.
+
+> **Note**: owner/operator are *not* synchronised from stake pools at epoch boundary — the
+> stake-pool is the source of truth for those roles and is read lazily via `Staking.getPool*()`.
 
 ---
 
 ### `evictUnderperformingValidators()`
 
-Auto-evict validators whose successful proposals fall below the configured threshold.
+Two-phase auto-eviction run by Reconfiguration during a transition.
 
 **Access Control**: RECONFIGURATION only
 
-**Behavior**:
-1. Check if `autoEvictEnabled` is true in `ValidatorConfig`; return immediately if disabled
-2. Read `autoEvictThreshold` from `ValidatorConfig`
-3. Read performance data from `ValidatorPerformanceTracker.getAllPerformances()`
-4. For each active validator:
-   - Skip if status is not ACTIVE (e.g., already PENDING_INACTIVE from manual leave)
-   - If `successfulProposals <= threshold`:
-     - Count remaining ACTIVE validators
-     - If this is the last ACTIVE validator, **break** (liveness protection)
-     - Change status to PENDING_INACTIVE
-     - Add to `_pendingInactive` array
-     - Emit `ValidatorAutoEvicted(pool, successfulProposals)` event
+**Guards:**
 
-> **Important**: Auto-evicted validators transition ACTIVE → PENDING_INACTIVE → INACTIVE within a **single epoch transition**. This is different from voluntary `leaveValidatorSet()` where validators have a one-epoch buffer. The eviction marks them as PENDING_INACTIVE, and the subsequent `onNewEpoch()` call (in the same `_applyReconfiguration()`) processes them to INACTIVE.
+- Returns immediately when `ValidatorConfig.allowValidatorSetChange == false` (audit fix #154).
+- Returns immediately for epochs `<= 1` (bootstrap protection — no performance history yet).
 
-**Liveness Protection**: The last active validator is never evicted to prevent consensus halt.
+**Phase 1 — Underbonded eviction (unconditional):**
+
+For every currently ACTIVE validator, read voting power via `Staking.getPoolVotingPower(pool)`. If it is
+below `ValidatorConfig.minimumBond`, mark the validator PENDING_INACTIVE and emit
+`ValidatorUnderbondedEvicted(pool, votingPower, minimumBond)`. This phase runs even if performance
+auto-eviction is disabled, to enforce the minimum-bond invariant at epoch boundaries.
+
+**Phase 2 — Performance eviction (optional):**
+
+Runs only when `autoEvictEnabled == true`. Reads per-validator success counts from the
+`ValidatorPerformanceTracker`. For each still-ACTIVE validator:
+
+- If the active-set count vs. performance-array length disagrees, emit `PerformanceLengthMismatch`
+  and skip Phase 2 (defensive).
+- Compute `successPct = successfulProposals * 100 / totalProposals` (0 if `totalProposals == 0`).
+  When `successPct < autoEvictThresholdPct` (0-100), mark the validator PENDING_INACTIVE and emit
+  `ValidatorAutoEvicted(pool, successfulProposals)`.
+
+**Liveness Protection (applies to both phases):** the last remaining would-be-ACTIVE validator is
+never evicted — if `remainingActive <= 1`, the loop breaks.
+
+> **Important**: Auto-evicted validators transition ACTIVE → PENDING_INACTIVE → INACTIVE within a
+> **single epoch transition**. This is different from voluntary `leaveValidatorSet()` where validators
+> have a one-epoch buffer.
 
 ---
 
@@ -525,23 +599,31 @@ Auto-evict validators whose successful proposals fall below the configured thres
 
 ---
 
-### `rotateConsensusKey()`
+### `rotateConsensusKey()` — Deferred (V3.5 audit fix D2-3)
 
-Rotate the validator's consensus key.
+Rotate the validator's consensus key. The key change is **deferred to the next epoch boundary**
+for BFT consistency; the active key continues to be used for this epoch.
 
 **Access Control**: Validator's operator only
 
 **Behavior**:
-1. Verify no reconfiguration (epoch transition) is in progress
-2. Verify validator exists
-3. Verify caller is operator
-4. Update consensus pubkey and PoP (takes effect immediately)
-5. Emit `ConsensusKeyRotated` event
+1. Verify no reconfiguration (epoch transition) is in progress.
+2. Verify validator exists.
+3. Verify caller is operator.
+4. Validate length (`BLS12381_PUBKEY_LENGTH = 48`) and run BLS PoP precompile on `(newPubkey, newPop)`.
+5. Revert `DuplicateConsensusPubkey` if any other live or pending validator already reserves the key.
+6. **Reserve** `newPubkey → validator` in `_pubkeyToValidator` immediately to prevent duplicates,
+   but store the key in `ValidatorRecord.pendingConsensusPubkey` / `pendingConsensusPop`. The active
+   `consensusPubkey` / `consensusPop` stay unchanged until `onNewEpoch()` promotes them
+   (step 6 of `onNewEpoch`).
+7. Emit `ConsensusKeyRotated(pool, newPubkey)`.
 
 **Reverts**:
-- `ReconfigurationInProgress` - Epoch transition in progress
-- `ValidatorNotFound` - Validator not registered
-- `NotOperator` - Caller is not the operator
+- `ReconfigurationInProgress` — epoch transition in progress
+- `ValidatorNotFound` — validator not registered
+- `NotOperator` — caller is not the operator
+- `InvalidConsensusPubkeyLength` / `InvalidConsensusPopLength` / `InvalidConsensusPopVerification`
+- `DuplicateConsensusPubkey` — key already used by another validator (or pending rotation)
 
 ---
 
@@ -589,7 +671,9 @@ Set a new fee recipient address.
 | `registerValidator` | StakePool operator (verified via Staking) |
 | `joinValidatorSet` | Validator's operator (verified via Staking) |
 | `leaveValidatorSet` | Validator's operator (verified via Staking) |
-| `rotateConsensusKey` | Validator's operator (verified via Staking) |
+| `rotateConsensusKey` | Validator's operator (verified via Staking); applied at next epoch |
+| `forceLeaveValidatorSet` | GOVERNANCE only |
+| `initialize` | GENESIS only (one-shot) |
 | `setFeeRecipient` | Validator's operator (verified via Staking) |
 | `onNewEpoch` | RECONFIGURATION only |
 | `evictUnderperformingValidators` | RECONFIGURATION only |
@@ -618,16 +702,20 @@ function _getValidatorVotingPower(address stakePool) internal view returns (uint
 
 ## Unstake Protection for Active Validators
 
-Active validators (status ACTIVE or PENDING_INACTIVE) have unstake protection enforced at the StakePool level:
+Active validators (status ACTIVE, PENDING_INACTIVE, or PENDING_ACTIVE) have unstake protection enforced at the StakePool level:
 
 ```solidity
 // In StakePool._unstake():
 IValidatorManagement validatorMgmt = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
 if (validatorMgmt.isValidator(address(this))) {
     ValidatorStatus status = validatorMgmt.getValidatorStatus(address(this));
-    if (status == ValidatorStatus.ACTIVE || status == ValidatorStatus.PENDING_INACTIVE) {
+    if (
+        status == ValidatorStatus.ACTIVE
+        || status == ValidatorStatus.PENDING_INACTIVE
+        || status == ValidatorStatus.PENDING_ACTIVE
+    ) {
         uint256 minBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
-        
+
         // Simple check: activeStake after unstake must be >= minBond
         if (activeStake - amount < minBond) {
             revert Errors.WithdrawalWouldBreachMinimumBond(activeStake - amount, minBond);
@@ -635,6 +723,8 @@ if (validatorMgmt.isValidator(address(this))) {
     }
 }
 ```
+
+> **Why PENDING_ACTIVE is covered**: a validator that has joined the set but not yet been promoted at the epoch boundary must still keep its declared bond above `minimumBond`, otherwise it could join with less stake than the protocol requires. This matches the fix in commit `808108d` (`fix(staking): enforce minBond on unstake for PENDING_ACTIVE validators`).
 
 **Key Security Properties**:
 1. Active validators cannot reduce `activeStake` below `minimumBond`
@@ -795,7 +885,7 @@ validatorManager.leaveValidatorSet(pool);
 7. **No Direct StakePool Calls**: All pool queries go through Staking factory
 8. **Reconfiguration Guard**: Operations blocked during epoch transitions (Aptos `assert_reconfig_not_in_progress` pattern)
 9. **Last Validator Protection**: Cannot remove the last active validator (would halt consensus)
-10. **Auto-Eviction Safety**: Underperforming validators are evicted based on governance-configured on-chain parameters (`autoEvictEnabled`, `autoEvictThreshold`). The last active validator is never evicted.
+10. **Auto-Eviction Safety**: Underperforming validators are evicted based on governance-configured on-chain parameters (`autoEvictEnabled`, `autoEvictThresholdPct`). The last active validator is never evicted. A dedicated underbonded-eviction sweep also runs unconditionally so validators that drop below `minimumBond` are removed at the next boundary.
 11. **Leave Flexibility**: Validators can cancel join requests by leaving from PENDING_ACTIVE state
 12. **Unstake Protection**: Active validators cannot reduce `activeStake` below `minimumBond` (simple direct check)
 13. **Lockup Auto-Renewal**: Active validators have lockups auto-renewed at epoch boundaries (Aptos-style), ensuring voting power = activeStake
@@ -922,15 +1012,17 @@ Added security checks to match Aptos's `stake.move` validator management:
 - Added `ValidatorAutoEvicted(address stakePool, uint64 successfulProposals)` event
 
 **Behavior**:
-- Reads `autoEvictEnabled` and `autoEvictThreshold` from `ValidatorConfig`
+- Reads `autoEvictEnabled` and `autoEvictThresholdPct` from `ValidatorConfig`
 - Reads performance data from `ValidatorPerformanceTracker.getAllPerformances()`
-- Validators with `successfulProposals <= autoEvictThreshold` are marked PENDING_INACTIVE
+- Validators with `successPct < autoEvictThresholdPct` are marked PENDING_INACTIVE
 - Evicted validators transition ACTIVE → PENDING_INACTIVE → INACTIVE within a single epoch (no buffer)
 - Last active validator is never evicted (liveness protection)
 
 **Configuration** (in `ValidatorConfig`):
 - `autoEvictEnabled` (bool): governance-controlled on/off switch (default: false)
-- `autoEvictThreshold` (uint256): minimum successful proposals to avoid eviction (default: 0)
+- `autoEvictThresholdPct` (uint64, 0-100): minimum success **percentage** required to avoid eviction.
+  The old `autoEvictThreshold` (`uint256` raw count) field is kept as
+  `__deprecated_autoEvictThreshold` for storage-layout compatibility and is unused.
 - Both follow the pending config pattern (applied at epoch boundary via `setForNextEpoch`/`applyPendingConfig`)
 
 **Ordering in `_applyReconfiguration()`**:

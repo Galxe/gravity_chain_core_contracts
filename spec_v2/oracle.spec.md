@@ -73,9 +73,12 @@ contract deployed on Gravity that provides:
 
 ### Contract Deployment
 
-| Chain   | Contract     | System Address                           |
-| ------- | ------------ | ---------------------------------------- |
-| Gravity | NativeOracle | `0x0000000000000000000000000001625F2023` |
+| Chain   | Contract                   | System Address                           |
+| ------- | -------------------------- | ---------------------------------------- |
+| Gravity | NativeOracle               | `0x0000000000000000000000000001625F4000` |
+| Gravity | OracleTaskConfig           | `0x0000000000000000000000000001625F1009` |
+| Gravity | OnDemandOracleTaskConfig   | `0x0000000000000000000000000001625F100A` |
+| Gravity | OracleRequestQueue         | see [oracle_evm_bridge.spec.md](./oracle_evm_bridge.spec.md) |
 
 ---
 
@@ -137,42 +140,38 @@ The `nonce` is a `uint128` value that uniquely identifies a record within a (sou
 
 **Requirements:**
 
-- **Must start from 1**: The first nonce for any source must be >= 1 (cannot be 0)
-- **Strictly increasing**: Each subsequent nonce must be greater than the previous
+- **Must start from 1**: The first nonce for any source must be 1 (cannot be 0)
+- **Sequential (no gaps)**: Each subsequent nonce must be exactly `previousNonce + 1` — strictly increasing is *not* sufficient. The contract reverts with `NonceNotSequential(sourceType, sourceId, expected, provided)` on any gap or duplicate.
 
 ```solidity
 /// @notice Nonce (uint128)
-/// @dev Must start from 1 and strictly increase for each source
-///      Interpretation depends on source type:
-///      - BLOCKCHAIN: Block number or event index
-///      - JWK: Unix timestamp or sequence
-///      - DNS: Unix timestamp or sequence
-///      - PRICE_FEED: Sequence number or timestamp
+/// @dev Must start from 1 and increment by exactly 1 per record per source
 uint128 nonce;
 ```
 
 | Source Type | Nonce Meaning   | Example                     |
 | ----------- | --------------- | --------------------------- |
-| Blockchain  | Block number    | `19000000` (Ethereum block) |
-| JWK         | Unix timestamp  | `1704067200`                |
-| DNS         | Unix timestamp  | `1704067200`                |
-| Custom      | Sequence number | `1`, `2`, `3`, ...          |
+| Blockchain  | Monotonic seq   | `1`, `2`, `3`, ...          |
+| JWK         | Monotonic seq   | `1`, `2`, `3`, ...          |
+| DNS         | Monotonic seq   | `1`, `2`, `3`, ...          |
+| Custom      | Monotonic seq   | `1`, `2`, `3`, ...          |
 
 **Invariants:**
 
-- `nonce >= 1` for the first record
-- `nonce` must be strictly increasing for each (sourceType, sourceId) pair
+- `nonce == 1` for the first record per source
+- For each (sourceType, sourceId) pair, consecutive records MUST satisfy `newNonce == latestNonce + 1`
 
 ### DataRecord
 
 ```solidity
 struct DataRecord {
-    uint64 recordedAt;  // Timestamp when recorded (0 = not exists)
-    bytes data;         // Stored payload data
+    uint64  recordedAt;   // EVM block.timestamp seconds when recorded (0 = not exists). NOTE: seconds, not Gravity microseconds.
+    uint256 blockNumber;  // Source block number the record refers to (meaning depends on sourceType — e.g. the Ethereum block that emitted the event)
+    bytes   data;         // Stored payload data
 }
 ```
 
-Record existence is determined by `recordedAt > 0`.
+Record existence is determined by `recordedAt > 0`. `blockNumber` is carried independently of `nonce` so that a single source can mix sequence-based ordering with source-block provenance.
 
 ---
 
@@ -207,30 +206,35 @@ interface INativeOracle {
     /// @notice Record a single data entry
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
-    /// @param nonce The nonce - must start from 1 and strictly increase
+    /// @param nonce The nonce - must equal `currentNonce + 1` for this (sourceType, sourceId)
+    /// @param blockNumber The source block number (provenance, NOT used for ordering)
     /// @param payload The data payload to store
-    /// @param callbackGasLimit Gas limit for callback execution (0 = no callback)
+    /// @param callbackGasLimit Gas limit for callback execution (0 = invoke no callback, emit CallbackSkipped and store)
     function record(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
+        uint256 blockNumber,
         bytes calldata payload,
         uint256 callbackGasLimit
     ) external;
 
     /// @notice Batch record multiple data entries from the same source
-    /// @dev Each payload is recorded at sequential nonces starting from the provided nonce.
+    /// @dev Each record is validated individually with its own nonce/blockNumber/callbackGasLimit.
+    ///      Callers typically pass strictly sequential nonces; the contract validates each as currentNonce+1.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @param nonce The starting nonce for the batch
-    /// @param payloads Array of payloads to store
-    /// @param callbackGasLimit Gas limit for callback execution per record (0 = no callback)
+    /// @param nonces Array of nonces (length N)
+    /// @param blockNumbers Array of source block numbers (length N)
+    /// @param payloads Array of payloads (length N)
+    /// @param callbackGasLimits Array of per-record gas limits (length N)
     function recordBatch(
         uint32 sourceType,
         uint256 sourceId,
-        uint128 nonce,
+        uint128[] calldata nonces,
+        uint256[] calldata blockNumbers,
         bytes[] calldata payloads,
-        uint256 callbackGasLimit
+        uint256[] calldata callbackGasLimits
     ) external;
 
     // ========== Callback Management (GOVERNANCE Only) ==========
@@ -286,19 +290,31 @@ interface INativeOracle {
 ```solidity
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failures are caught - do NOT revert oracle recording
+    /// @dev Callback failures are caught — do NOT revert oracle recording.
+    ///      The returned `shouldStore` flag tells NativeOracle whether to persist the payload
+    ///      into the `_records` mapping. Returning `false` lets callbacks that fully consume the
+    ///      payload (e.g., apply it to their own state) avoid paying for redundant storage.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
+    /// @return shouldStore If true, NativeOracle writes the DataRecord; if false, storage is skipped
+    ///                    (a `StorageSkipped` event is emitted instead).
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
         bytes calldata payload
-    ) external;
+    ) external returns (bool shouldStore);
 }
 ```
+
+**Storage semantics**:
+- No callback registered → payload is always stored.
+- Callback registered but `callbackGasLimit == 0` → `CallbackSkipped` event, payload is still stored.
+- Callback succeeds and returns `true` → `CallbackSuccess` event, payload stored.
+- Callback succeeds and returns `false` → `CallbackSuccess` + `StorageSkipped` events, payload NOT stored (the callback "consumed" the data).
+- Callback reverts or runs out of gas → `CallbackFailed` event with revert bytes, payload stored anyway (fail-safe).
 
 ### Callback Resolution (2-Layer System)
 
@@ -329,16 +345,25 @@ function _invokeCallback(
     uint128 nonce,
     bytes calldata payload,
     uint256 gasLimit
-) internal {
+) internal returns (bool shouldStore) {
     address callback = _resolveCallback(sourceType, sourceId);
-    if (callback == address(0)) return;
+    if (callback == address(0)) return true;           // no callback → store
+    if (gasLimit == 0) {
+        emit CallbackSkipped(sourceType, sourceId, nonce, callback);
+        return true;                                    // skip invocation, still store
+    }
 
     try IOracleCallback(callback).onOracleEvent{gas: gasLimit}(
         sourceType, sourceId, nonce, payload
-    ) {
+    ) returns (bool callbackShouldStore) {
         emit CallbackSuccess(sourceType, sourceId, nonce, callback);
+        if (!callbackShouldStore) {
+            emit StorageSkipped(sourceType, sourceId, nonce, callback);
+        }
+        return callbackShouldStore;
     } catch (bytes memory reason) {
         emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
+        return true;                                    // on failure, store by default to preserve data
     }
 }
 ```
@@ -399,27 +424,138 @@ event CallbackFailed(
     address callback,
     bytes reason
 );
+
+/// @notice Emitted when a callback is registered but gasLimit == 0 was passed (callback not invoked; record still stored)
+event CallbackSkipped(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 nonce,
+    address callback
+);
+
+/// @notice Emitted when the callback returned shouldStore == false — the payload is NOT persisted
+event StorageSkipped(
+    uint32 indexed sourceType,
+    uint256 indexed sourceId,
+    uint128 nonce,
+    address callback
+);
 ```
 
 ### Errors
 
 ```solidity
-/// @dev For first record, latestNonce is 0, so nonce must be >= 1
-error NonceNotIncreasing(uint32 sourceType, uint256 sourceId, uint128 currentNonce, uint128 providedNonce);
+/// @notice The provided nonce was not exactly currentNonce + 1
+/// @param expectedNonce currentNonce + 1 (= 1 on first record)
+/// @param providedNonce The nonce supplied in the call
+error NonceNotSequential(
+    uint32 sourceType,
+    uint256 sourceId,
+    uint128 expectedNonce,
+    uint128 providedNonce
+);
+
+/// @notice recordBatch array-length mismatch
+error OracleBatchArrayLengthMismatch(
+    uint256 noncesLen,
+    uint256 blockNumbersLen,
+    uint256 payloadsLen,
+    uint256 callbackGasLimitsLen
+);
 ```
 
 ---
 
 ## Access Control Matrix
 
-| Contract         | Function             | Allowed Callers |
-| ---------------- | -------------------- | --------------- |
-| **NativeOracle** |                      |                 |
-|                  | record()             | SYSTEM_CALLER   |
-|                  | recordBatch()        | SYSTEM_CALLER   |
-|                  | setDefaultCallback() | GOVERNANCE      |
-|                  | setCallback()        | GOVERNANCE      |
-|                  | View functions       | Anyone          |
+| Contract                 | Function                               | Allowed Callers        |
+| ------------------------ | -------------------------------------- | ---------------------- |
+| **NativeOracle**         |                                        |                        |
+|                          | initialize()                           | GENESIS (once)         |
+|                          | record()                               | SYSTEM_CALLER          |
+|                          | recordBatch()                          | SYSTEM_CALLER          |
+|                          | setDefaultCallback()                   | GOVERNANCE             |
+|                          | setCallback()                          | GOVERNANCE             |
+|                          | View functions                         | Anyone                 |
+| **OracleTaskConfig**     |                                        |                        |
+|                          | setTask()                              | GENESIS or GOVERNANCE  |
+|                          | removeTask()                           | GOVERNANCE             |
+|                          | View / enumeration functions           | Anyone                 |
+| **OnDemandOracleTaskConfig** |                                    |                        |
+|                          | setTask() / removeTask()               | GOVERNANCE             |
+|                          | View / enumeration functions           | Anyone                 |
+
+---
+
+## Contract: OracleTaskConfig
+
+Stores configuration for **continuous** oracle tasks that validators actively monitor off-chain. Tasks are keyed by `(sourceType, sourceId, taskName)`, allowing multiple tasks per source (e.g., an Ethereum chain can have a JWK-sync task, a block-header task, and a price-feed task simultaneously).
+
+### System Address
+
+| Constant | Address |
+|----------|---------|
+| `ORACLE_TASK_CONFIG` | `0x0000000000000000000000000001625F1009` |
+
+### Types
+
+```solidity
+struct OracleTask {
+    bytes config;       // Opaque task configuration (schema depends on sourceType)
+    uint64 updatedAt;   // Block timestamp (seconds) of last update
+}
+
+struct FullTaskInfo {
+    uint32 sourceType;
+    uint256 sourceId;
+    bytes32 taskName;
+    bytes config;
+    uint64 updatedAt;
+}
+```
+
+### Interface
+
+```solidity
+interface IOracleTaskConfig {
+    event TaskSet(uint32 indexed sourceType, uint256 indexed sourceId, bytes32 indexed taskName, bytes config);
+    event TaskRemoved(uint32 indexed sourceType, uint256 indexed sourceId, bytes32 indexed taskName);
+
+    // GOVERNANCE (+ GENESIS for setTask only)
+    function setTask(uint32 sourceType, uint256 sourceId, bytes32 taskName, bytes calldata config) external;
+    function removeTask(uint32 sourceType, uint256 sourceId, bytes32 taskName) external;
+
+    // Queries
+    function getTask(uint32 sourceType, uint256 sourceId, bytes32 taskName) external view returns (OracleTask memory);
+    function hasTask(uint32 sourceType, uint256 sourceId, bytes32 taskName) external view returns (bool);
+    function getTaskNames(uint32 sourceType, uint256 sourceId) external view returns (bytes32[] memory);
+    function getTaskCount(uint32 sourceType, uint256 sourceId) external view returns (uint256);
+    function getTaskNameAt(uint32 sourceType, uint256 sourceId, uint256 index) external view returns (bytes32);
+    function getSourceTypes() external view returns (uint32[] memory);
+    function getSourceIds(uint32 sourceType) external view returns (uint256[] memory);
+    function getAllTasks() external view returns (FullTaskInfo[] memory);
+}
+```
+
+### Behavior Notes
+
+- `setTask()` reverts with `EmptyConfig` if `config.length == 0`.
+- Setting `taskName` that already exists overwrites in place (same `updatedAt` refresh).
+- `removeTask()` cleans up empty source-id and source-type registrations to keep the enumeration helpers bounded.
+
+---
+
+## Contract: OnDemandOracleTaskConfig
+
+Parallel configuration contract for **on-demand** oracle tasks (pull-based requests fulfilled by the queue in `OracleRequestQueue`). Same `(sourceType, sourceId, taskName)` keying and the same interface shape as `OracleTaskConfig`; the two are kept separate so validators can distinguish continuous-monitoring tasks from request/response workflows.
+
+### System Address
+
+| Constant | Address |
+|----------|---------|
+| `ON_DEMAND_ORACLE_TASK_CONFIG` | `0x0000000000000000000000000001625F100A` |
+
+See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, fulfillment, timeouts).
 
 ---
 

@@ -138,7 +138,7 @@ in microseconds and updated by the Block contract during block prologue.
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `TIMESTAMP` | `0x0000000000000000000000000001625F2017` | On-chain time oracle |
+| `TIMESTAMP` | `0x0000000000000000000000000001625F1000` | On-chain time oracle |
 
 ### State Variables
 
@@ -218,7 +218,7 @@ Configuration parameters for governance staking. Anyone can stake tokens to part
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `STAKE_CONFIG` | `0x0000000000000000000000000001625F2011` | Staking configuration |
+| `STAKE_CONFIG` | `0x0000000000000000000000000001625F1001` | Staking configuration |
 
 ### Interface
 
@@ -229,9 +229,13 @@ Configuration parameters for governance staking. Anyone can stake tokens to part
 interface IStakingConfig {
     function minimumStake() external view returns (uint256);
     function lockupDurationMicros() external view returns (uint64);
-    function minimumProposalStake() external view returns (uint256);
+    function unbondingDelayMicros() external view returns (uint64);
 }
 ```
+
+> Historical: `minimumProposalStake` was moved to `GovernanceConfig` in v1.2.0. The slot is
+> retained as `__deprecated_minimumProposalStake` on the pending-config struct purely to preserve
+> storage layout. New callers must use `GovernanceConfig.requiredProposerStake()`.
 
 ### Parameters
 
@@ -239,7 +243,7 @@ interface IStakingConfig {
 |-----------|------|-------------|-------------|
 | `minimumStake` | `uint256` | Minimum stake for governance participation | >= 0 |
 | `lockupDurationMicros` | `uint64` | Lockup duration in microseconds | > 0 |
-| `minimumProposalStake` | `uint256` | Minimum stake to create governance proposals | >= 0 |
+| `unbondingDelayMicros` | `uint64` | Additional wait after lockup expires before withdrawal is claimable | > 0 |
 
 ### Access Control
 
@@ -247,7 +251,7 @@ interface IStakingConfig {
 |----------|-----------------|
 | All view functions | Anyone |
 | `initialize()` | GENESIS only (once) |
-| All setters | GOVERNANCE only |
+| `setForNextEpoch(...)` / `applyPendingConfig()` | GOVERNANCE / RECONFIGURATION respectively |
 
 ---
 
@@ -259,7 +263,7 @@ Configuration parameters for the validator registry. Controls validator bonding,
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `VALIDATOR_CONFIG` | `0x0000000000000000000000000001625F2015` | Validator configuration |
+| `VALIDATOR_CONFIG` | `0x0000000000000000000000000001625F1002` | Validator configuration |
 
 ### Interface
 
@@ -275,7 +279,7 @@ interface IValidatorConfig {
     function votingPowerIncreaseLimitPct() external view returns (uint64);
     function maxValidatorSetSize() external view returns (uint256);
     function autoEvictEnabled() external view returns (bool);
-    function autoEvictThreshold() external view returns (uint256);
+    function autoEvictThresholdPct() external view returns (uint64);
     function MAX_VOTING_POWER_INCREASE_LIMIT() external view returns (uint64);
     function MAX_VALIDATOR_SET_SIZE() external view returns (uint256);
 }
@@ -291,8 +295,8 @@ interface IValidatorConfig {
 | `allowValidatorSetChange` | `bool` | Whether validators can join/leave post-genesis | - |
 | `votingPowerIncreaseLimitPct` | `uint64` | Max % of voting power that can join per epoch | 1-50 |
 | `maxValidatorSetSize` | `uint256` | Maximum number of validators in the set | 1-65536 |
-| `autoEvictEnabled` | `bool` | Whether automatic eviction of underperforming validators is active | - |
-| `autoEvictThreshold` | `uint256` | Minimum successful proposals required to avoid eviction | >= 0 |
+| `autoEvictEnabled` | `bool` | Whether performance-based eviction of underperforming validators is active (underbonded-sweep is always on) | - |
+| `autoEvictThresholdPct` | `uint64` | Minimum success percentage (successful proposals / total proposals * 100) required to avoid eviction | 0-100 |
 
 ### Constants
 
@@ -305,13 +309,13 @@ uint256 public constant MAX_VALIDATOR_SET_SIZE = 65536;
 
 ## Contract: `EpochConfig.sol`
 
-Configuration for epoch timing. Determines how long each epoch lasts. The `Reconfiguration` contract reads `epochIntervalMicros` from this contract to determine when epoch transitions should occur.
+Configuration for epoch timing. Determines how long each epoch lasts. The `Reconfiguration` contract reads `epochIntervalMicros` from this contract to determine when epoch transitions should occur. Updates follow the pending-config pattern (propose via `setForNextEpoch`, apply at epoch boundary via `applyPendingConfig`).
 
 ### System Address
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `EPOCH_CONFIG` | `0x0000000000000000000000000001625F2027` | Epoch configuration |
+| `EPOCH_CONFIG` | `0x0000000000000000000000000001625F1005` | Epoch configuration |
 
 ### Parameters
 
@@ -329,16 +333,20 @@ Configuration for epoch timing. Determines how long each epoch lasts. The `Recon
 /// @title EpochConfig
 /// @notice Configuration parameters for epoch timing
 contract EpochConfig {
-    /// @notice Epoch duration in microseconds
+    /// @notice Epoch duration in microseconds (currently applied)
     uint64 public epochIntervalMicros;
 
     /// @notice Initialize the epoch configuration
     /// @dev Can only be called once by GENESIS
     function initialize(uint64 _epochIntervalMicros) external;
 
-    /// @notice Update epoch interval
+    /// @notice Stage an epoch-interval change to apply at the next epoch boundary
     /// @dev Only callable by GOVERNANCE
-    function setEpochIntervalMicros(uint64 _epochIntervalMicros) external;
+    function setForNextEpoch(uint64 _epochIntervalMicros) external;
+
+    /// @notice Apply the staged interval at epoch transition
+    /// @dev Only callable by RECONFIGURATION
+    function applyPendingConfig() external;
 
     /// @notice Check if initialized
     function isInitialized() external view returns (bool);
@@ -352,7 +360,8 @@ contract EpochConfig {
 | `epochIntervalMicros()` | Anyone |
 | `isInitialized()` | Anyone |
 | `initialize()` | GENESIS only (once) |
-| `setEpochIntervalMicros()` | GOVERNANCE only |
+| `setForNextEpoch()` | GOVERNANCE only |
+| `applyPendingConfig()` | RECONFIGURATION only |
 
 ---
 
@@ -364,7 +373,7 @@ Protocol version tracking. Used to coordinate upgrades and gate new features.
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `VERSION_CONFIG` | `0x0000000000000000000000000001625F2028` | Version configuration |
+| `VERSION_CONFIG` | `0x0000000000000000000000000001625F1006` | Version configuration |
 
 ### Parameters
 
@@ -377,20 +386,31 @@ Protocol version tracking. Used to coordinate upgrades and gate new features.
 ```solidity
 /// @title VersionConfig
 /// @notice Configuration for protocol versioning
+/// @dev Uses pending-config pattern: changes queued via setForNextEpoch and applied at epoch boundary.
 contract VersionConfig {
     /// @notice Major protocol version number
     uint64 public majorVersion;
+
+    /// @notice Whether a pending configuration exists
+    bool public hasPendingConfig;
 
     /// @notice Initialize the version configuration
     /// @dev Can only be called once by GENESIS
     function initialize(uint64 _majorVersion) external;
 
-    /// @notice Update major version
-    /// @dev Only callable by GOVERNANCE. Version must be strictly greater.
-    function setMajorVersion(uint64 _majorVersion) external;
-
     /// @notice Check if initialized
     function isInitialized() external view returns (bool);
+
+    /// @notice Get pending version if any
+    function getPendingConfig() external view returns (bool hasPending, uint64 pendingVersion);
+
+    /// @notice Queue a new major version for the next epoch
+    /// @dev Only callable by GOVERNANCE. New version must be strictly greater than current.
+    function setForNextEpoch(uint64 _majorVersion) external;
+
+    /// @notice Apply pending configuration at epoch boundary
+    /// @dev Only callable by RECONFIGURATION. No-op if no pending config.
+    function applyPendingConfig() external;
 }
 ```
 
@@ -400,12 +420,102 @@ contract VersionConfig {
 |----------|-----------------|
 | `majorVersion()` | Anyone |
 | `isInitialized()` | Anyone |
+| `getPendingConfig()` | Anyone |
 | `initialize()` | GENESIS only (once) |
-| `setMajorVersion()` | GOVERNANCE only |
+| `setForNextEpoch()` | GOVERNANCE only |
+| `applyPendingConfig()` | RECONFIGURATION only |
 
 ### Validation Rules
 
-- `setMajorVersion()`: New version must be strictly greater than current (`newVersion > majorVersion`)
+- `setForNextEpoch()`: New version must be strictly greater than current (`newVersion > majorVersion`)
+
+---
+
+## Contract: `GovernanceConfig.sol`
+
+Configuration for on-chain governance. Holds parameters that the `Governance` contract reads when creating and resolving proposals. Updates follow the pending-config pattern and apply at the next epoch boundary.
+
+### System Address
+
+| Constant | Address | Description |
+|----------|---------|-------------|
+| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F1004` | Governance configuration |
+
+### Parameters
+
+| Parameter | Type | Description | Constraints |
+|-----------|------|-------------|-------------|
+| `minVotingThreshold` | `uint128` | Minimum total yes-voting-power (in wei) for a proposal to pass | `> 0` and `< type(uint128).max` |
+| `requiredProposerStake` | `uint256` | Minimum stake (in wei) a proposer must have to submit a proposal | `> 0` and `< type(uint256).max` |
+| `votingDurationMicros` | `uint64` | Proposal voting window in microseconds | `MIN_VOTING_DURATION (1 hour) ≤ value ≤ MAX_VOTING_DURATION (365 days)` |
+
+### Interface
+
+```solidity
+/// @title GovernanceConfig
+/// @notice Configuration parameters for the Governance contract
+contract GovernanceConfig {
+    /// @notice Pending configuration data structure
+    struct PendingConfig {
+        uint128 minVotingThreshold;
+        uint256 requiredProposerStake;
+        uint64  votingDurationMicros;
+    }
+
+    /// @notice Duration bounds enforced during validation
+    function MIN_VOTING_DURATION() external view returns (uint64); // 1 hour in microseconds
+    function MAX_VOTING_DURATION() external view returns (uint64); // 365 days in microseconds
+
+    /// @notice Current applied parameters
+    function minVotingThreshold() external view returns (uint128);
+    function requiredProposerStake() external view returns (uint256);
+    function votingDurationMicros() external view returns (uint64);
+
+    /// @notice Pending (staged) parameters, if any
+    function getPendingConfig() external view returns (bool hasPending, PendingConfig memory config);
+
+    /// @notice Whether a pending configuration exists
+    function hasPendingConfig() external view returns (bool);
+
+    /// @notice Genesis initialization
+    function initialize(
+        uint128 _minVotingThreshold,
+        uint256 _requiredProposerStake,
+        uint64  _votingDurationMicros
+    ) external;
+
+    /// @notice Stage a governance-parameter update for the next epoch
+    /// @dev Only callable by GOVERNANCE
+    function setForNextEpoch(
+        uint128 _minVotingThreshold,
+        uint256 _requiredProposerStake,
+        uint64  _votingDurationMicros
+    ) external;
+
+    /// @notice Apply the staged update at epoch transition
+    /// @dev Only callable by RECONFIGURATION
+    function applyPendingConfig() external;
+
+    function isInitialized() external view returns (bool);
+}
+```
+
+### Events
+
+- `PendingGovernanceConfigSet()` (parameterless)
+- `PendingGovernanceConfigCleared()`
+- `GovernanceConfigUpdated()` (parameterless)
+
+### Access Control
+
+| Function | Allowed Callers |
+|----------|-----------------|
+| All view functions | Anyone |
+| `initialize()` | GENESIS only (once) |
+| `setForNextEpoch(...)` | GOVERNANCE only |
+| `applyPendingConfig()` | RECONFIGURATION only |
+
+> Note: Before v1.2.0 these parameters lived inside `StakingConfig` as `minimumProposalStake`. That slot is retained on `StakingConfig` only as `__deprecated_minimumProposalStake` for storage-layout compatibility; all new callers must read from `GovernanceConfig`.
 
 ---
 
@@ -417,7 +527,7 @@ Configuration for on-chain randomness (DKG thresholds). Uses the pending config 
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F2024` | Randomness configuration |
+| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F1003` | Randomness configuration |
 
 ### Configuration Variants
 
@@ -425,9 +535,9 @@ Configuration for on-chain randomness (DKG thresholds). Uses the pending config 
 enum ConfigVariant { Off, V2 }
 
 struct ConfigV2Data {
-    uint64 secrecyThreshold;       // Min stake ratio to keep secret
-    uint64 reconstructionThreshold; // Min stake ratio to reveal
-    uint64 fastPathSecrecyThreshold; // Fast path threshold
+    uint128 secrecyThreshold;        // Min stake ratio to keep secret (fixed-point: value / 2^64)
+    uint128 reconstructionThreshold; // Min stake ratio to reveal (fixed-point: value / 2^64)
+    uint128 fastPathSecrecyThreshold; // Fast path threshold (fixed-point: value / 2^64)
 }
 
 struct RandomnessConfigData {
@@ -481,7 +591,7 @@ Consensus parameters stored as opaque bytes. Uses the pending config pattern for
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `CONSENSUS_CONFIG` | `0x0000000000000000000000000001625F2029` | Consensus configuration |
+| `CONSENSUS_CONFIG` | `0x0000000000000000000000000001625F1007` | Consensus configuration |
 
 ### Interface
 
@@ -532,7 +642,7 @@ VM execution parameters stored as opaque bytes. Uses the pending config pattern 
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `EXECUTION_CONFIG` | `0x0000000000000000000000000001625F202A` | Execution configuration |
+| `EXECUTION_CONFIG` | `0x0000000000000000000000000001625F1008` | Execution configuration |
 
 ### Interface
 
@@ -584,7 +694,7 @@ Manages Distributed Key Generation session lifecycle for epoch transitions. The 
 
 | Constant | Address | Description |
 |----------|---------|-------------|
-| `DKG` | `0x0000000000000000000000000001625F2025` | DKG session management |
+| `DKG` | `0x0000000000000000000000000001625F2002` | DKG session management |
 
 ### Session Info
 
@@ -736,15 +846,16 @@ uint64 microseconds = seconds * MICRO_CONVERSION_FACTOR;
 
 | Contract | Address |
 |----------|---------|
-| `STAKE_CONFIG` | `0x...1625F2011` |
-| `VALIDATOR_CONFIG` | `0x...1625F2015` |
-| `TIMESTAMP` | `0x...1625F2017` |
-| `RANDOMNESS_CONFIG` | `0x...1625F2024` |
-| `DKG` | `0x...1625F2025` |
-| `EPOCH_CONFIG` | `0x...1625F2027` |
-| `VERSION_CONFIG` | `0x...1625F2028` |
-| `CONSENSUS_CONFIG` | `0x...1625F2029` |
-| `EXECUTION_CONFIG` | `0x...1625F202A` |
+| `TIMESTAMP` | `0x...1625F1000` |
+| `STAKE_CONFIG` | `0x...1625F1001` |
+| `VALIDATOR_CONFIG` | `0x...1625F1002` |
+| `RANDOMNESS_CONFIG` | `0x...1625F1003` |
+| `GOVERNANCE_CONFIG` | `0x...1625F1004` |
+| `EPOCH_CONFIG` | `0x...1625F1005` |
+| `VERSION_CONFIG` | `0x...1625F1006` |
+| `CONSENSUS_CONFIG` | `0x...1625F1007` |
+| `EXECUTION_CONFIG` | `0x...1625F1008` |
+| `DKG` | `0x...1625F2002` |
 
 ---
 

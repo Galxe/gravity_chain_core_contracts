@@ -59,103 +59,54 @@ graph TD
 
 ## Contract: `SystemAddresses.sol`
 
-A library containing compile-time constants for all Gravity system addresses. These addresses follow the `0x1625F2xxx`
-pattern and are reserved at genesis.
+A library containing compile-time constants for all Gravity system addresses. Addresses are segmented into ranges
+by layer (consensus engine, runtime, staking/validator, governance, oracle, precompiles) and are reserved at genesis.
+
+### Address Ranges
+
+| Range        | Purpose                                   |
+| ------------ | ----------------------------------------- |
+| `0x1625F0xxx` | Consensus engine contracts / caller       |
+| `0x1625F1xxx` | Runtime configurations                    |
+| `0x1625F2xxx` | Staking & validator                       |
+| `0x1625F3xxx` | Governance                                |
+| `0x1625F4xxx` | Oracle                                    |
+| `0x1625F5xxx` | Precompiles                               |
 
 ### Address Table
 
-| Constant            | Address                                        | Description                       |
-| ------------------- | ---------------------------------------------- | --------------------------------- |
-| `SYSTEM_CALLER`     | `0x0000000000000000000000000001625F2000`       | VM/runtime system calls           |
-| `GENESIS`           | `0x0000000000000000000000000001625F2008`       | Genesis initialization contract   |
-| `RECONFIGURATION`   | `0x0000000000000000000000000001625F2010`       | Epoch lifecycle management        |
-| `STAKE_CONFIG`      | `0x0000000000000000000000000001625F2011`       | Staking configuration parameters  |
-| `STAKING`           | `0x0000000000000000000000000001625F2012`       | Governance staking factory        |
-| `VALIDATOR_MANAGER` | `0x0000000000000000000000000001625F2013`       | Validator set management          |
-| `GOVERNANCE`        | `0x0000000000000000000000000001625F2014`       | Governance contract               |
-| `VALIDATOR_CONFIG`  | `0x0000000000000000000000000001625F2015`       | Validator config parameters       |
-| `BLOCK`             | `0x0000000000000000000000000001625F2016`       | Block prologue/epilogue handler   |
-| `TIMESTAMP`         | `0x0000000000000000000000000001625F2017`       | On-chain time oracle              |
-| `JWK_MANAGER`       | `0x0000000000000000000000000001625F2018`       | JWK management for keyless auth   |
-| `NATIVE_ORACLE`     | `0x0000000000000000000000000001625F2023`       | Native oracle                     |
-| `RANDOMNESS_CONFIG` | `0x0000000000000000000000000001625F2024`       | DKG threshold configuration       |
-| `DKG`               | `0x0000000000000000000000000001625F2025`       | Distributed Key Generation        |
-| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F2026`       | Governance voting parameters      |
+| Constant                       | Address                                        | Description                                     |
+| ------------------------------ | ---------------------------------------------- | ----------------------------------------------- |
+| `SYSTEM_CALLER`                | `0x0000000000000000000000000001625F0000`       | VM/runtime system caller                        |
+| `GENESIS`                      | `0x0000000000000000000000000001625F0001`       | Genesis initialization contract                 |
+| `TIMESTAMP`                    | `0x0000000000000000000000000001625F1000`       | On-chain time oracle                            |
+| `STAKE_CONFIG`                 | `0x0000000000000000000000000001625F1001`       | Staking configuration parameters                |
+| `VALIDATOR_CONFIG`             | `0x0000000000000000000000000001625F1002`       | Validator config parameters                     |
+| `RANDOMNESS_CONFIG`            | `0x0000000000000000000000000001625F1003`       | DKG threshold configuration                     |
+| `GOVERNANCE_CONFIG`            | `0x0000000000000000000000000001625F1004`       | Governance voting parameters                    |
+| `EPOCH_CONFIG`                 | `0x0000000000000000000000000001625F1005`       | Epoch interval configuration                    |
+| `VERSION_CONFIG`               | `0x0000000000000000000000000001625F1006`       | Protocol major-version marker                   |
+| `CONSENSUS_CONFIG`             | `0x0000000000000000000000000001625F1007`       | Consensus parameters (BCS-serialized bytes)     |
+| `EXECUTION_CONFIG`             | `0x0000000000000000000000000001625F1008`       | VM execution parameters (BCS-serialized bytes)  |
+| `ORACLE_TASK_CONFIG`           | `0x0000000000000000000000000001625F1009`       | Continuous oracle task registry                 |
+| `ON_DEMAND_ORACLE_TASK_CONFIG` | `0x0000000000000000000000000001625F100A`       | On-demand oracle request-type registry          |
+| `STAKING`                      | `0x0000000000000000000000000001625F2000`       | Staking factory (StakePool deployer)            |
+| `VALIDATOR_MANAGER`            | `0x0000000000000000000000000001625F2001`       | Validator set management                        |
+| `DKG`                          | `0x0000000000000000000000000001625F2002`       | Distributed Key Generation                      |
+| `RECONFIGURATION`              | `0x0000000000000000000000000001625F2003`       | Epoch lifecycle management                      |
+| `BLOCK`                        | `0x0000000000000000000000000001625F2004`       | Block prologue/epilogue handler                 |
+| `PERFORMANCE_TRACKER`          | `0x0000000000000000000000000001625F2005`       | Validator performance tracker                   |
+| `GOVERNANCE`                   | `0x0000000000000000000000000001625F3000`       | Governance contract                             |
+| `NATIVE_ORACLE`                | `0x0000000000000000000000000001625F4000`       | Native oracle                                   |
+| `JWK_MANAGER`                  | `0x0000000000000000000000000001625F4001`       | JWK management for keyless auth                 |
+| `ORACLE_REQUEST_QUEUE`         | `0x0000000000000000000000000001625F4002`       | On-demand oracle request queue                  |
+| `NATIVE_MINT_PRECOMPILE`       | `0x0000000000000000000000000001625F5000`       | Native G token mint precompile                  |
+| `BLS_POP_VERIFY_PRECOMPILE`    | `0x0000000000000000000000000001625F5001`       | BLS12-381 PoP verification precompile           |
 
 ### Implementation
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @title SystemAddresses
-/// @notice Compile-time constants for Gravity system addresses
-/// @dev Import this library to get zero-cost address access (inlined by compiler)
-///      All addresses use the 0x1625F2xxx pattern reserved at genesis
-library SystemAddresses {
-    /// @notice VM/runtime system caller address
-    /// @dev Used for block prologue, NIL blocks, and other system-initiated calls
-    address internal constant SYSTEM_CALLER = 0x0000000000000000000000000001625F2000;
-
-    /// @notice Genesis initialization contract
-    /// @dev Only active during chain initialization
-    address internal constant GENESIS = 0x0000000000000000000000000001625F2008;
-
-    /// @notice Epoch lifecycle manager
-    /// @dev Handles epoch transitions and reconfiguration
-    address internal constant RECONFIGURATION = 0x0000000000000000000000000001625F2010;
-
-    /// @notice Staking configuration contract
-    /// @dev Stores staking parameters (lockup duration, minimum stake, etc.)
-    address internal constant STAKE_CONFIG = 0x0000000000000000000000000001625F2011;
-
-    /// @notice Governance staking contract
-    /// @dev Anyone can stake tokens to participate in governance voting
-    address internal constant STAKING = 0x0000000000000000000000000001625F2012;
-
-    /// @notice Validator set management contract
-    /// @dev Manages validator registration, bonding, and set transitions
-    address internal constant VALIDATOR_MANAGER = 0x0000000000000000000000000001625F2013;
-
-    /// @notice Governance contract
-    /// @dev Handles proposals, voting, and execution of governance decisions
-    address internal constant GOVERNANCE = 0x0000000000000000000000000001625F2014;
-
-    /// @notice Validator configuration contract
-    /// @dev Stores validator parameters (minimum/maximum bond, unbonding delay, etc.)
-    address internal constant VALIDATOR_CONFIG = 0x0000000000000000000000000001625F2015;
-
-    /// @notice Block prologue/epilogue handler
-    /// @dev Called by VM at start/end of each block
-    address internal constant BLOCK = 0x0000000000000000000000000001625F2016;
-
-    /// @notice On-chain timestamp oracle
-    /// @dev Provides microsecond-precision time, updated in block prologue
-    address internal constant TIMESTAMP = 0x0000000000000000000000000001625F2017;
-
-    /// @notice JWK (JSON Web Key) manager
-    /// @dev Manages JWKs for keyless account authentication
-    address internal constant JWK_MANAGER = 0x0000000000000000000000000001625F2018;
-
-    /// @notice Native oracle contract
-    /// @dev Stores verified data from external sources (blockchains, JWK providers, DNS).
-    ///      Supports hash-only mode (storage-efficient) and data mode (direct access).
-    ///      Data is recorded by consensus engine via SYSTEM_CALLER.
-    address internal constant NATIVE_ORACLE = 0x0000000000000000000000000001625F2023;
-
-    /// @notice Randomness configuration contract
-    /// @dev Stores DKG threshold parameters for on-chain randomness
-    address internal constant RANDOMNESS_CONFIG = 0x0000000000000000000000000001625F2024;
-
-    /// @notice DKG (Distributed Key Generation) contract
-    /// @dev Manages DKG session lifecycle for epoch transitions
-    address internal constant DKG = 0x0000000000000000000000000001625F2025;
-
-    /// @notice Governance configuration contract
-    /// @dev Stores governance parameters (voting threshold, proposal stake, etc.)
-    address internal constant GOVERNANCE_CONFIG = 0x0000000000000000000000000001625F2026;
-}
-```
+See `src/foundation/SystemAddresses.sol` for the authoritative list. Each constant is `address internal constant`
+and inlined at compile time.
 
 ### Gas Comparison
 
@@ -306,30 +257,29 @@ struct ValidatorConsensusInfo {
     bytes consensusPop;
     /// @notice Voting power derived from bond
     uint256 votingPower;
+    /// @notice Index in active validator array of an epoch
+    uint64 validatorIndex;
+    /// @notice Network addresses for P2P communication
+    bytes networkAddresses;
+    /// @notice Fullnode addresses for sync
+    bytes fullnodeAddresses;
 }
 
 /// @notice Full validator record
-/// @dev All timestamps are in microseconds (from Timestamp contract).
+/// @dev Owner / operator / voter roles are sourced from the StakePool (the validator's
+///      bond-holding pool), not stored on the record. All timestamps are microseconds.
 struct ValidatorRecord {
-    /// @notice Immutable validator identity address
+    /// @notice Immutable validator identity address (the StakePool address)
     address validator;
     /// @notice Display name (max 31 bytes)
     string moniker;
-    /// @notice Owner address (controls bond, can set operator)
-    address owner;
-    /// @notice Operator address (can rotate keys, request join/leave)
-    address operator;
     /// @notice Current lifecycle status
     ValidatorStatus status;
-    
-    // === Bond Management (simplified - no 4-bucket model) ===
-    /// @notice Current validator bond amount
+
+    // === Bond Management ===
+    /// @notice Current validator bond amount (voting power snapshot at epoch boundary)
     uint256 bond;
-    /// @notice Pending unbond amount (effective next epoch)
-    uint256 pendingUnbond;
-    /// @notice When unbond becomes withdrawable (microseconds)
-    uint64 unbondAvailableAt;
-    
+
     // === Consensus Key Material ===
     /// @notice BLS consensus public key
     bytes consensusPubkey;
@@ -339,30 +289,33 @@ struct ValidatorRecord {
     bytes networkAddresses;
     /// @notice Fullnode addresses
     bytes fullnodeAddresses;
-    
+
     // === Fee Distribution ===
     /// @notice Current fee recipient address
     address feeRecipient;
     /// @notice Pending fee recipient (applied next epoch)
     address pendingFeeRecipient;
-    
+
     // === Optional External Staking Pool ===
-    /// @notice Address of IValidatorStakingPool (0x0 if none)
+    /// @notice Address of IValidatorStakingPool (address(0) if none)
     address stakingPool;
-    
+
     // === Indexing ===
     /// @notice Index in active validator array (only valid when ACTIVE/PENDING_INACTIVE)
     uint64 validatorIndex;
-}
 
-/// @notice Compact validator info for queries
-struct ValidatorInfo {
-    address validator;
-    uint64 votingPower;
-    uint64 validatorIndex;
-    bytes consensusPubkey;
+    // === Pending Consensus Key Rotation (V3.5 audit fix D2-3) ===
+    /// @notice Pending BLS consensus public key (applied at next epoch boundary).
+    ///         Empty bytes mean no pending rotation.
+    bytes pendingConsensusPubkey;
+    /// @notice Pending proof of possession for the pending BLS key
+    bytes pendingConsensusPop;
 }
 ```
+
+> Note: unbond accounting (`pendingUnbond`, `unbondAvailableAt`) and the `owner` / `operator`
+> fields were removed in favor of the StakePool-centric model — roles and bond state live on
+> the `StakePool` that represents the validator. See [staking.spec.md](./staking.spec.md).
 
 ### Governance Types
 
@@ -404,231 +357,33 @@ struct Proposal {
 }
 ```
 
-### Full Implementation
-
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @title Types
-/// @notice Core data types for Gravity system contracts
-
-// ============================================================================
-// STAKING TYPES (for governance participation — anyone can stake)
-// ============================================================================
-
-/// @notice Stake position for governance voting
-struct StakePosition {
-    uint256 amount;
-    uint64 lockedUntil;
-    uint64 stakedAt;
-}
-
-// ============================================================================
-// VALIDATOR TYPES (for consensus participation)
-// ============================================================================
-
-/// @notice Validator lifecycle status
-enum ValidatorStatus {
-    INACTIVE,
-    PENDING_ACTIVE,
-    ACTIVE,
-    PENDING_INACTIVE
-}
-
-/// @notice Validator consensus info (packed for consensus engine)
-struct ValidatorConsensusInfo {
-    address validator;
-    bytes consensusPubkey;
-    bytes consensusPop;
-    uint256 votingPower;
-}
-
-/// @notice Full validator record
-struct ValidatorRecord {
-    address validator;
-    string moniker;
-    address owner;
-    address operator;
-    ValidatorStatus status;
-    uint256 bond;
-    uint256 pendingUnbond;
-    uint64 unbondAvailableAt;
-    bytes consensusPubkey;
-    bytes consensusPop;
-    bytes networkAddresses;
-    bytes fullnodeAddresses;
-    address feeRecipient;
-    address pendingFeeRecipient;
-    address stakingPool;
-    uint64 validatorIndex;
-}
-
-/// @notice Compact validator info for queries
-struct ValidatorInfo {
-    address validator;
-    uint64 votingPower;
-    uint64 validatorIndex;
-    bytes consensusPubkey;
-}
-
-// ============================================================================
-// GOVERNANCE TYPES
-// ============================================================================
-
-/// @notice Governance proposal lifecycle state
-enum ProposalState {
-    PENDING,
-    SUCCEEDED,
-    FAILED,
-    EXECUTED,
-    CANCELLED
-}
-
-/// @notice Governance proposal
-struct Proposal {
-    uint64 id;
-    address proposer;
-    bytes32 executionHash;
-    string metadataUri;
-    uint64 creationTime;
-    uint64 expirationTime;
-    uint128 minVoteThreshold;
-    uint128 yesVotes;
-    uint128 noVotes;
-    bool isResolved;
-    uint64 resolutionTime;
-}
-```
+See `src/foundation/Types.sol` for the authoritative definitions.
 
 ---
 
 ## Contract: `Errors.sol`
 
 Custom errors organized by domain. Using custom errors instead of require strings saves gas and provides structured
-error data.
+error data. See `src/foundation/Errors.sol` for the authoritative definitions — the library groups errors into
+Staking-factory, StakePool, Validator, Reconfiguration, Governance, Timestamp, Config, RandomnessConfig, DKG,
+NativeOracle, VersionConfig, ValidatorManagement, ValidatorConfig, GovernanceConfig, EpochConfig,
+Consensus/ExecutionConfig, JWK-manager, Role-change, and General sections.
 
-### Implementation
+Notable errors that pinned-down behavior of the system:
 
-```solidity
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
-
-/// @title Errors
-/// @notice Custom errors for Gravity system contracts
-
-library Errors {
-    // ========================================================================
-    // STAKING ERRORS
-    // ========================================================================
-
-    /// @notice Staker has no stake position
-    error NoStakePosition(address staker);
-
-    /// @notice Stake amount is insufficient
-    error InsufficientStake(uint256 required, uint256 actual);
-
-    /// @notice Lockup period has not expired
-    error LockupNotExpired(uint64 lockedUntil, uint64 currentTime);
-
-    /// @notice Amount cannot be zero
-    error ZeroAmount();
-
-    // ========================================================================
-    // VALIDATOR ERRORS
-    // ========================================================================
-
-    /// @notice Validator does not exist
-    error ValidatorNotFound(address validator);
-
-    /// @notice Validator already registered
-    error ValidatorAlreadyExists(address validator);
-
-    /// @notice Invalid validator status for operation
-    error InvalidStatus(uint8 expected, uint8 actual);
-
-    /// @notice Bond amount is insufficient
-    error InsufficientBond(uint256 required, uint256 actual);
-
-    /// @notice Bond exceeds maximum allowed
-    error ExceedsMaximumBond(uint256 maximum, uint256 actual);
-
-    /// @notice Caller is not the validator owner
-    error NotOwner(address expected, address actual);
-
-    /// @notice Caller is not the validator operator
-    error NotOperator(address expected, address actual);
-
-    /// @notice Caller is not the pool staker
-    error NotStaker(address caller, address staker);
-
-    /// @notice Validator set changes are disabled
-    error ValidatorSetChangesDisabled();
-
-    /// @notice Maximum validator set size reached
-    error MaxValidatorSetSizeReached(uint256 maxSize);
-
-    /// @notice Voting power increase exceeds limit
-    error VotingPowerIncreaseLimitExceeded(uint256 limit, uint256 actual);
-
-    /// @notice Moniker exceeds maximum length
-    error MonikerTooLong(uint256 maxLength, uint256 actualLength);
-
-    /// @notice Unbond period has not elapsed
-    error UnbondNotReady(uint64 availableAt, uint64 currentTime);
-
-    // ========================================================================
-    // RECONFIGURATION ERRORS
-    // ========================================================================
-
-    /// @notice Reconfiguration is already in progress
-    error ReconfigurationInProgress();
-
-    /// @notice No reconfiguration in progress
-    error ReconfigurationNotInProgress();
-
-    /// @notice Epoch has not yet ended
-    error EpochNotYetEnded(uint64 nextEpochTime, uint64 currentTime);
-
-    // ========================================================================
-    // GOVERNANCE ERRORS
-    // ========================================================================
-
-    /// @notice Proposal not found
-    error ProposalNotFound(uint64 proposalId);
-
-    /// @notice Voting period has ended
-    error VotingPeriodEnded(uint64 expirationTime);
-
-    /// @notice Voting period has not ended
-    error VotingPeriodNotEnded(uint64 expirationTime);
-
-    /// @notice Proposal has already been resolved
-    error ProposalAlreadyResolved(uint64 proposalId);
-
-    /// @notice Execution hash does not match
-    error ExecutionHashMismatch(bytes32 expected, bytes32 actual);
-
-    /// @notice Lockup duration is insufficient for operation
-    error InsufficientLockup(uint64 required, uint64 actual);
-
-    /// @notice Atomic resolution is not allowed
-    error AtomicResolutionNotAllowed();
-
-    /// @notice Voting power is insufficient
-    error InsufficientVotingPower(uint256 required, uint256 actual);
-
-    // ========================================================================
-    // TIMESTAMP ERRORS
-    // ========================================================================
-
-    /// @notice Timestamp must advance for normal blocks
-    error TimestampMustAdvance(uint64 proposed, uint64 current);
-
-    /// @notice Timestamp must equal current for NIL blocks
-    error TimestampMustEqual(uint64 proposed, uint64 current);
-}
-```
+| Error                                  | Meaning                                                               |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| `NonceNotSequential`                   | Oracle nonces must be `currentNonce + 1` (no gaps)                    |
+| `ExecutionFailed(uint64, bytes)`       | Governance execute() includes revert reason in the error              |
+| `ProposalNotResolved`                  | execute() must be preceded by explicit resolve()                      |
+| `TooManyProposalTargets`               | Governance proposals are capped at `MAX_PROPOSAL_TARGETS = 100`       |
+| `InvalidProposalId`                    | Sentinel 0 is reserved — IDs start at 1                               |
+| `HasPendingWithdrawals`                | StakePool staker role cannot change while withdrawals are unclaimed   |
+| `RoleChangeDelayTooShort`              | StakePool per-role timelock delays have a minimum                     |
+| `RoleChangeTooEarly` / `NoPendingRoleChange` / `NotPendingRole` / `RoleAlreadySet` | 2-step propose/accept timelock guards |
+| `InvalidAutoEvictThresholdPct`         | `autoEvictThresholdPct` must be in 0–100                              |
+| `TooManyPendingBuckets`                | StakePool withdrawal buckets are capped at 1,000                      |
+| `WithdrawalWouldBreachMinimumBond`     | Unstake rejected if it drops an active validator's bond below minimum |
 
 ---
 
