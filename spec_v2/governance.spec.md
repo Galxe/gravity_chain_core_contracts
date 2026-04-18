@@ -118,10 +118,10 @@ graph TD
 
 ## System Addresses
 
-| Constant            | Address                                    | Description                  |
-| ------------------- | ------------------------------------------ | ---------------------------- |
-| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F2026`   | Governance config contract   |
-| `GOVERNANCE`        | `0x0000000000000000000000000001625F2014`   | Governance contract          |
+| Constant            | Address                                    | Description                                        |
+| ------------------- | ------------------------------------------ | -------------------------------------------------- |
+| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F1004`   | Governance config contract (lives in Runtime layer) |
+| `GOVERNANCE`        | `0x0000000000000000000000000001625F3000`   | Governance contract                                |
 
 ---
 
@@ -182,71 +182,12 @@ graph TD
 
 ## Contract: `GovernanceConfig.sol`
 
-### Purpose
+**This contract lives in the Runtime layer** (address `0x0000000000000000000000000001625F1004`). See **[runtime.spec.md → Contract: GovernanceConfig.sol](./runtime.spec.md#contract-governanceconfigsol)** for the full specification, including state variables, interface, events, validation rules, and the pending-config pattern (`setForNextEpoch` / `applyPendingConfig`).
 
-Configuration parameters for governance. Initialized at genesis, updatable via governance (GOVERNANCE).
-
-### System Address
-
-| Constant            | Address                                    | Description              |
-| ------------------- | ------------------------------------------ | ------------------------ |
-| `GOVERNANCE_CONFIG` | `0x0000000000000000000000000001625F2026`   | Governance configuration |
-
-### State Variables
-
-```solidity
-/// @notice Minimum total votes (yes + no) required for quorum
-uint128 public minVotingThreshold;
-
-/// @notice Minimum voting power required to create a proposal
-uint256 public requiredProposerStake;
-
-/// @notice Duration of voting period in microseconds
-uint64 public votingDurationMicros;
-
-/// @notice Whether contract has been initialized
-bool private _initialized;
-```
-
-### Interface
-
-```solidity
-interface IGovernanceConfig {
-    // === Events ===
-    event ConfigUpdated(bytes32 indexed param, uint256 oldValue, uint256 newValue);
-
-    // === View Functions ===
-    function minVotingThreshold() external view returns (uint128);
-    function requiredProposerStake() external view returns (uint256);
-    function votingDurationMicros() external view returns (uint64);
-
-    // === Initialization ===
-    function initialize(
-        uint128 _minVotingThreshold,
-        uint256 _requiredProposerStake,
-        uint64 _votingDurationMicros
-    ) external;
-
-    // === Setters (GOVERNANCE only) ===
-    function setMinVotingThreshold(uint128 _minVotingThreshold) external;
-    function setRequiredProposerStake(uint256 _requiredProposerStake) external;
-    function setVotingDurationMicros(uint64 _votingDurationMicros) external;
-}
-```
-
-### Access Control
-
-| Function                         | Allowed Callers    |
-| -------------------------------- | ------------------ |
-| All view functions               | Anyone             |
-| `initialize()`                   | GENESIS only       |
-| All setters                      | GOVERNANCE only    |
-
-### Validation Rules
-
-| Parameter                    | Validation                                   |
-| ---------------------------- | -------------------------------------------- |
-| `votingDurationMicros`       | Must be > 0                                  |
+Summary of parameters consumed by `Governance.sol`:
+- `minVotingThreshold()` — minimum total yes-voting-power for a proposal to pass
+- `requiredProposerStake()` — minimum stake a proposer must have
+- `votingDurationMicros()` — voting window length
 
 ---
 
@@ -257,10 +198,20 @@ interface IGovernanceConfig {
 Main governance contract handling proposal creation, voting, resolution, and execution.
 Uses `Ownable2Step` pattern for owner management and executor authorization.
 
+### Constants
+
+```solidity
+/// @notice Maximum number of targets/datas per proposal to prevent block-gas-limit DoS
+uint256 public constant MAX_PROPOSAL_TARGETS = 100;
+```
+
 ### State Variables
 
 ```solidity
 /// @notice Next proposal ID to be assigned
+/// @dev SENTINEL CONVENTION: proposal ID 0 is reserved as "not found".
+///      nextProposalId starts at 1 and only increments, so ID 0 is never assigned.
+///      All lookups check `p.id == 0` to detect non-existent proposals.
 uint64 public nextProposalId = 1;
 
 /// @notice Mapping of proposal ID to Proposal struct
@@ -385,21 +336,23 @@ Create a new governance proposal with batch execution support.
 
 1. Verify `targets.length == datas.length` (revert with `ProposalArrayLengthMismatch` if not)
 2. Verify `targets.length > 0` (revert with `EmptyProposalBatch` if empty)
-3. Verify `stakePool` is a valid pool via `Staking.isPool()`
-4. Verify `msg.sender == StakePool.voter`
-5. Calculate `expirationTime = now + votingDurationMicros`
-6. Get voting power at expiration time via `Staking.getPoolVotingPower(stakePool, expirationTime)`
-7. Revert if voting power < `requiredProposerStake`
-8. Compute execution hash: `keccak256(abi.encode(targets, datas))`
-9. Create proposal with:
-   - `id = nextProposalId++`
-   - `proposer = msg.sender`
-   - `executionHash = executionHash`
-   - `creationTime = now`
-   - `expirationTime = now + votingDurationMicros`
-   - `minVoteThreshold = config.minVotingThreshold()`
-10. Emit `ProposalCreated` event
-11. Return `proposalId`
+3. Verify `targets.length <= MAX_PROPOSAL_TARGETS` (100) — revert with `TooManyProposalTargets(targetsLength, maxTargets)` if exceeded
+4. Verify `stakePool` is a valid pool via `Staking.isPool()`
+5. Verify `msg.sender == StakePool.voter`
+6. Calculate `expirationTime = now + votingDurationMicros`
+7. Get voting power at expiration time via `Staking.getPoolVotingPower(stakePool, expirationTime)`
+8. Revert if voting power < `requiredProposerStake`
+9. Compute execution hash: `keccak256(abi.encode(targets, datas))`
+10. Defence-in-depth: if `nextProposalId == 0`, revert with `InvalidProposalId()` (preserves the "id 0 = not found" invariant across upgrades)
+11. Create proposal with:
+    - `id = nextProposalId++`
+    - `proposer = msg.sender`
+    - `executionHash = executionHash`
+    - `creationTime = now`
+    - `expirationTime = now + votingDurationMicros`
+    - `minVoteThreshold = config.minVotingThreshold()`
+12. Emit `ProposalCreated` event
+13. Return `proposalId`
 
 **Notes:**
 
@@ -412,9 +365,11 @@ Create a new governance proposal with batch execution support.
 
 - `ProposalArrayLengthMismatch(targetsLen, datasLen)` — Array lengths don't match
 - `EmptyProposalBatch()` — No targets provided
+- `TooManyProposalTargets(targetsLength, maxTargets)` — More than `MAX_PROPOSAL_TARGETS` (100) targets supplied
 - `InvalidPool(stakePool)` — Pool not created by Staking factory
 - `NotDelegatedVoter(expected, actual)` — Caller is not pool's voter
 - `InsufficientVotingPower(required, actual)` — Not enough stake (includes lockup too short case)
+- `InvalidProposalId()` — Internal sentinel (reserved; indicates id counter corruption)
 
 ---
 
@@ -539,16 +494,17 @@ Execute an approved proposal.
 
 1. Verify `targets.length == datas.length` (revert with `ProposalArrayLengthMismatch` if not)
 2. Verify `targets.length > 0` (revert with `EmptyProposalBatch` if empty)
-3. Verify proposal exists
-4. Revert if already executed
-5. Get proposal state; revert if not SUCCEEDED
-6. Compute hash: `keccak256(abi.encode(targets, datas))`
-7. Revert if hash != `proposal.executionHash`
-8. Mark as executed: `executed[proposalId] = true` (CEI pattern)
-9. For each (target, data) pair:
-   - Call `target` with `data`
-   - Revert if call fails
-10. Emit `ProposalExecuted` event
+3. Verify proposal exists (revert `ProposalNotFound`)
+4. Revert with `ProposalAlreadyExecuted` if already executed
+5. Require `isResolved == true` (revert with `ProposalNotResolved(proposalId)` if caller attempts to execute a proposal that has not been explicitly resolved yet — even if voting has ended and it would pass)
+6. Get proposal state; revert if not SUCCEEDED
+7. Compute hash: `keccak256(abi.encode(targets, datas))`
+8. Revert if hash != `proposal.executionHash`
+9. Mark as executed: `executed[proposalId] = true` (CEI pattern)
+10. For each (target, data) pair:
+    - `(success, returnData) = target.call(data)`
+    - If `!success`, revert with `ExecutionFailed(proposalId, returnData)` — the raw revert bytes are bubbled up so the executor can diagnose why
+11. Emit `ProposalExecuted` event
 
 **Notes:**
 
@@ -562,9 +518,10 @@ Execute an approved proposal.
 - `EmptyProposalBatch()` — No targets provided
 - `ProposalNotFound(proposalId)` — Proposal doesn't exist
 - `ProposalAlreadyExecuted(proposalId)` — Already executed
+- `ProposalNotResolved(proposalId)` — Voting period may be over but `resolve()` has not been called
 - `ProposalNotSucceeded(proposalId)` — Proposal didn't pass
 - `ExecutionHashMismatch(expected, actual)` — Hash doesn't match
-- `ExecutionFailed(proposalId)` — External call failed
+- `ExecutionFailed(uint64 proposalId, bytes reason)` — External call failed; `reason` is the raw revert bytes bubbled up from the target
 
 ---
 
@@ -683,12 +640,13 @@ Get the number of authorized executors.
 
 ## Access Control Summary
 
-| Contract          | Function                | Allowed Callers               |
-| ----------------- | ----------------------- | ----------------------------- |
-| GovernanceConfig  | `initialize()`          | GENESIS only (once)           |
-| GovernanceConfig  | All setters             | GOVERNANCE only               |
-| GovernanceConfig  | All view functions      | Anyone                        |
-| Governance        | `createProposal()`      | Pool's voter address          |
+| Contract          | Function                      | Allowed Callers                |
+| ----------------- | ----------------------------- | ------------------------------ |
+| GovernanceConfig  | `initialize()`                | GENESIS only (once)            |
+| GovernanceConfig  | `setForNextEpoch(...)`        | GOVERNANCE only                |
+| GovernanceConfig  | `applyPendingConfig()`        | RECONFIGURATION only           |
+| GovernanceConfig  | All view functions            | Anyone                         |
+| Governance        | `createProposal()`            | Pool's voter address           |
 | Governance        | `vote()`                | Pool's voter address          |
 | Governance        | `batchVote()`           | Pool's voter address (all)    |
 | Governance        | `batchPartialVote()`    | Pool's voter address (all)    |
@@ -722,12 +680,15 @@ The following errors are used by governance contracts:
 | --------------------------------------------------- | --------------------------------------------------- |
 | `NotDelegatedVoter(address expected, address actual)` | Caller is not pool's voter                        |
 | `NotExecutor(address caller)`                       | Caller is not an authorized executor                |
+| `ProposalNotResolved(uint64 proposalId)`            | Execute called before `resolve()`                   |
 | `ProposalNotSucceeded(uint64 proposalId)`           | Proposal didn't pass                                |
 | `ProposalAlreadyExecuted(uint64 proposalId)`        | Proposal already executed                           |
-| `ExecutionFailed(uint64 proposalId)`                | External call failed                                |
+| `ExecutionFailed(uint64 proposalId, bytes reason)`  | External call failed; `reason` is the bubbled revert data |
 | `EmptyProposalBatch()`                              | No targets in proposal batch                        |
+| `TooManyProposalTargets(uint256 targetsLength, uint256 maxTargets)` | More than `MAX_PROPOSAL_TARGETS` (100) targets  |
 | `ProposalArrayLengthMismatch(uint256, uint256)`     | targets.length != datas.length                      |
 | `ResolutionCannotBeAtomic(uint64 lastVoteTime)`     | Resolution in same timestamp as last vote           |
+| `InvalidProposalId()`                               | Sentinel guard — id counter must never be 0         |
 | `InvalidVotingDuration()`                           | Voting duration is zero                             |
 
 ---

@@ -147,7 +147,7 @@ graph TD
 
 | Constant  | Address                                  | Description                |
 | --------- | ---------------------------------------- | -------------------------- |
-| `STAKING` | `0x0000000000000000000000000001625F2012` | StakePool factory contract |
+| `STAKING` | `0x0000000000000000000000000001625F2000` | StakePool factory contract |
 
 ---
 
@@ -164,21 +164,21 @@ graph TD
         Voter[Voter]
     end
     
-    Owner -->|setVoter, setOperator, setStaker| StakePool
+    Owner -->|propose/accept/cancel{Staker,Operator,Voter}, set*ChangeDelay| StakePool
     Owner -->|transferOwnership, acceptOwnership| StakePool
-    Staker -->|addStake, unstake, withdrawAvailable, renewLockUntil| StakePool
+    Staker -->|addStake, unstake, withdrawAvailable, renewLockUntil, withdrawRewards| StakePool
     Operator -.->|reserved for validator ops| StakePool
     Voter -.->|used for governance voting| StakePool
 ```
 
 ### Role Definitions
 
-| Role       | Controlled By      | Can Do                                                          |
-| ---------- | ------------------ | --------------------------------------------------------------- |
-| **Owner**  | `Ownable2Step`     | Set voter/operator/staker, transfer ownership (2-step process)  |
-| **Staker** | `staker` address   | Add stake, unstake, withdraw, renew lockup (can be a contract)  |
-| **Operator** | `operator` address | Reserved for validator operations (used by ValidatorManager)   |
-| **Voter**  | `voter` address    | Cast governance votes using pool's voting power                 |
+| Role         | Controlled By       | Can Do                                                                        |
+| ------------ | ------------------- | ----------------------------------------------------------------------------- |
+| **Owner**    | `Ownable2Step`      | Propose/cancel voter/operator/staker changes, tune per-role delays, transfer ownership |
+| **Staker**   | `staker` address    | Add stake, unstake, withdraw, renew lockup, withdraw rewards (can be a contract) |
+| **Operator** | `operator` address  | Reserved for validator operations (used by ValidatorManager)                  |
+| **Voter**    | `voter` address     | Cast governance votes using pool's voting power                               |
 
 ### Ownership Transfer (Ownable2Step)
 
@@ -188,6 +188,28 @@ StakePool inherits from OpenZeppelin's `Ownable2Step` for secure ownership trans
 2. New owner calls `acceptOwnership()` — completes transfer
 
 This prevents accidental transfers to wrong addresses.
+
+### 2-Step Role Change (Timelock)
+
+Staker, operator, and voter changes go through a per-role timelock (V3.5 audit hardening, PRs #251/#259):
+
+1. **Propose** — owner calls `proposeStaker(addr)` / `proposeOperator(addr)` / `proposeVoter(addr)` which records
+   `pendingX` and `xChangeAt = now + xChangeDelay`. Emits `RoleChangeProposed(pool, role, newAddress, effectiveAt)`.
+2. **Accept** — after the delay, the *pending address itself* calls `acceptStaker()` / `acceptOperator()` /
+   `acceptVoter()`. Reverts with `RoleChangeTooEarly` if too early, `NotPendingRole` if the wrong caller.
+3. **Cancel** — owner may call `cancelStakerChange()` / `cancelOperatorChange()` / `cancelVoterChange()` at any point.
+   Emits `RoleChangeCancelled`.
+
+Additional guards:
+
+- `acceptStaker()` reverts with `HasPendingWithdrawals(pendingAmount)` if there are any unclaimed pending withdrawals
+  — this prevents the outgoing staker's funds from being trapped.
+- Delays default to `MIN_ROLE_CHANGE_DELAY` (1 day) at construction and can be raised per-role via
+  `setStakerChangeDelay(uint64)` / `setOperatorChangeDelay(uint64)` / `setVoterChangeDelay(uint64)`; setting below
+  the minimum reverts with `RoleChangeDelayTooShort`.
+- `proposeX(sameAddress)` reverts with `RoleAlreadySet`.
+- Events `OperatorChanged` / `VoterChanged` / `StakerChanged` still fire on successful acceptance to preserve
+  indexer compatibility.
 
 ### Staker as Smart Contract
 
@@ -349,7 +371,11 @@ function _getClaimableAmount() internal view returns (uint256) {
 
 - Reduces `activeStake` by `amount`
 - Creates or merges into pending bucket with current `lockedUntil`
-- For validators (ACTIVE or PENDING_INACTIVE): verifies `activeStake - amount >= minimumBond`
+- Rejected while a reconfiguration is in progress (`whenNotReconfiguring` modifier)
+- For validators in **PENDING_ACTIVE, ACTIVE, or PENDING_INACTIVE** state: verifies the effective stake
+  at `now + minLockupDuration` stays `>= minimumBond`, else reverts `WithdrawalWouldBreachMinimumBond`.
+  The PENDING_ACTIVE check was added in PR #75 — without it, a validator could join the set under-bonded.
+- Caps the pending bucket count at `MAX_PENDING_BUCKETS = 1000`; overflow reverts `TooManyPendingBuckets`.
 - Pending stake remains "effective" for voting while its `lockedUntil >= now`
 
 **On `withdrawAvailable(recipient)` (staker only):**
@@ -369,6 +395,20 @@ function _getClaimableAmount() internal view returns (uint256) {
 - Extends `lockedUntil` by `duration`
 - Validates result: `newLockedUntil >= now + minLockupDuration`
 - Does NOT affect existing pending buckets (they keep original lockedUntil)
+
+**On `withdrawRewards(recipient)` (staker only, `nonReentrant`):**
+
+- Withdraws `address(this).balance - activeStake - unclaimedPending` — i.e. any balance above the tracked stake/pending.
+- Not subject to lockup or unbonding delay (rewards are not stake).
+- Emits `RewardsWithdrawn(pool, amount, recipient)`.
+- `getRewardBalance()` exposes the same quantity as a view.
+
+### Reconfiguration Guard
+
+`addStake`, `unstake`, `unstakeAndWithdraw`, `withdrawAvailable`, and `renewLockUntil` use a
+`whenNotReconfiguring` modifier that reverts with `ReconfigurationInProgress` whenever
+`IReconfiguration.isTransitionInProgress()` returns true. This prevents stake-state mutations from racing with
+epoch/DKG handoffs.
 
 ---
 
@@ -554,6 +594,9 @@ uint256 public claimedAmount;
 
 ```solidity
 interface IStakePool {
+    // === Enums ===
+    enum Role { Staker, Operator, Voter }
+
     // === Structs ===
     struct PendingBucket {
         uint64 lockedUntil;        // When this stake stops being effective
@@ -568,6 +611,10 @@ interface IStakePool {
     event OperatorChanged(address indexed pool, address oldOperator, address newOperator);
     event VoterChanged(address indexed pool, address oldVoter, address newVoter);
     event StakerChanged(address indexed pool, address oldStaker, address newStaker);
+    event RoleChangeProposed(address indexed pool, Role indexed role, address indexed newAddress, uint64 effectiveAt);
+    event RoleChangeCancelled(address indexed pool, Role indexed role);
+    event RoleChangeDelayUpdated(address indexed pool, Role indexed role, uint64 oldDelay, uint64 newDelay);
+    event RewardsWithdrawn(address indexed pool, uint256 amount, address indexed recipient);
 
     // === View Functions ===
     function getStaker() external view returns (address);
@@ -585,11 +632,23 @@ interface IStakePool {
     function getPendingBucket(uint256 index) external view returns (PendingBucket memory);
     function getClaimedAmount() external view returns (uint256);
     function getClaimableAmount() external view returns (uint256);
+    function getRewardBalance() external view returns (uint256);
 
     // === Owner Functions (via Ownable2Step) ===
-    function setOperator(address newOperator) external;
-    function setVoter(address newVoter) external;
-    function setStaker(address newStaker) external;
+    // 2-step role change timelock (propose → wait → accept, or cancel)
+    function proposeStaker(address newStaker) external;
+    function acceptStaker() external;                 // called by the new staker itself
+    function cancelStakerChange() external;
+    function proposeOperator(address newOperator) external;
+    function acceptOperator() external;               // called by the new operator itself
+    function cancelOperatorChange() external;
+    function proposeVoter(address newVoter) external;
+    function acceptVoter() external;                  // called by the new voter itself
+    function cancelVoterChange() external;
+    // Tunable per-role delays (must be >= MIN_ROLE_CHANGE_DELAY)
+    function setStakerChangeDelay(uint64 newDelay) external;
+    function setOperatorChangeDelay(uint64 newDelay) external;
+    function setVoterChangeDelay(uint64 newDelay) external;
 
     // === Staker Functions ===
     function addStake() external payable;
@@ -597,11 +656,17 @@ interface IStakePool {
     function withdrawAvailable(address recipient) external returns (uint256 amount);
     function unstakeAndWithdraw(uint256 amount, address recipient) external returns (uint256 withdrawn);
     function renewLockUntil(uint64 durationMicros) external;
+    function withdrawRewards(address recipient) external returns (uint256 amount);
 
     // === System Functions ===
     function systemRenewLockup() external;
 }
 ```
+
+Constants exposed on the pool:
+
+- `MAX_PENDING_BUCKETS = 1000` — hard cap on per-pool pending buckets to bound withdrawal-state growth.
+- `MIN_ROLE_CHANGE_DELAY = 1 days` — minimum acceptable per-role timelock delay.
 
 ### Constructor
 
@@ -659,15 +724,20 @@ Unstake tokens (move from active stake to pending bucket).
 
 1. Revert if `amount == 0`
 2. Revert if `amount > activeStake` (insufficient available)
-3. **For validators (ACTIVE or PENDING_INACTIVE)**: Check `activeStake - amount >= minimumBond`
-4. Reduce `activeStake` by `amount`
-5. Add to pending bucket with current `lockedUntil`:
+3. Revert with `ReconfigurationInProgress` while a transition is running (`whenNotReconfiguring`).
+4. **For validators in PENDING_ACTIVE, ACTIVE, or PENDING_INACTIVE**: check that effective stake at
+   `now + minLockupDuration` stays `>= minimumBond`; otherwise revert `WithdrawalWouldBreachMinimumBond`.
+5. Revert with `TooManyPendingBuckets` if the pool already holds `MAX_PENDING_BUCKETS = 1000` buckets
+   and the new unstake would append another.
+6. Reduce `activeStake` by `amount`
+7. Add to pending bucket with current `lockedUntil`:
    - If last bucket has same `lockedUntil`: merge (add to cumulativeAmount)
    - Otherwise: append new bucket with cumulative prefix sum
-6. Emit `Unstaked` event
+8. Emit `Unstaked` event
 
 **Notes:**
-- Active validators cannot reduce `activeStake` below `minimumBond`
+- Validators in PENDING_ACTIVE cannot drop below `minimumBond` either (PR #75) — this prevents joining
+  the set under-bonded.
 - Combined with lockup auto-renewal at epoch boundaries, voting power is always >= minBond
 - The pending amount is still "effective" for voting while its `lockedUntil >= now`
 - Tokens remain in contract until `withdrawAvailable()` is called after unbonding
@@ -748,41 +818,47 @@ Renew lockup for active validators (called by Staking factory during epoch trans
 - Ensures voting power never drops to zero due to lockup expiration while validating
 - Does NOT affect existing pending buckets (they keep original lockedUntil)
 
-#### `setOperator(address newOperator)` — Owner Only
+#### Role Change Functions (2-step timelock)
 
-Change the operator address.
+Staker, operator, and voter role changes go through a propose → wait → accept flow
+(`cancel*Change` clears a pending proposal). Each role has an independent, owner-tunable delay that
+starts at `MIN_ROLE_CHANGE_DELAY` (1 day) and cannot go below it (`RoleChangeDelayTooShort`).
 
-**Access Control:** Only `owner` (via Ownable2Step)
+**Common behavior for `propose{Staker,Operator,Voter}(addr)` — Owner Only:**
+
+1. Revert `RoleAlreadySet` if `addr` equals the current role holder.
+2. Record `pendingX = addr` and `xChangeAt = uint64(block.timestamp) + xChangeDelay`.
+3. Emit `RoleChangeProposed(pool, role, addr, xChangeAt)`.
+
+**Common behavior for `accept{Staker,Operator,Voter}()` — Pending Role Holder Only:**
+
+1. Revert `NoPendingRoleChange` if no proposal is pending.
+2. Revert `NotPendingRole(caller, expected)` if `msg.sender != pendingX`.
+3. Revert `RoleChangeTooEarly(xChangeAt, block.timestamp)` if the delay has not elapsed.
+4. For `acceptStaker()` only: revert `HasPendingWithdrawals(pendingAmount)` if any pending-bucket amount is unclaimed.
+5. Promote `pendingX` to `x`, clear the pending slot, and emit the original `OperatorChanged` / `VoterChanged` /
+   `StakerChanged` event.
+
+**Common behavior for `cancel{Staker,Operator,Voter}Change()` — Owner Only:**
+
+1. Revert `NoPendingRoleChange` if nothing is pending.
+2. Clear `pendingX` and `xChangeAt`. Emit `RoleChangeCancelled(pool, role)`.
+
+**`set{Staker,Operator,Voter}ChangeDelay(uint64 newDelay)` — Owner Only:**
+
+1. Revert `RoleChangeDelayTooShort` if `newDelay < MIN_ROLE_CHANGE_DELAY`.
+2. Emit `RoleChangeDelayUpdated(pool, role, old, new)`.
+
+#### `withdrawRewards(address recipient)` — Staker Only (nonReentrant)
+
+Withdraw any balance above the tracked stake (i.e. rewards/airdrops credited to the pool).
 
 **Behavior:**
 
-1. Store old operator
-2. Set `operator = newOperator`
-3. Emit `OperatorChanged` event
-
-#### `setVoter(address newVoter)` — Owner Only
-
-Change the delegated voter address.
-
-**Access Control:** Only `owner` (via Ownable2Step)
-
-**Behavior:**
-
-1. Store old voter
-2. Set `voter = newVoter`
-3. Emit `VoterChanged` event
-
-#### `setStaker(address newStaker)` — Owner Only
-
-Change the staker address.
-
-**Access Control:** Only `owner` (via Ownable2Step)
-
-**Behavior:**
-
-1. Store old staker
-2. Set `staker = newStaker`
-3. Emit `StakerChanged` event
+1. Compute `amount = address(this).balance - activeStake - (totalPending - claimedAmount)`.
+2. Revert `ZeroAmount` if `amount == 0`.
+3. Transfer `amount` to `recipient` (`TransferFailed` on failure).
+4. Emit `RewardsWithdrawn(pool, amount, recipient)`.
 
 #### `getVotingPower(uint64 atTime)`
 
@@ -872,9 +948,10 @@ Lockup parameters are configured in `StakingConfig`:
 | Staking   | createPool                                      | Anyone (with min stake) |
 | Staking   | renewPoolLockup                                 | VALIDATOR_MANAGER only  |
 | Staking   | view functions                                  | Anyone                  |
-| StakePool | addStake/unstake/withdrawAvailable/unstakeAndWithdraw/renewLockUntil | Staker only   |
+| StakePool | addStake/unstake/withdrawAvailable/unstakeAndWithdraw/renewLockUntil/withdrawRewards | Staker only (blocked during reconfiguration for mutating funcs) |
 | StakePool | systemRenewLockup                               | Staking factory only    |
-| StakePool | setOperator/setVoter/setStaker                  | Owner only              |
+| StakePool | propose{Staker,Operator,Voter} / cancel*Change / set*ChangeDelay | Owner only |
+| StakePool | accept{Staker,Operator,Voter}                   | Pending role holder only |
 | StakePool | transferOwnership                               | Owner only              |
 | StakePool | acceptOwnership                                 | Pending owner only      |
 | StakePool | view functions                                  | Anyone                  |
@@ -944,8 +1021,10 @@ uint256 power = IStakePool(pool).getVotingPowerNow();
 uint64 futureTime = uint64(block.timestamp * 1_000_000) + 15 days * 1_000_000;
 uint256 futurePower = IStakePool(pool).getVotingPower(futureTime);
 
-// 5. Delegate voting to another address (as owner)
-IStakePool(pool).setVoter(delegatee);
+// 5. Delegate voting to another address (as owner) — 2-step timelock
+IStakePool(pool).proposeVoter(delegatee);
+// ...wait voterChangeDelay seconds (>= MIN_ROLE_CHANGE_DELAY = 1 day)...
+vm.prank(delegatee); IStakePool(pool).acceptVoter();
 
 // 6. Extend lockup by 30 days (as staker)
 IStakePool(pool).renewLockUntil(30 days * 1_000_000); // microseconds

@@ -85,7 +85,7 @@ consists of contracts deployed on both chains, providing:
 | Ethereum | GravityPortal          | Regular deployment                          |
 | Ethereum | GBridgeSender          | Regular deployment                          |
 | Gravity  | GBridgeReceiver        | Regular deployment (registered as callback) |
-| Gravity  | NATIVE_MINT_PRECOMPILE | `0x0000000000000000000000000001625F2100`    |
+| Gravity  | NATIVE_MINT_PRECOMPILE | `0x0000000000000000000000000001625F5000`    |
 
 ---
 
@@ -252,8 +252,9 @@ interface IGravityPortal {
 ```solidity
 /// @notice Emitted when a message is sent to Gravity
 /// @param nonce The unique nonce for this message
+/// @param block_number The Ethereum block number this message was emitted at (carried into the oracle DataRecord as provenance)
 /// @param payload The encoded payload: sender (20B) || nonce (16B) || message
-event MessageSent(uint128 indexed nonce, bytes payload);
+event MessageSent(uint128 indexed nonce, uint256 indexed block_number, bytes payload);
 
 /// @notice Emitted when fee configuration is updated
 event FeeConfigUpdated(uint256 baseFee, uint256 feePerByte);
@@ -270,6 +271,9 @@ event FeesWithdrawn(address indexed recipient, uint256 amount);
 ```solidity
 /// @notice Insufficient fee provided
 error InsufficientFee(uint256 required, uint256 provided);
+
+/// @notice Fee overpayment — we reject msg.value > requiredFee so callers do not silently overpay
+error ExcessiveFee(uint256 required, uint256 provided);
 
 /// @notice Zero address not allowed
 error ZeroAddress();
@@ -290,21 +294,18 @@ PortalMessage payloads.
 ```solidity
 abstract contract BlockchainEventHandler is IOracleCallback {
     /// @notice Called by NativeOracle when a blockchain event is recorded
-    /// @dev Parses the portal message payload and delegates to _handlePortalMessage()
+    /// @dev Parses the portal message payload and delegates to _handlePortalMessage().
+    ///      Returns `shouldStore` up to NativeOracle so the derived handler can decide whether
+    ///      the raw payload is worth persisting.
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
         uint128 oracleNonce,
         bytes calldata payload
-    ) external override;
+    ) external override returns (bool shouldStore);
 
     /// @notice Handle a parsed portal message (override in derived contracts)
-    /// @param sourceType The source type from NativeOracle
-    /// @param sourceId The source identifier (chain ID)
-    /// @param oracleNonce The oracle nonce for this record
-    /// @param sender The sender address on the source chain
-    /// @param messageNonce The message nonce from the source chain
-    /// @param message The message body (application-specific encoding)
+    /// @return shouldStore Whether NativeOracle should persist the raw payload
     function _handlePortalMessage(
         uint32 sourceType,
         uint256 sourceId,
@@ -312,7 +313,7 @@ abstract contract BlockchainEventHandler is IOracleCallback {
         address sender,
         uint128 messageNonce,
         bytes memory message
-    ) internal virtual;
+    ) internal virtual returns (bool shouldStore);
 }
 ```
 
@@ -438,21 +439,39 @@ Mints native G tokens when bridge messages are received from GBridgeSender.
 /// @notice Trusted GBridgeSender address on Ethereum
 address public immutable trustedBridge;
 
-/// @notice Processed nonces for replay protection
-mapping(uint128 => bool) private _processedNonces;
+/// @notice Trusted source chain ID (e.g. 1 for Ethereum mainnet).
+///         Incoming callbacks with a different sourceId are rejected.
+uint256 public immutable trustedSourceId;
+
+// @deprecated — a previous revision tracked processedNonces here. Replay protection is now provided
+// by NativeOracle's sequential-nonce enforcement (`nonce == currentNonce + 1`), so local tracking is
+// redundant. The storage slot is retained as __deprecated_processedNonces only to preserve layout
+// across the hardfork.
+uint256 private __deprecated_processedNonces;
 ```
 
 ### Interface
 
 ```solidity
 interface IGBridgeReceiver {
-    /// @notice Check if a nonce has been processed
-    function isProcessed(uint128 nonce) external view returns (bool);
-
     /// @notice Get trusted bridge address
     function trustedBridge() external view returns (address);
+
+    /// @notice Get trusted source chain ID
+    function trustedSourceId() external view returns (uint256);
 }
 ```
+
+### Validation
+
+`_handlePortalMessage` validates, in order:
+
+1. `sourceId == trustedSourceId` — else revert with `InvalidSourceChain(provided, expected)`.
+2. `sender == trustedBridge` — defence-in-depth, even though the Ethereum side is already gated.
+3. `amount != 0` — reject no-op mints (`Errors.ZeroAmount`).
+4. `recipient != address(0)` — reject burns to the zero address (`Errors.ZeroAddress`).
+
+Replay protection is **not** implemented locally; `NativeOracle` already enforces `nonce == currentNonce + 1` for this (sourceType, sourceId), so a message cannot be delivered twice.
 
 ### Native Mint Precompile Interface
 
@@ -486,8 +505,11 @@ event NativeMinted(address indexed recipient, uint256 amount, uint128 indexed no
 /// @notice Message sender is not the trusted bridge
 error InvalidSender(address sender, address expected);
 
-/// @notice Nonce has already been processed
-error AlreadyProcessed(uint128 nonce);
+/// @notice Source chain ID does not match the receiver's trusted source
+error InvalidSourceChain(uint256 provided, uint256 expected);
+
+/// @notice Native mint precompile call failed
+error MintFailed(address recipient, uint256 amount);
 ```
 
 ---
@@ -500,36 +522,37 @@ error AlreadyProcessed(uint128 nonce);
    └─> Calls gBridgeSender.bridgeToGravity(amount, recipient) + ETH fee
        └─> G tokens transferred to GBridgeSender (locked)
        └─> Calls gravityPortal.send(abi.encode(amount, recipient))
-           └─> Fee validated (baseFee + bytes * feePerByte)
+           └─> Fee validated: reverts with InsufficientFee if msg.value < required
+               and with ExcessiveFee if msg.value > required
            └─> Payload = sender (20B) || nonce (16B) || abi.encode(amount, recipient)
-           └─> Emit MessageSent(nonce, payload)
+           └─> Emit MessageSent(nonce, block.number, payload)
 
 2. Gravity Validators:
-   └─> Monitor MessageSent events on Ethereum
+   └─> Monitor MessageSent events on Ethereum (including block.number for provenance)
    └─> Reach consensus on event validity
    └─> SYSTEM_CALLER calls nativeOracle.record(
            sourceType=0,        // BLOCKCHAIN
-           sourceId=1,          // Ethereum chain ID
-           nonce=messageNonce,  // Portal nonce
+           sourceId=1,          // Ethereum chain ID (matches GBridgeReceiver.trustedSourceId)
+           nonce=currentNonce+1,// Sequential; NativeOracle enforces expectedNonce == currentNonce+1
+           blockNumber,         // From MessageSent.block_number; stored as provenance in DataRecord
            payload,             // Full portal message
            callbackGasLimit     // Caller-specified
        )
 
 3. NativeOracle on Gravity:
-   └─> Validates nonce >= 1 and increasing
-   └─> Stores record
+   └─> Validates nonce == currentNonce + 1 (reverts NonceNotSequential otherwise — replay-safe)
    └─> Resolves callback using 2-layer lookup → GBridgeReceiver
-   └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...)
+   └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...) — expects bool return
+   └─> Stores DataRecord (with blockNumber) iff callback returned true (or no callback / gas=0 / revert)
 
 4. GBridgeReceiver (extends BlockchainEventHandler):
-   └─> Verifies caller is NativeOracle
-   └─> Decodes PortalMessage: (sender=GBridgeSender, messageNonce, message)
-   └─> Verifies sender == trustedBridge (defense in depth)
-   └─> Verifies nonce not already processed
-   └─> Decodes message: (amount, recipient)
-   └─> Marks nonce as processed (CEI pattern)
-   └─> Calls NATIVE_MINT_PRECOMPILE.mint(recipient, amount)
-   └─> Emit NativeMinted(recipient, amount, nonce)
+   └─> Verifies sourceId == trustedSourceId
+   └─> Verifies sender == trustedBridge (defence in depth)
+   └─> Decodes message: (amount, recipient); reverts on amount==0 or recipient==0
+   └─> Calls NATIVE_MINT_PRECOMPILE (0x...1625F5000) via low-level call
+       with callData = 0x01 || recipient || amount
+   └─> Emits NativeMinted(recipient, amount, messageNonce)
+   └─> Returns shouldStore = true so the oracle keeps the payload for audit
 ```
 
 ---
@@ -555,13 +578,12 @@ error AlreadyProcessed(uint128 nonce);
 
 ## Security Considerations
 
-1. **Fee Validation**: GravityPortal requires sufficient ETH before accepting messages
+1. **Fee Validation**: GravityPortal rejects both underpayment (`InsufficientFee`) and overpayment (`ExcessiveFee`) so a caller sees a deterministic cost.
 2. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
-3. **Sender Verification**: GBridgeReceiver verifies sender from payload is the trusted bridge
-4. **Callback Failure Tolerance**: Failures do NOT revert oracle recording
-5. **Replay Protection**: GBridgeReceiver tracks processed nonces
-6. **CEI Pattern**: Nonce marked as processed BEFORE minting (prevents reentrancy)
-7. **Compact Encoding**: PortalMessage uses 36-byte overhead (vs 128+ with abi.encode)
+3. **Source and Sender Verification**: GBridgeReceiver checks both `sourceId == trustedSourceId` and the in-payload `sender == trustedBridge`.
+4. **Callback Failure Tolerance**: Failures do NOT revert oracle recording; NativeOracle falls back to storing the payload for later inspection.
+5. **Replay Protection**: Enforced by NativeOracle's sequential-nonce rule (`nonce == currentNonce + 1`). GBridgeReceiver does NOT keep its own processed-nonce map; the legacy slot exists only as `__deprecated_processedNonces` for storage-layout compatibility.
+6. **Compact Encoding**: PortalMessage uses 36-byte overhead (vs 128+ with abi.encode)
 
 ---
 
@@ -570,7 +592,7 @@ error AlreadyProcessed(uint128 nonce);
 1. **Nonce Uniqueness**: Each nonce from GravityPortal is unique (monotonic uint128)
 2. **Callback Safety**: Callback failures never affect oracle state
 3. **Token Conservation**: G tokens locked on Ethereum = native G minted on Gravity (minus failed mints)
-4. **Replay Prevention**: Each message nonce can only be processed once on GBridgeReceiver
+4. **Replay Prevention**: NativeOracle enforces `nonce == currentNonce + 1` per (sourceType, sourceId), so each portal nonce can be delivered to the receiver at most once.
 
 ---
 
