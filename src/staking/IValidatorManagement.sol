@@ -107,6 +107,15 @@ interface IValidatorManagement {
     /// @param stakePool Address of the validator's stake pool
     event ValidatorRevertedInactive(address indexed stakePool);
 
+    /// @notice Emitted when a stake pool's whitelist entry is added or removed by governance
+    /// @param stakePool Address of the stake pool
+    /// @param allowed True if now on the whitelist, false if removed
+    event ValidatorPoolAllowed(address indexed stakePool, bool allowed);
+
+    /// @notice Emitted when governance flips the permissionless-join flag
+    /// @param enabled True if permissionless join is now active (whitelist bypassed)
+    event PermissionlessJoinEnabledUpdated(bool enabled);
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -177,6 +186,26 @@ interface IValidatorManagement {
     function forceLeaveValidatorSet(
         address stakePool
     ) external;
+
+    // ========================================================================
+    // WHITELIST (GOVERNANCE only)
+    // ========================================================================
+
+    /// @notice Add or remove a stake pool from the validator whitelist
+    /// @dev Only callable by GOVERNANCE. Takes effect immediately for subsequent
+    ///      registerValidator() and joinValidatorSet() calls. Does not affect
+    ///      already-registered or already-active validators; use forceLeaveValidatorSet
+    ///      to remove an active validator.
+    /// @param stakePool The stake pool to add or remove
+    /// @param allowed True to add to whitelist, false to remove
+    function setValidatorPoolAllowed(address stakePool, bool allowed) external;
+
+    /// @notice Set whether any stake pool may register/join without being whitelisted
+    /// @dev Only callable by GOVERNANCE. When true, the whitelist is bypassed and
+    ///      any stake pool with sufficient stake may become a validator. This is the
+    ///      one-way-ish switch from permissioned launch to permissionless operation.
+    /// @param enabled True to disable whitelist checks, false to require whitelist
+    function setPermissionlessJoinEnabled(bool enabled) external;
 
     // ========================================================================
     // OPERATOR FUNCTIONS
@@ -304,5 +333,18 @@ interface IValidatorManagement {
     ///      NOT their current epoch indices. This matches Aptos's next_validator_consensus_infos().
     /// @return Array of ValidatorConsensusInfo for targets with projected indices
     function getNextValidatorConsensusInfos() external view returns (ValidatorConsensusInfo[] memory);
+
+    // ========================================================================
+    // WHITELIST VIEW FUNCTIONS
+    // ========================================================================
+
+    /// @notice Check whether a stake pool is on the validator whitelist
+    /// @param stakePool The pool to query
+    /// @return True if the pool is whitelisted
+    function isValidatorPoolAllowed(address stakePool) external view returns (bool);
+
+    /// @notice Check whether permissionless joining is enabled
+    /// @return True if the whitelist is bypassed
+    function isPermissionlessJoinEnabled() external view returns (bool);
 }
 

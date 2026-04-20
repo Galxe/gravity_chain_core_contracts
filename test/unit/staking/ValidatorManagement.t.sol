@@ -111,6 +111,13 @@ contract ValidatorManagementTest is Test {
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(alice, INITIAL_TIMESTAMP);
 
+        // These tests pre-date the validator whitelist and exercise registration
+        // flows directly. Flip the contract to permissionless mode so every test
+        // below behaves as before. The whitelist itself is covered in
+        // ValidatorWhitelist.t.sol.
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.setPermissionlessJoinEnabled(true);
+
         // Fund test accounts
         vm.deal(alice, 10000 ether);
         vm.deal(bob, 10000 ether);

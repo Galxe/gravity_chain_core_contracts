@@ -146,6 +146,71 @@ contract StakingConfig {
         emit PendingStakingConfigSet();
     }
 
+    /// @notice Set only the minimum stake for next epoch; other fields keep
+    ///         their current-or-pending values.
+    /// @dev Convenience wrapper so a governance proposal can change one
+    ///      parameter at a time. If a pending config already exists, that
+    ///      pending config's other fields are preserved and only the
+    ///      minimumStake is overwritten.
+    function setMinimumStakeForNextEpoch(uint256 _minimumStake) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+        (uint64 lockup, uint64 unbonding) = _otherPendingOrCurrent();
+        _validateConfig(_minimumStake, lockup, unbonding);
+        _pendingConfig = PendingConfig({
+            minimumStake: _minimumStake,
+            lockupDurationMicros: lockup,
+            unbondingDelayMicros: unbonding,
+            __deprecated_minimumProposalStake: 0
+        });
+        hasPendingConfig = true;
+        emit PendingStakingConfigSet();
+    }
+
+    /// @notice Set only the lockup duration for next epoch; other fields keep
+    ///         their current-or-pending values.
+    function setLockupDurationForNextEpoch(uint64 _lockupDurationMicros) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+        uint256 minStake = hasPendingConfig ? _pendingConfig.minimumStake : minimumStake;
+        uint64 unbonding = hasPendingConfig ? _pendingConfig.unbondingDelayMicros : unbondingDelayMicros;
+        _validateConfig(minStake, _lockupDurationMicros, unbonding);
+        _pendingConfig = PendingConfig({
+            minimumStake: minStake,
+            lockupDurationMicros: _lockupDurationMicros,
+            unbondingDelayMicros: unbonding,
+            __deprecated_minimumProposalStake: 0
+        });
+        hasPendingConfig = true;
+        emit PendingStakingConfigSet();
+    }
+
+    /// @notice Set only the unbonding delay for next epoch; other fields keep
+    ///         their current-or-pending values.
+    function setUnbondingDelayForNextEpoch(uint64 _unbondingDelayMicros) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+        uint256 minStake = hasPendingConfig ? _pendingConfig.minimumStake : minimumStake;
+        uint64 lockup = hasPendingConfig ? _pendingConfig.lockupDurationMicros : lockupDurationMicros;
+        _validateConfig(minStake, lockup, _unbondingDelayMicros);
+        _pendingConfig = PendingConfig({
+            minimumStake: minStake,
+            lockupDurationMicros: lockup,
+            unbondingDelayMicros: _unbondingDelayMicros,
+            __deprecated_minimumProposalStake: 0
+        });
+        hasPendingConfig = true;
+        emit PendingStakingConfigSet();
+    }
+
+    /// @notice Read the fields other than minimumStake, preferring pending if set
+    function _otherPendingOrCurrent() internal view returns (uint64 lockup, uint64 unbonding) {
+        if (hasPendingConfig) {
+            return (_pendingConfig.lockupDurationMicros, _pendingConfig.unbondingDelayMicros);
+        }
+        return (lockupDurationMicros, unbondingDelayMicros);
+    }
+
     // ========================================================================
     // EPOCH TRANSITION (RECONFIGURATION only)
     // ========================================================================

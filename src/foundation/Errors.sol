@@ -442,6 +442,10 @@ library Errors {
     /// @notice ValidatorManagement has not been initialized
     error ValidatorManagementNotInitialized();
 
+    /// @notice Pool is not on the validator whitelist and permissionless joining is disabled
+    /// @param pool The stake pool that attempted to register or join
+    error PoolNotWhitelisted(address pool);
+
     // ========================================================================
     // VALIDATOR CONFIG ERRORS
     // ========================================================================
