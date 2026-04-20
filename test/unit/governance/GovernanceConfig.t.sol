@@ -16,7 +16,7 @@ contract GovernanceConfigTest is Test {
     uint128 constant MIN_VOTING_THRESHOLD = 1000 ether;
     uint256 constant REQUIRED_PROPOSER_STAKE = 100 ether;
     uint64 constant VOTING_DURATION_MICROS = 7 days * 1_000_000; // 7 days in microseconds
-    uint64 constant GOV_MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000;
+    uint64 constant GOV_MIN_VOTING_DURATION = uint64(1 seconds) * 1_000_000;
     uint64 constant GOV_MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;
 
     function setUp() public {
