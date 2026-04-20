@@ -99,6 +99,11 @@ contract Governance is IGovernance, Ownable2Step {
         }
 
         _transferOwnership(owner);
+        // System-predeployed instances skip the constructor, so inline state
+        // initializers (e.g. `uint64 public nextProposalId = 1;`) never run.
+        // Set the sentinel-safe starting value here; ID 0 is reserved as
+        // "not found" and must never be assigned.
+        nextProposalId = 1;
         _initialized = true;
     }
 
