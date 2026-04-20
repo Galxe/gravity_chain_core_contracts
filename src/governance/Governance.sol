@@ -8,6 +8,7 @@ import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStaking } from "../staking/IStaking.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
+import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 
@@ -54,15 +55,58 @@ contract Governance is IGovernance, Ownable2Step {
     /// @notice Set of authorized executors
     EnumerableSet.AddressSet private _executors;
 
+    /// @notice Whether the contract has been initialized via Genesis
+    /// @dev Predeployed instances skip the constructor, so ownership must be set
+    ///      post-deploy via `initialize(address)`. This flag gates that path.
+    bool private _initialized;
+
     // ========================================================================
     // CONSTRUCTOR
     // ========================================================================
 
-    /// @notice Initialize the Governance contract with an owner
+    /// @notice Initialize the Governance contract with an owner (deployer path only)
+    /// @dev For system-predeployed instances, constructor is skipped and
+    ///      `initialize(address)` is called by Genesis instead. The constructor
+    ///      marks `_initialized = true` so deployer-path instances can't be
+    ///      re-initialized via `initialize`.
     /// @param initialOwner Address of the initial contract owner
     constructor(
         address initialOwner
-    ) Ownable(initialOwner) { }
+    ) Ownable(initialOwner) {
+        _initialized = true;
+    }
+
+    // ========================================================================
+    // INITIALIZATION
+    // ========================================================================
+
+    /// @notice Set the contract owner at genesis time
+    /// @dev Called exactly once by Genesis for the system-predeployed instance,
+    ///      which cannot run the constructor. The `_initialized` flag guards
+    ///      against re-initialization and against calling this on a
+    ///      constructor-deployed instance (which has `_initialized = true`).
+    /// @param owner The address that will own this Governance contract
+    function initialize(
+        address owner
+    ) external {
+        requireAllowed(SystemAddresses.GENESIS);
+
+        if (_initialized) {
+            revert Errors.AlreadyInitialized();
+        }
+        if (owner == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+
+        _transferOwnership(owner);
+        _initialized = true;
+    }
+
+    /// @notice Check if the contract has been initialized
+    /// @return True if initialized
+    function isInitialized() external view returns (bool) {
+        return _initialized;
+    }
 
     // ========================================================================
     // MODIFIERS

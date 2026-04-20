@@ -27,6 +27,9 @@
     "votingDurationMicros": 604800000000
   },
 
+  "_comment_governanceOwner": "Owner address for the Governance contract (manages executor set). REQUIRED; must be non-zero.",
+  "governanceOwner": "0x0000000000000000000000000000000000000001",
+
   "epochIntervalMicros": 7200000000,
 
   "majorVersion": 1,
