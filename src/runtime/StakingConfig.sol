@@ -152,7 +152,9 @@ contract StakingConfig {
     ///      parameter at a time. If a pending config already exists, that
     ///      pending config's other fields are preserved and only the
     ///      minimumStake is overwritten.
-    function setMinimumStakeForNextEpoch(uint256 _minimumStake) external {
+    function setMinimumStakeForNextEpoch(
+        uint256 _minimumStake
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
         (uint64 lockup, uint64 unbonding) = _otherPendingOrCurrent();
@@ -169,7 +171,9 @@ contract StakingConfig {
 
     /// @notice Set only the lockup duration for next epoch; other fields keep
     ///         their current-or-pending values.
-    function setLockupDurationForNextEpoch(uint64 _lockupDurationMicros) external {
+    function setLockupDurationForNextEpoch(
+        uint64 _lockupDurationMicros
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
         uint256 minStake = hasPendingConfig ? _pendingConfig.minimumStake : minimumStake;
@@ -187,7 +191,9 @@ contract StakingConfig {
 
     /// @notice Set only the unbonding delay for next epoch; other fields keep
     ///         their current-or-pending values.
-    function setUnbondingDelayForNextEpoch(uint64 _unbondingDelayMicros) external {
+    function setUnbondingDelayForNextEpoch(
+        uint64 _unbondingDelayMicros
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _requireInitialized();
         uint256 minStake = hasPendingConfig ? _pendingConfig.minimumStake : minimumStake;

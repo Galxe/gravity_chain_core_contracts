@@ -489,7 +489,10 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
-    function setValidatorPoolAllowed(address stakePool, bool allowed) external {
+    function setValidatorPoolAllowed(
+        address stakePool,
+        bool allowed
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         if (stakePool == address(0)) revert Errors.ZeroAddress();
         _allowedPools[stakePool] = allowed;
@@ -497,14 +500,18 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @inheritdoc IValidatorManagement
-    function setPermissionlessJoinEnabled(bool enabled) external {
+    function setPermissionlessJoinEnabled(
+        bool enabled
+    ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
         _permissionlessJoinEnabled = enabled;
         emit PermissionlessJoinEnabledUpdated(enabled);
     }
 
     /// @inheritdoc IValidatorManagement
-    function isValidatorPoolAllowed(address stakePool) external view returns (bool) {
+    function isValidatorPoolAllowed(
+        address stakePool
+    ) external view returns (bool) {
         return _allowedPools[stakePool];
     }
 
@@ -514,7 +521,9 @@ contract ValidatorManagement is IValidatorManagement {
     }
 
     /// @notice Revert unless the pool is permitted to register/join as a validator
-    function _requirePoolAllowed(address stakePool) internal view {
+    function _requirePoolAllowed(
+        address stakePool
+    ) internal view {
         if (!_permissionlessJoinEnabled && !_allowedPools[stakePool]) {
             revert Errors.PoolNotWhitelisted(stakePool);
         }

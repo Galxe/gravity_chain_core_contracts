@@ -20,7 +20,9 @@ contract MockReconfigurationForWhitelist {
         return _transitionInProgress;
     }
 
-    function setTransitionInProgress(bool inProgress) external {
+    function setTransitionInProgress(
+        bool inProgress
+    ) external {
         _transitionInProgress = inProgress;
     }
 
@@ -99,24 +101,35 @@ contract ValidatorWhitelistTest is Test {
     // HELPERS
     // ========================================================================
 
-    function _createStakePool(address owner, uint256 stakeAmount) internal returns (address pool) {
+    function _createStakePool(
+        address owner,
+        uint256 stakeAmount
+    ) internal returns (address pool) {
         uint64 lockedUntil = timestamp.nowMicroseconds() + LOCKUP_DURATION;
         vm.prank(owner);
         pool = staking.createPool{ value: stakeAmount }(owner, owner, owner, owner, lockedUntil);
     }
 
-    function _uniquePubkey(address pool) internal pure returns (bytes memory) {
+    function _uniquePubkey(
+        address pool
+    ) internal pure returns (bytes memory) {
         return abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
     }
 
-    function _register(address owner, address pool, string memory moniker) internal {
+    function _register(
+        address owner,
+        address pool,
+        string memory moniker
+    ) internal {
         vm.prank(owner);
         validatorManager.registerValidator(
             pool, moniker, _uniquePubkey(pool), CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
     }
 
-    function _allow(address pool) internal {
+    function _allow(
+        address pool
+    ) internal {
         vm.prank(SystemAddresses.GOVERNANCE);
         validatorManager.setValidatorPoolAllowed(pool, true);
     }

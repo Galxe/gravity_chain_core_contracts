@@ -16,12 +16,18 @@ interface IStakingConfig {
     function unbondingDelayMicros() external view returns (uint64);
 
     /// @notice Governance: set only the minimum stake for next epoch
-    function setMinimumStakeForNextEpoch(uint256 _minimumStake) external;
+    function setMinimumStakeForNextEpoch(
+        uint256 _minimumStake
+    ) external;
 
     /// @notice Governance: set only the lockup duration for next epoch
-    function setLockupDurationForNextEpoch(uint64 _lockupDurationMicros) external;
+    function setLockupDurationForNextEpoch(
+        uint64 _lockupDurationMicros
+    ) external;
 
     /// @notice Governance: set only the unbonding delay for next epoch
-    function setUnbondingDelayForNextEpoch(uint64 _unbondingDelayMicros) external;
+    function setUnbondingDelayForNextEpoch(
+        uint64 _unbondingDelayMicros
+    ) external;
 }
 

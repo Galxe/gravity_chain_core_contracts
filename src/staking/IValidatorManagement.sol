@@ -198,14 +198,19 @@ interface IValidatorManagement {
     ///      to remove an active validator.
     /// @param stakePool The stake pool to add or remove
     /// @param allowed True to add to whitelist, false to remove
-    function setValidatorPoolAllowed(address stakePool, bool allowed) external;
+    function setValidatorPoolAllowed(
+        address stakePool,
+        bool allowed
+    ) external;
 
     /// @notice Set whether any stake pool may register/join without being whitelisted
     /// @dev Only callable by GOVERNANCE. When true, the whitelist is bypassed and
     ///      any stake pool with sufficient stake may become a validator. This is the
     ///      one-way-ish switch from permissioned launch to permissionless operation.
     /// @param enabled True to disable whitelist checks, false to require whitelist
-    function setPermissionlessJoinEnabled(bool enabled) external;
+    function setPermissionlessJoinEnabled(
+        bool enabled
+    ) external;
 
     // ========================================================================
     // OPERATOR FUNCTIONS
@@ -341,7 +346,9 @@ interface IValidatorManagement {
     /// @notice Check whether a stake pool is on the validator whitelist
     /// @param stakePool The pool to query
     /// @return True if the pool is whitelisted
-    function isValidatorPoolAllowed(address stakePool) external view returns (bool);
+    function isValidatorPoolAllowed(
+        address stakePool
+    ) external view returns (bool);
 
     /// @notice Check whether permissionless joining is enabled
     /// @return True if the whitelist is bypassed
