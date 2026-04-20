@@ -1,0 +1,94 @@
+{
+  "issue_number": 563,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Genesis.initialize called with oracleConfig.sourceTypes.length == 0 (legitimate launch mode with no oracle sources)",
+      "current_code_ref": "src/Genesis.sol:134-174",
+      "verified": "yes",
+      "current_state_summary": "Genesis.initialize() remains payable/external, gated by requireAllowed(SYSTEM_CALLER) at line 145, with _isInitialized one-shot guard at 147-149. It unconditionally calls _initializeOracles(params.oracleConfig, params.jwkConfig) at line 155 regardless of the array lengths being zero.",
+      "gating_conditions": "SYSTEM_CALLER + first-time call only",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_initializeOracles evaluates `if (sourceTypes.length > 0)` — false — so NativeOracle.initialize is NEVER invoked; _initialized stays false",
+      "current_code_ref": "src/Genesis.sol:220-252",
+      "verified": "yes",
+      "current_state_summary": "_initializeOracles builds local sourceTypes/callbacks arrays. When oracleConfig.bridgeConfig.deploy==false AND oracleConfig.sourceTypes.length==0, the local sourceTypes stays empty, and line 250 (`if (sourceTypes.length > 0)`) gates the NativeOracle.initialize call — so the call is skipped. NativeOracle._initialized therefore remains false. Note: if bridgeConfig.deploy==true, an extra sourceType=0 is injected (line 243) and initialize IS called, which mitigates the specific empty-array path only in that mode.",
+      "gating_conditions": "oracleConfig.sourceTypes.length==0 AND oracleConfig.bridgeConfig.deploy==false",
+      "differs_from_original": "no (bridge config path exists but doesn't rescue the pure empty case)",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Same branch at Genesis.sol:251 for JWKManager when jwkConfig.issuers.length == 0",
+      "current_code_ref": "src/Genesis.sol:254-256",
+      "verified": "yes",
+      "current_state_summary": "`if (jwkConfig.issuers.length > 0) { JWKManager(...).initialize(jwkConfig.issuers, jwkConfig.jwks); }` — JWKManager.initialize is not called when issuers array is empty. JWKManager._initialized stays false (see JWKManager.sol:55, 70-72, 102).",
+      "gating_conditions": "jwkConfig.issuers.length == 0",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Post-genesis, SYSTEM_CALLER invokes NativeOracle.record(); the only gate is requireAllowed(SYSTEM_CALLER) — no _requireInitialized check",
+      "current_code_ref": "src/oracle/NativeOracle.sol:74-101",
+      "verified": "yes",
+      "current_state_summary": "record() (74-101), recordBatch() (104-132), setDefaultCallback() (172-182), and setCallback() (192-203) each contain only requireAllowed(...); none of them test `_initialized`. The whole file contains exactly one reference to `_initialized` — the assignment at line 66 inside initialize() — and no `_requireInitialized()` helper is defined. This was confirmed by a full-file grep for `_requireInitialized` in src/oracle (no matches). Peer predeploy configs (src/runtime/ValidatorConfig.sol, EpochConfig.sol, RandomnessConfig.sol, GovernanceConfig.sol, VersionConfig.sol, ExecutionConfig.sol) all gate state-changing / query functions with an explicit `_requireInitialized()` call.",
+      "gating_conditions": "Only access-control — no init gate",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "record writes to _records with no callbacks resolved; JWKManager.onOracleEvent / setPatches behave the same",
+      "current_code_ref": "src/oracle/NativeOracle.sol:84-100, src/oracle/jwk/JWKManager.sol:117-152, 159-179",
+      "verified": "yes",
+      "current_state_summary": "In NativeOracle.record, _updateNonce runs (line 85) then _invokeCallback (line 90). Because no callbacks were registered during initialize (initialize was skipped), _resolveCallback returns address(0) (NativeOracle.sol:303-304) and _invokeCallback short-circuits to `return true` — so shouldStore=true and the raw payload is persisted into _records (94-98) with a DataRecorded event (99). For JWKManager, onOracleEvent (117-152) only checks requireAllowed(NATIVE_ORACLE) — no `_initialized` guard — and will decode payload, update _issuerVersions/_observedProviders, and regenerate patched JWKs even when JWKManager was never initialized. setPatches (159-179) likewise only gates on GOVERNANCE with no init check.",
+      "gating_conditions": "record: SYSTEM_CALLER plus sequential-nonce invariant (line 265). onOracleEvent: requireAllowed(NATIVE_ORACLE) + monotonic version (135-137). setPatches: GOVERNANCE only.",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Every step of the reported data flow is literally present in HEAD a623eab. (a) Genesis.sol:250 and :254 gate NativeOracle.initialize and JWKManager.initialize on array length > 0, so a launch passing empty oracleConfig.sourceTypes (and bridgeConfig.deploy=false) and empty jwkConfig.issuers leaves both contracts with _initialized=false. (b) NativeOracle.record/recordBatch/setDefaultCallback/setCallback and JWKManager.onOracleEvent/setPatches contain no `_initialized` check — the whole src/oracle tree has zero hits for `_requireInitialized`, while every src/runtime peer config defines and calls `_requireInitialized()` on its state-mutating and query surface. (c) With no callbacks registered, _resolveCallback returns address(0), so _invokeCallback short-circuits with shouldStore=true and record() unconditionally writes to _records and emits DataRecorded — exactly the silent-mutation the finding describes. Hence the described guard-consistency regression is real. The severity Medium rating is defensible: the callers that can reach these surfaces (SYSTEM_CALLER, GOVERNANCE, NATIVE_ORACLE) are all trusted system principals, so this is a correctness/consistency weakness rather than a privilege-escalation bug, but it does cause divergent behaviour from peer predeploys when genesis ships with empty oracle/JWK configs.",
+  "key_evidence": [
+    {
+      "file": "src/Genesis.sol",
+      "lines": "250-256",
+      "excerpt": "if (sourceTypes.length > 0) { NativeOracle(SystemAddresses.NATIVE_ORACLE).initialize(sourceTypes, callbacks); } if (jwkConfig.issuers.length > 0) { JWKManager(SystemAddresses.JWK_MANAGER).initialize(jwkConfig.issuers, jwkConfig.jwks); }",
+      "why_matters": "Directly demonstrates the skip-on-empty-array branch that leaves _initialized=false for both contracts."
+    },
+    {
+      "file": "src/oracle/NativeOracle.sol",
+      "lines": "74-101",
+      "excerpt": "function record(...) external { requireAllowed(SystemAddresses.SYSTEM_CALLER); _updateNonce(...); bool shouldStore = true; shouldStore = _invokeCallback(...); if (shouldStore) { _records[...] = DataRecord({...}); emit DataRecorded(...); } }",
+      "why_matters": "The only gate is access control; no `_requireInitialized()` call — matches the reported inconsistent guard."
+    },
+    {
+      "file": "src/oracle/NativeOracle.sol",
+      "lines": "172-203",
+      "excerpt": "function setDefaultCallback(...) external { requireAllowed(SystemAddresses.GOVERNANCE); ... } function setCallback(...) external { requireAllowed(SystemAddresses.GOVERNANCE); ... }",
+      "why_matters": "Governance-level mutations also run without an init gate, confirming the callback-management inconsistency."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "117-179",
+      "excerpt": "function onOracleEvent(...) external override returns (bool) { requireAllowed(SystemAddresses.NATIVE_ORACLE); ... } function setPatches(Patch[] calldata patches) external override { requireAllowed(SystemAddresses.GOVERNANCE); delete _patches; ... _regeneratePatchedJWKs(); }",
+      "why_matters": "Demonstrates the same guard gap in JWKManager: onOracleEvent and setPatches mutate storage without checking _initialized."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "162-308",
+      "excerpt": "function setMinimumBond(...) external { ... _requireInitialized(); ... } function _requireInitialized() internal view { if (!_initialized) { revert Errors.NotInitialized(); } }",
+      "why_matters": "Peer-config comparator confirming the initialization gate pattern that NativeOracle/JWKManager are missing."
+    }
+  ],
+  "counterargument": "A defender can argue the finding is low-impact and possibly FP-style because the only callers that can reach the ungated surfaces are already trusted: SYSTEM_CALLER for record/recordBatch, GOVERNANCE for setCallback/setDefaultCallback/setPatches, and NATIVE_ORACLE (also SYSTEM_CALLER–driven) for JWKManager.onOracleEvent. A genesis operator who deliberately launches with empty sourceTypes or empty issuers is signalling that the oracle surface is unused at T0; trusted principals should then not issue record() traffic for un-configured source types. The sequential-nonce invariant (NativeOracle.sol:265) and the monotonic-version check (JWKManager.sol:135-137) provide partial defence-in-depth against accidental replay or rollback. Finally, governance can recover by deploying a subsequent predeploy upgrade that injects a call to the initialize() function (the _initialized guard still allows first-time init), so the state is recoverable rather than permanently broken. Under that reading the issue is a hardening/consistency recommendation rather than an exploitable vulnerability, which could justify downgrading from Medium to Low. However, the code-level claim that the guard is absent is still true, so the finding itself is not a false positive — only its severity is debatable.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "cannot_tell"
+}

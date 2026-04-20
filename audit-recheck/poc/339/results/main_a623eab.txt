@@ -1,0 +1,7 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/POC_339.t.sol:POC_339
+[PASS] test_attackSucceedsIfVulnerable() (gas: 540585)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 7.96ms (3.61ms CPU time)
+
+Ran 1 test suite in 13.86ms (7.96ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

@@ -1,0 +1,100 @@
+{
+  "issue_number": 554,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Pool voter calls Governance.vote(stakePool, id, V1, support) at src/governance/Governance.sol:311",
+      "current_code_ref": "src/governance/Governance.sol:340-347",
+      "verified": "yes",
+      "current_state_summary": "vote(stakePool, proposalId, votingPower, support) is public and delegates to _voteInternal; caller must be the pool's voter (enforced inside _voteInternal via _requireVoter).",
+      "gating_conditions": "_requireVoter(stakePool) at Governance.sol:408-409 (via _voteInternal); voting period must be open (now_ < p.expirationTime) at Governance.sol:395-398; proposal not resolved Governance.sol:401-403.",
+      "differs_from_original": "Function signature and semantics unchanged; original line reference (311) has shifted to 340 but logic is identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_voteInternal computes remaining via getRemainingVotingPower -> IStaking.getPoolVotingPower(pool, p.expirationTime) at L167; pool power = P1; usedVotingPower[pool][id] becomes V1",
+      "current_code_ref": "src/governance/Governance.sol:413, 178-197",
+      "verified": "yes",
+      "current_state_summary": "_voteInternal computes `uint128 remaining = getRemainingVotingPower(stakePool, proposalId);` (L413). getRemainingVotingPower calls `_staking().getPoolVotingPower(stakePool, p.expirationTime)` (L188) — this is a LIVE read of pool power evaluated at proposal expirationTime. After vote, `usedVotingPower[stakePool][proposalId] += votingPower;` (L426), so V1 is recorded as used.",
+      "gating_conditions": "uint128 clamp at L190 prevents silent truncation; remaining = max(0, poolPower - used).",
+      "differs_from_original": "Clamp-to-uint128 added at L189-190 (new), but this does not snapshot — still a live read of current pool state.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Pool's staker calls StakePool.addStake{value: X}() at src/staking/StakePool.sol:261 — activeStake += X AND lockedUntil auto-extends to now + minLockup",
+      "current_code_ref": "src/staking/StakePool.sol:405-427",
+      "verified": "yes",
+      "current_state_summary": "addStake() is guarded only by onlyStaker and whenNotReconfiguring. It executes `activeStake += msg.value;` (L410) and then sets `newLockedUntil = now_ + minLockup` with `if (newLockedUntil > lockedUntil) lockedUntil = newLockedUntil;` (L420-424). No governance-aware guard — no check that a proposal is mid-vote, no lock on activeStake during voting.",
+      "gating_conditions": "onlyStaker (msg.sender == staker); whenNotReconfiguring (not during DKG). Under typical config (lockupDurationMicros >= votingDurationMicros), the new lockedUntil = now + minLockup covers p.expirationTime because during the vote window now <= expirationTime - 1 and expirationTime = creationTime + votingDuration, so now + lockupDuration >= now + votingDuration > expirationTime.",
+      "differs_from_original": "Line numbers shifted (original said L261, now 405-427); logic is the same — activeStake increases and lockup auto-extends.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Voter calls Governance.vote(stakePool, id, V2, support) again — getRemainingVotingPower re-reads getPoolVotingPower(pool, expirationTime); pool power = P1+X (live read); remaining = (P1+X) - V1; voter spends V2 up to that inflated remaining",
+      "current_code_ref": "src/governance/Governance.sol:178-197, 413-418; src/staking/StakePool.sol:197-202, 675-708",
+      "verified": "yes",
+      "current_state_summary": "getRemainingVotingPower re-evaluates `_staking().getPoolVotingPower(stakePool, p.expirationTime)` (L188), which delegates to `IStakePool.getVotingPower(atTime)` (Staking.sol:98) which returns `_getEffectiveStakeAt(atTime)` (StakePool.sol:201). _getEffectiveStakeAt at L679 uses `effectiveActive = (lockedUntil >= atTime) ? activeStake : 0` — using the NEW (post-addStake) activeStake = P1 + X, and the extended lockedUntil >= expirationTime (see step 3 gating). So the returned pool power is P1 + X. remaining = (P1 + X) - V1. V2 is capped at this inflated remaining (L416-418).",
+      "gating_conditions": "lockedUntil >= p.expirationTime (ensured by addStake under typical config); pool is valid; voter is caller; voting period open; proposal not resolved.",
+      "differs_from_original": "No changes to semantics; uint128 clamp at L190 may cap the inflated read at type(uint128).max but that does not prevent inflation within uint128 range. `lastVoteTime[proposalId] = now_` (L437) is an atomicity guard against same-block resolve but does not affect cross-block vote inflation.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Effective vote weight from this single pool = V1 + (P1 + X - V1) = P1 + X, despite P1 being the power at proposal creation — constraint EC4 / C10 violated",
+      "current_code_ref": "src/governance/Governance.sol:426, 430-433; src/staking/StakePool.sol:679",
+      "verified": "yes",
+      "current_state_summary": "yesVotes/noVotes are unconditionally incremented by accepted votingPower (L430-433). Total cast by this pool can reach P1 + X. Proposal state derivation at L158-161/171-173 uses yesVotes/noVotes directly with no re-check against any snapshot, so the inflated vote determines SUCCEEDED/FAILED.",
+      "gating_conditions": "None that prevent the inflation. The only snapshot-adjacent construct is `lastVoteTime` which only blocks atomic (same-timestamp) resolution (L218-220, L468-470), not pre-resolution inflation.",
+      "differs_from_original": "None material. flash-loan atomicity guard exists but does not address mid-vote addStake across timestamps.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Each step of the exploit is directly supported by current code. getRemainingVotingPower (Governance.sol:178-197) performs a live read of _staking().getPoolVotingPower(stakePool, p.expirationTime) on every call, with no snapshot taken at proposal creation. The underlying chain getPoolVotingPower -> StakePool.getVotingPower(atTime) -> _getEffectiveStakeAt(atTime) at StakePool.sol:675-708 uses the CURRENT activeStake state, gating only on whether lockedUntil >= atTime. StakePool.addStake (StakePool.sol:405-427) is a pure staker-role operation with no governance-awareness: it adds to activeStake and auto-extends lockedUntil = max(lockedUntil, now + lockupDuration). Under the documented/typical config where lockupDuration >= votingDuration, this extension is sufficient to make the freshly added stake \"effective\" at p.expirationTime — and thus counted in remaining power on subsequent vote calls. Partial voting accumulates usedVotingPower (L426), so a voter can split V1 before and V2 after the addStake, and only V1 gets deducted from the new (inflated) pool power. The sole defense in the contract — lastVoteTime atomicity guard (L437, L468-470) — prevents same-timestamp resolution after a vote but does NOT prevent stake inflation across timestamps inside the voting window. No snapshot of pool power at proposal creation is stored (createProposal at L276-337 only uses getPoolVotingPower for a one-time requiredProposerStake check and does not persist any snapshot). Therefore the described exploit is fully reproducible on current code.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "178-197",
+      "excerpt": "function getRemainingVotingPower(address stakePool, uint64 proposalId) public view returns (uint128) { ... uint256 poolPower = _staking().getPoolVotingPower(stakePool, p.expirationTime); ... uint128 used = usedVotingPower[stakePool][proposalId]; if (poolPower <= used) return 0; return uint128(poolPower - used); }",
+      "why_matters": "This is the live-read site. No snapshot at creation is ever consulted; remaining is re-computed from current pool state on every vote call."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "405-427",
+      "excerpt": "function addStake() external payable onlyStaker whenNotReconfiguring { ... activeStake += msg.value; uint64 newLockedUntil = now_ + minLockup; if (newLockedUntil > lockedUntil) { lockedUntil = newLockedUntil; } ... }",
+      "why_matters": "addStake is governance-unaware. It grows activeStake and auto-extends lockedUntil to cover proposal.expirationTime under typical config, letting the new stake count in _getEffectiveStakeAt(p.expirationTime)."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "675-708",
+      "excerpt": "function _getEffectiveStakeAt(uint64 atTime) internal view returns (uint256) { uint256 effectiveActive = (lockedUntil >= atTime) ? activeStake : 0; ... return effectiveActive + (totalPending - ineffective); }",
+      "why_matters": "Uses current activeStake (not a snapshot) gated only on lockedUntil >= atTime — which addStake guarantees by extending lockup."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "413-426",
+      "excerpt": "uint128 remaining = getRemainingVotingPower(stakePool, proposalId); if (votingPower > remaining) votingPower = remaining; ... usedVotingPower[stakePool][proposalId] += votingPower;",
+      "why_matters": "Remaining is recomputed on every vote call using live pool power; usedVotingPower accumulates, enabling a split V1-addStake-V2 sequence that spends P1 + X total."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "276-337",
+      "excerpt": "createProposal: uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime); ... _proposals[proposalId] = Proposal({ id, proposer, executionHash, metadataUri, creationTime, expirationTime, minVoteThreshold, yesVotes:0, noVotes:0, isResolved:false, resolutionTime:0 });",
+      "why_matters": "Proposal struct stores no snapshot of pool power. createProposal only uses getPoolVotingPower as a proposer-stake gate and discards the value."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "435-470",
+      "excerpt": "lastVoteTime[proposalId] = now_; ... if (lastVote > 0 && now_ <= lastVote) { revert Errors.ResolutionCannotBeAtomic(lastVote); }",
+      "why_matters": "The only temporal guard is against atomic (same-timestamp) resolve/vote — it does not prevent cross-timestamp mid-vote addStake inflation, which is the actual attack vector."
+    }
+  ],
+  "counterargument": "One could argue the attack fails under strict configs where lockupDurationMicros < votingDurationMicros, because then addStake's new lockedUntil = now + lockupDuration may still be < p.expirationTime when addStake is called early, making effectiveActive = 0 at atTime = expirationTime and blocking the inflation (StakePool.sol:679). But this requires a non-default, arguably misconfigured system (governance proposals that outlast lockups — which would mean stakers can unstake before votes resolve, already a problem). One could also argue that StakePool reconfiguration lock (whenNotReconfiguring, StakePool.sol:117-122) pauses addStake during DKG, narrowing the attack window; however, DKG is a short epoch transition, not a governance-wide pause, so a voting window of days/hours has ample non-reconfiguring time to execute the exploit. Finally, lastVoteTime (L437) only forbids atomic resolution — it cannot stop the inflation itself. None of these materially blocks the described attack under the typical config asserted by the reporter (lockupDuration >= votingDuration).",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "cannot_tell"
+}

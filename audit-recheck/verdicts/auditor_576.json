@@ -1,0 +1,98 @@
+{
+  "issue_number": 576,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "All four StakingConfig setters (setMinimumStake, setLockupDurationMicros, setUnbondingDelayMicros, setMinimumProposalStake) write state fields directly — no pending struct, no whenNotReconfiguring guard.",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "no",
+      "current_state_summary": "The four immediate setters no longer exist. StakingConfig now exposes a single governance entry point setForNextEpoch(uint256,uint64,uint64) that writes into a PendingConfig struct (fields: minimumStake, lockupDurationMicros, unbondingDelayMicros, __deprecated_minimumProposalStake) and sets hasPendingConfig=true. No direct write to the live storage occurs from governance. minimumProposalStake has been deprecated and retained only as a storage gap (line 50-53).",
+      "gating_conditions": "requireAllowed(GOVERNANCE), _requireInitialized(), _validateConfig must pass (non-zero values, bounded by MAX_LOCKUP_DURATION=4y and MAX_UNBONDING_DELAY=1y).",
+      "differs_from_original": "Entire API surface changed from four immediate setters to a single pending-config staging function. The setters named in the issue (setMinimumStake line 89, setLockupDurationMicros line 103, setUnbondingDelayMicros line 121, setMinimumProposalStake line 139) are absent from the source tree; a repo-wide grep returns no matches in src/.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "Contrast: ValidatorConfig.setForNextEpoch stages into pending and applyPendingConfig applies atomically at epoch boundary; 6 peer configs use the same pattern while StakingConfig does not.",
+      "current_code_ref": "src/runtime/StakingConfig.sol:156-171",
+      "verified": "no",
+      "current_state_summary": "StakingConfig now implements the same pending pattern: applyPendingConfig() is RECONFIGURATION-only, copies _pendingConfig.{minimumStake, lockupDurationMicros, unbondingDelayMicros} into live fields, clears hasPendingConfig, deletes _pendingConfig, and emits StakingConfigUpdated/PendingStakingConfigCleared. It is a no-op when hasPendingConfig is false (line 159).",
+      "gating_conditions": "requireAllowed(RECONFIGURATION); _requireInitialized(); early-return on !hasPendingConfig.",
+      "differs_from_original": "The parity gap with peer configs the issue describes has been closed. StakingConfig is now aligned with ValidatorConfig/EpochConfig/ConsensusConfig/ExecutionConfig/GovernanceConfig/RandomnessConfig/VersionConfig.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Execution path: Governance.execute runs a StakingConfig.setLockupDurationMicros proposal → write commits within the same tx.",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "no",
+      "current_state_summary": "A governance proposal calling StakingConfig can only invoke setForNextEpoch (GOVERNANCE-gated). That call only writes _pendingConfig and toggles hasPendingConfig; the live minimumStake/lockupDurationMicros/unbondingDelayMicros storage is untouched until applyPendingConfig() is later invoked by RECONFIGURATION.",
+      "gating_conditions": "GOVERNANCE caller; inputs must survive _validateConfig.",
+      "differs_from_original": "There is no longer any governance-reachable function that mutates the live StakingConfig storage mid-epoch.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Within the same block, onBlockStart → checkAndStartTransition → ValidatorManagement.onNewEpoch → _renewActiveValidatorLockups reads the just-mutated lockupDurationMicros via StakePool.systemRenewLockup.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-280, src/staking/ValidatorManagement.sol:568-569, src/staking/ValidatorManagement.sol:816-830",
+      "verified": "partial",
+      "current_state_summary": "_applyReconfiguration first invokes all applyPendingConfig() calls (lines 267-274), including StakingConfig.applyPendingConfig() at line 273, THEN calls IValidatorManagement.onNewEpoch() at line 280. onNewEpoch() eventually invokes _renewActiveValidatorLockups() (line 569), which loops active validators and calls IStaking.renewPoolLockup inside try/catch. Thus at the moment _renewActiveValidatorLockups executes, the new lockupDurationMicros is already the epoch-boundary-applied value, exactly as an operator should expect.",
+      "gating_conditions": "Reconfiguration only triggers via checkAndStartTransition/finishTransition/_doImmediateReconfigure; applyPendingConfig no-ops when hasPendingConfig is false.",
+      "differs_from_original": "The atomic ordering is now explicit and intentional (Aptos-pattern); there is no path where governance mutates live lockupDurationMicros between checkAndStartTransition and _renewActiveValidatorLockups within the same block.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Every active validator's lockedUntil is advanced using the post-mutation value; no operator was able to observe or react because there is no epoch-boundary atomicity.",
+      "current_code_ref": "src/runtime/StakingConfig.sol:28-35, src/runtime/StakingConfig.sol:156-171",
+      "verified": "no",
+      "current_state_summary": "Operators can now observe a pending change via getPendingConfig() (line 110) and via the PendingStakingConfigSet event (line 72), giving them the pre-epoch window that peer configs provide. The value used by _renewActiveValidatorLockups is the atomically-applied epoch-boundary value, not a value mutated mid-tx by a governance call in the same block.",
+      "gating_conditions": "Pending config is public-readable; events are emitted on set/apply/clear.",
+      "differs_from_original": "Epoch-boundary atomicity contract is restored; the TODO referenced in the issue ('onNewEpoch() and pending config pattern?') has been implemented.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 3, 4, 5],
+  "reasoning_chain": "The issue's root cause is the absence of a pending/apply-at-epoch pattern in StakingConfig, letting governance mutate lockupDurationMicros (and peers) mid-block and have _renewActiveValidatorLockups read the post-mutation value in the same tx. Ground truth shows StakingConfig has been rewritten: (1) the four immediate setters no longer exist; (2) governance now calls setForNextEpoch, which stages a PendingConfig; (3) applyPendingConfig is RECONFIGURATION-gated and idempotent/no-op when nothing is pending; (4) Reconfiguration._applyReconfiguration applies all pending configs (including StakingConfig at line 273) BEFORE invoking ValidatorManagement.onNewEpoch() at line 280, which is what eventually runs _renewActiveValidatorLockups. minimumProposalStake has been removed from governance surface (deprecated, slot-kept). Every step of the attack chain is severed: the mutating entry point is gone, the atomicity pattern exists, and the read in _renewActiveValidatorLockups now reads a value that was by construction committed at the epoch boundary, not mid-epoch.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(...); _pendingConfig = PendingConfig({...}); hasPendingConfig = true; emit PendingStakingConfigSet(); }",
+      "why_matters": "Replaces the four immediate setters named in the issue. Governance no longer writes live storage; it only stages into _pendingConfig."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "156-171",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) return; minimumStake = _pendingConfig.minimumStake; lockupDurationMicros = _pendingConfig.lockupDurationMicros; unbondingDelayMicros = _pendingConfig.unbondingDelayMicros; hasPendingConfig = false; delete _pendingConfig; emit StakingConfigUpdated(); emit PendingStakingConfigCleared(); }",
+      "why_matters": "Establishes the epoch-boundary atomic application path. Only RECONFIGURATION can commit, matching the pattern of all peer configs."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-280",
+      "excerpt": "function _applyReconfiguration() internal { IRandomnessConfig(...).applyPendingConfig(); ConsensusConfig(...).applyPendingConfig(); ExecutionConfig(...).applyPendingConfig(); ValidatorConfig(...).applyPendingConfig(); VersionConfig(...).applyPendingConfig(); GovernanceConfig(...).applyPendingConfig(); StakingConfig(SystemAddresses.STAKE_CONFIG).applyPendingConfig(); EpochConfig(...).applyPendingConfig(); IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch(); ... }",
+      "why_matters": "Ordering invariant: StakingConfig.applyPendingConfig() (line 273) is called before ValidatorManagement.onNewEpoch() (line 280), which transitively triggers _renewActiveValidatorLockups(). The value read is the atomically-applied boundary value, not a mid-tx mutated one."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "816-830",
+      "excerpt": "function _renewActiveValidatorLockups() internal { ... try IStaking(SystemAddresses.STAKING).renewPoolLockup(pool) { } catch { } ... }",
+      "why_matters": "The consumer of lockupDurationMicros now runs after StakingConfig.applyPendingConfig has committed any pending value; there is no window where governance executes mid-epoch and the consumer reads that mutation in the same tx."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "8-12",
+      "excerpt": "/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).\n///      Uses pending config pattern: changes are queued and applied at epoch boundaries.",
+      "why_matters": "The previous TODO ('onNewEpoch() and pending config pattern?') the issue quoted has been replaced with an explicit statement that the pending-config pattern is implemented."
+    }
+  ],
+  "counterargument": "One could argue the fix is incomplete if there exists any reachable code path in which governance mutates StakingConfig live storage mid-epoch, e.g. a legacy setter gated only by GOVERNANCE but not routed through _pendingConfig. A repo-wide grep for setLockupDurationMicros|setMinimumStake|setUnbondingDelayMicros|setMinimumProposalStake inside src/ returned zero matches (only docs and build_logs reference the old names), and StakingConfig.sol has exactly one GOVERNANCE-gated external function (setForNextEpoch at line 130-147). Additionally, if an attacker could call applyPendingConfig() outside of Reconfiguration, they could still force a mid-epoch commit — but line 157 enforces requireAllowed(RECONFIGURATION), and RECONFIGURATION is the system pseudo-address invoked only from Reconfiguration._applyReconfiguration at lines 265-280, which itself orders applyPendingConfig BEFORE onNewEpoch. There remains the theoretical concern that _renewActiveValidatorLockups uses the new lockupDurationMicros in the same tx that applies it — but that is the epoch-boundary semantics the issue itself demands (peer configs do the same). So the attack surface the issue describes (governance-write mid-epoch observed by consumer in same tx) no longer has a source.",
+  "related_existing_tests": [
+    "test/unit/runtime/StakingConfig.t.sol (lines 176, 190, 203, 209, 221 invoke applyPendingConfig, validating the new pending pattern)",
+    "test/unit/blocker/Reconfiguration.t.sol (line 586 applyPendingConfig invocation, verifying epoch-boundary ordering)",
+    "test/unit/staking/ValidatorManagement.t.sol (2330: try/catch coverage in _renewActiveValidatorLockups; multiple applyPendingConfig calls ensuring boundary semantics)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

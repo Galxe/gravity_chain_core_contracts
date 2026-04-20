@@ -1,0 +1,82 @@
+{
+  "issue_number": 362,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls forceLeaveValidatorSet(lastActivePool) at src/staking/ValidatorManagement.sol:401",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:432-435",
+      "verified": "yes",
+      "current_state_summary": "Entry point exists; gated by validatorExists + whenNotReconfiguring + requireAllowed(GOVERNANCE).",
+      "gating_conditions": "Caller must be GOVERNANCE; reconfiguration must not be in progress; validator must exist.",
+      "differs_from_original": "Line numbers shifted (was ~401, now 432) but entry semantics unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Function checks status == ACTIVE — passes because the validator is the sole active validator",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:447-450",
+      "verified": "yes",
+      "current_state_summary": "If validator.status != ACTIVE, reverts InvalidStatus. PENDING_ACTIVE is handled by an early-return branch at 440-445 (revert to INACTIVE, not relevant to last-validator halt).",
+      "gating_conditions": "status must be ACTIVE.",
+      "differs_from_original": "Same logic as described.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Sets status to PENDING_INACTIVE and pushes to _pendingInactive — no check that _activeValidators.length == 1",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:452-456",
+      "verified": "no",
+      "current_state_summary": "A last-validator guard has been added: `if (_activeValidators.length <= _pendingInactive.length + 1) revert Errors.CannotRemoveLastValidator();` This is identical to the guard in voluntary leaveValidatorSet at lines 420-422 and also accounts for concurrent pending-inactive validators.",
+      "gating_conditions": "_activeValidators.length must strictly exceed _pendingInactive.length + 1; i.e., at least one validator must remain active after removal.",
+      "differs_from_original": "The described 'no check' is FALSE in current code — the guard exists and reverts before status is changed.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "At next epoch, Reconfiguration calls onNewEpoch() — _computeNextEpochValidatorSet finds 0 staying-active validators",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:452-456",
+      "verified": "no",
+      "current_state_summary": "Unreachable — the attacker cannot produce the state where all ACTIVE validators are marked PENDING_INACTIVE, because the second forceLeaveValidatorSet call reverts with CannotRemoveLastValidator.",
+      "gating_conditions": "Requires bypassing the step-3 guard, which is not possible via forceLeaveValidatorSet.",
+      "differs_from_original": "N/A — upstream blocked.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [3],
+  "reasoning_chain": "The issue claims forceLeaveValidatorSet lacks a last-validator guard, letting governance drain the active set. In current code (commit a623eab), lines 452-456 contain an explicit last-validator guard `if (_activeValidators.length <= _pendingInactive.length + 1) revert Errors.CannotRemoveLastValidator();` that is structurally identical to the one in voluntary leaveValidatorSet (lines 420-422), and stronger than described in the issue because it also factors in validators already queued in _pendingInactive (preventing the exact 2-validator sequential exploit in the 'Exploit Scenario'). Regression tests confirm both cases: `test_forceLeaveValidatorSet_cannotRemoveLastValidator` (single active) and Fix-1 test at lines 2385-2401 (two actives; second forceLeave reverts). The exploit path terminates at step 3 with a revert.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "452-456",
+      "excerpt": "// Prevent removing the last active validator (would halt consensus)\n// Use _pendingInactive.length to account for validators already leaving this epoch\nif (_activeValidators.length <= _pendingInactive.length + 1) {\n    revert Errors.CannotRemoveLastValidator();\n}",
+      "why_matters": "This is the exact guard the issue says is missing. It is present in forceLeaveValidatorSet and uses `<= _pendingInactive.length + 1`, which defeats the multi-call exploit (poolA then poolB) described in the issue."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "420-422",
+      "excerpt": "if (_activeValidators.length <= _pendingInactive.length + 1) {\n    revert Errors.CannotRemoveLastValidator();\n}",
+      "why_matters": "Same guard in voluntary leaveValidatorSet — confirms parity between the two paths, contradicting the issue's claim that only leaveValidatorSet has this guard."
+    },
+    {
+      "file": "test/unit/staking/ValidatorManagement.t.sol",
+      "lines": "2385-2401",
+      "excerpt": "/// Fix 1: Same test for forceLeaveValidatorSet ... vm.expectRevert(abi.encodeWithSelector(Errors.CannotRemoveLastValidator.selector)); validatorManager.forceLeaveValidatorSet(pool2);",
+      "why_matters": "Regression test explicitly exercises the exact 2-validator exploit chain (forceLeave poolA, then forceLeave poolB) and asserts the second call reverts with CannotRemoveLastValidator — demonstrating the attack is blocked."
+    },
+    {
+      "file": "test/unit/staking/ValidatorManagement.t.sol",
+      "lines": "1852-1866",
+      "excerpt": "function test_forceLeaveValidatorSet_cannotRemoveLastValidator() ... vm.expectRevert(Errors.CannotRemoveLastValidator.selector); validatorManager.forceLeaveValidatorSet(pool);",
+      "why_matters": "Dedicated unit test for the single-last-validator case."
+    }
+  ],
+  "counterargument": "One could argue the guard still permits a 'slow drain': remove N-1 validators over consecutive epochs (each epoch resets _pendingInactive once applied), eventually leaving only one. However, the original issue specifically claims 'no last-validator check' and describes halting with an empty active set — this is precisely what the guard prevents. A gradual reduction to 1 validator is not a chain halt (1 validator still produces blocks), and cannot be completed in a single epoch because _pendingInactive is counted in the check. A second counterargument: governance could concurrently pause reconfiguration or manipulate _pendingActive. But whenNotReconfiguring modifier and the guard's inclusion of _pendingInactive together preclude the exact exploit chain cited. The issue as written is a fixed/false-positive against current code.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol:1852 test_forceLeaveValidatorSet_cannotRemoveLastValidator",
+    "test/unit/staking/ValidatorManagement.t.sol:2385 Fix 1 regression test (2-validator sequential forceLeave)",
+    "test/unit/staking/ValidatorManagement.t.sol:2377 leaveValidatorSet last-validator test"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

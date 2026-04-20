@@ -1,0 +1,90 @@
+{
+  "issue_number": 394,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Reconfiguration._applyReconfiguration() calls evictUnderperformingValidators()",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:99,151",
+      "verified": "partial",
+      "current_state_summary": "evictUnderperformingValidators() is invoked from Reconfiguration, but from _applyReconfigurationInternal paths at lines 99 and 151 (before DKG), NOT from _applyReconfiguration() at the old line 274. Comment at line 285 explicitly notes 'evictUnderperformingValidators() is now called BEFORE DKG starts, so its readings naturally precede this reset.'",
+      "gating_conditions": "Caller guarded by requireAllowed(SystemAddresses.RECONFIGURATION) at ValidatorManagement.sol:611.",
+      "differs_from_original": "Call site is now pre-DKG; original's line reference (274) is outdated.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "getAllPerformances() returns array from PerformanceTracker",
+      "current_code_ref": "src/blocker/ValidatorPerformanceTracker.sol:135-144; consumed at src/staking/ValidatorManagement.sol:673-676",
+      "verified": "yes",
+      "current_state_summary": "getAllPerformances() returns an array whose length equals _validators.length (number of slots last seeded in onNewEpoch). ValidatorManagement reads it into memory perfs and computes perfLen = perfs.length at line 676.",
+      "gating_conditions": "None at this step; pure view read.",
+      "differs_from_original": "None material.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "If perfLen < activeLen, checkLen = perfLen (silent min() fallback)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:678-682",
+      "verified": "no",
+      "current_state_summary": "The min() fallback described in the issue DOES NOT EXIST in current code. Instead, a strict equality check is applied: `if (activeLen != perfLen) { emit PerformanceLengthMismatch(activeLen, perfLen); return; }`. Any length mismatch (either perfLen < activeLen or perfLen > activeLen) emits an explicit on-chain event and aborts Phase 2 entirely without marking anyone as evicted.",
+      "gating_conditions": "activeLen == perfLen required to proceed to the eviction loop.",
+      "differs_from_original": "The vulnerable `uint256 checkLen = activeLen < perfLen ? activeLen : perfLen;` pattern has been replaced with strict equality + event + early return.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Loop only iterates to checkLen; validators at [perfLen, activeLen) are never checked",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:685-724",
+      "verified": "no",
+      "current_state_summary": "The loop iterates `for (uint256 i = 0; i < activeLen; i++)` using perfs[i] directly. This loop is only reached when activeLen == perfLen (guaranteed by the gate at 679). There is no checkLen variable; no partial iteration path exists.",
+      "gating_conditions": "Only reachable when activeLen == perfLen; otherwise function returns at line 681.",
+      "differs_from_original": "No min() bound; loop bound is activeLen and is only entered when equality holds.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Trailing validators escape eviction silently, no event emitted",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:679-682; event at src/staking/IValidatorManagement.sol:77",
+      "verified": "no",
+      "current_state_summary": "On mismatch, `PerformanceLengthMismatch(activeCount, perfCount)` is explicitly emitted (event declared at IValidatorManagement.sol:77) and Phase 2 aborts for ALL validators, not just trailing ones. There is no silent partial-coverage behavior; no validator escapes eviction selectively based on high index.",
+      "gating_conditions": "Mismatch branch unconditionally emits and returns.",
+      "differs_from_original": "Silent behavior replaced with observable event; partial coverage replaced with all-or-nothing.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [3, 4, 5],
+  "reasoning_chain": "The exploit premise relies on a silent `min()` truncation pattern (`checkLen = activeLen < perfLen ? activeLen : perfLen`) that lets validators at indices [perfLen, activeLen) bypass eviction. That pattern is NOT present in the current source. At ValidatorManagement.sol:679-682 the guard is strict equality: `if (activeLen != perfLen) { emit PerformanceLengthMismatch(activeLen, perfLen); return; }`. This guard (Step 3) is the break point. When lengths disagree, Phase 2 performance-eviction is aborted atomically for the whole set and an on-chain event signals the discrepancy — eliminating both the 'silent' and the 'trailing-validators only' aspects of the alleged attack. Underbonded eviction (Phase 1) is unaffected and still iterates over all activeLen indices without touching perfs. The spec (spec_v2/validator_management.spec.md:580) documents this behavior as intentional.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "676-682",
+      "excerpt": "uint256 perfLen = perfs.length;\n\n        // Strict equality check: perf array length must match active validator count.\n        if (activeLen != perfLen) {\n            emit PerformanceLengthMismatch(activeLen, perfLen);\n            return;\n        }",
+      "why_matters": "Directly refutes the issue: no min() fallback, explicit event, early return — exactly the mitigation the reporter asked for."
+    },
+    {
+      "file": "src/staking/IValidatorManagement.sol",
+      "lines": "77-77",
+      "excerpt": "event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);",
+      "why_matters": "The event the reporter claims is missing is declared and emitted."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "685-695",
+      "excerpt": "for (uint256 i = 0; i < activeLen; i++) {\n            address pool = _activeValidators[i];\n            ValidatorRecord storage validator = _validators[pool];\n\n            // Only evaluate ACTIVE validators (skipping those evicted in Phase 1)\n            if (validator.status != ValidatorStatus.ACTIVE) {\n                continue;\n            }\n\n            // Check if validator meets eviction criteria based on success percentage\n            uint256 total = uint256(perfs[i].successfulProposals) + uint256(perfs[i].failedProposals);",
+      "why_matters": "Loop bound is activeLen (not min(activeLen, perfLen)); indexing perfs[i] is safe only because the prior equality gate enforces perfs.length == activeLen."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "280-288",
+      "excerpt": "IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch();\n\n        // 3. Reset performance tracker for the new epoch\n        //    ORDERING INVARIANT: This call destructively erases all epoch performance data.\n        //    It MUST happen AFTER ValidatorManagement.onNewEpoch().\n        //    Note: evictUnderperformingValidators() is now called BEFORE DKG starts,\n        //    so its readings naturally precede this reset.\n        uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount();\n        IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);",
+      "why_matters": "Shows the reset ordering; eviction is observed at Reconfiguration.sol:99/151 before this reset, so perfLen reflects the completed epoch's seeding."
+    }
+  ],
+  "counterargument": "A skeptic could argue that even with the strict-equality guard, a governance-induced mid-epoch change to _activeValidators (without a corresponding PerformanceTracker seed adjustment) would still silently disable ALL performance eviction for that epoch (Phase 2 returns early). That is arguably worse than partial coverage because a single underperforming validator's mismatch now shields the entire set — potentially weaponizable if an attacker can force activeLen to drift by 1. However, (a) the code emits PerformanceLengthMismatch so operators are alerted; (b) Phase 1 underbonded eviction still runs unaffected, covering the bond-based liveness threat; (c) the only documented mid-epoch mutator paths (joinValidatorSet / leaveValidatorSet) route through PENDING_ACTIVE / PENDING_INACTIVE without changing _activeValidators length until onNewEpoch() — so drift requires an orthogonal bug not identified in this report. The original finding's exact mechanism (silent min() truncation of trailing indices) is decisively absent.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol::test_audit_evict_doesNotRevert"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

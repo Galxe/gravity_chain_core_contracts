@@ -1,0 +1,10 @@
+{
+  "issue_number": 554,
+  "dynamic_status": "DYNAMIC_PASS",
+  "forge_result_path": ".audit-recheck/poc/554/results/main_a623eab.txt",
+  "poc_test_path": ".audit-recheck/poc/554/test/POC_554.t.sol",
+  "verdict_md_path": ".audit-recheck/poc/554/results/verdict.md",
+  "attempts": 2,
+  "reasoning": "PoC reproduces the mid-vote addStake inflation attack end-to-end on main (a623eab). Voter creates a proposal with the pool's snapshot-era 10 ETH voting power, partial-votes 1 ETH yes, staker calls addStake{value: 90 ETH}() which auto-extends lockedUntil past the proposal's expirationTime, voter votes again (capped by getRemainingVotingPower's live read of the now-inflated pool power) — cumulative yesVotes reaches 100 ETH, strictly greater than the 10 ETH that was in effect at proposal creation. Attempt 1 failed because vm.etch of Governance zeroed the nextProposalId state initialiser (= 1); fixed by deploying Governance directly since nothing in the exploit path requires the canonical SystemAddresses.GOVERNANCE slot. Attempt 2 passes. Static EXISTS verdict confirmed.",
+  "agrees_with_static_exists": true
+}

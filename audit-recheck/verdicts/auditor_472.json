@@ -1,0 +1,109 @@
+{
+  "issue_number": 472,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls EpochConfig.setForNextEpoch(type(uint64).max) — only >0 check, sets _pendingEpochIntervalMicros.",
+      "current_code_ref": "src/runtime/EpochConfig.sol:99-113",
+      "verified": "yes",
+      "current_state_summary": "setForNextEpoch(uint64) gated by requireAllowed(GOVERNANCE) and _requireInitialized(); only validates `_epochIntervalMicros == 0` revert. No upper-bound check. Parameter type is uint64 so the value type(uint64).max = 18_446_744_073_709_551_615 passes every guard and is written verbatim into `_pendingEpochIntervalMicros`; `hasPendingConfig` is set to true.",
+      "gating_conditions": "Caller must be SystemAddresses.GOVERNANCE; contract must be initialized; value must be non-zero.",
+      "differs_from_original": "None — matches the original description exactly.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Next epoch boundary: Reconfiguration._applyReconfiguration() calls EpochConfig.applyPendingConfig() → epochIntervalMicros = type(uint64).max; sets lastReconfigurationTime = nowMicroseconds().",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-293",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration() unconditionally invokes EpochConfig(EPOCH_CONFIG).applyPendingConfig() at line 274; applyPendingConfig (src/runtime/EpochConfig.sol:122-138) copies `_pendingEpochIntervalMicros` (= 2^64-1) into storage `epochIntervalMicros` with no sanity validation. Immediately after (Reconfiguration.sol:293), `lastReconfigurationTime = ITimestamp(TIMESTAMP).nowMicroseconds()` is stored as a real (non-zero) microsecond timestamp.",
+      "gating_conditions": "Reached once per epoch transition, via either finishTransition() (DKG path) or _doImmediateReconfigure() (variant == Off path).",
+      "differs_from_original": "Line numbers shifted slightly (applyPendingConfig is invoked at :274, not :267) but functionality is identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Next block: Blocker.onBlockStart() calls IReconfiguration(RECONFIGURATION).checkAndStartTransition() — no try/catch.",
+      "current_code_ref": "src/blocker/Blocker.sol:85-119",
+      "verified": "yes",
+      "current_state_summary": "onBlockStart() (required by SYSTEM_CALLER) performs an unguarded external call `IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition()` at line 112. There is no try/catch around it — a revert bubbles up the stack and fails the entire block prologue. A grep of Blocker.sol for `try`/`catch` yields only a comment hit; confirmed no protective wrapping.",
+      "gating_conditions": "Every block once initialized (Blocker._initialized == true).",
+      "differs_from_original": "None — unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "checkAndStartTransition() → _canTransition()",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:84-115",
+      "verified": "yes",
+      "current_state_summary": "checkAndStartTransition() at :84 requires SystemAddresses.BLOCK, then at :94 calls internal _canTransition(). Whenever transition state is not DkgInProgress, _canTransition() is evaluated unconditionally on every block.",
+      "gating_conditions": "Caller == BLOCK; transition state != DkgInProgress (in DkgInProgress branch it returns early without calling _canTransition, so the halt window is the non-DKG-in-progress state — which is the normal steady state).",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "_canTransition() computes lastReconfigurationTime + epochInterval → uint64 overflow → panic revert.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:215-219",
+      "verified": "yes",
+      "current_state_summary": "_canTransition() reads `epochInterval = EpochConfig(EPOCH_CONFIG).epochIntervalMicros()` and returns `currentTime >= lastReconfigurationTime + epochInterval`. Both operands are uint64; pragma is ^0.8.30 (file header line 2), so addition is checked. With epochInterval = 2^64-1 and lastReconfigurationTime ≈ 1.7e15 µs (non-zero, written in step 2), the sum overflows uint64 and triggers an Arithmetic(0x11) panic revert. Note: getRemainingTimeSeconds() at :189-201 contains the same overflow-prone expression on line 194, so any external view caller would also trigger it.",
+      "gating_conditions": "lastReconfigurationTime must be > 0 at the overflow point. Initialize() at :70 sets it to nowMicroseconds() at genesis; _applyReconfiguration at :293 keeps rewriting it to nowMicroseconds(). So it is always > 0 in practice (microsecond timestamps since epoch).",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Revert propagates up → every subsequent block fails → permanent chain halt.",
+      "current_code_ref": "src/blocker/Blocker.sol:112",
+      "verified": "yes",
+      "current_state_summary": "Because onBlockStart does not wrap checkAndStartTransition in try/catch, the panic propagates out of the block prologue. Because the overflow is deterministic on the stored epochIntervalMicros, and that value is only mutable via EpochConfig.applyPendingConfig() (RECONFIGURATION-only) or governance re-setting it — both requiring a block to execute — there is no on-chain path to recovery. The halt is permanent without an off-chain/hard-fork rescue.",
+      "gating_conditions": "No on-chain recovery: any governance proposal execution needs block prologue to succeed, which it never does after the bad value is applied.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "I re-verified each hop against current master (a623eab). EpochConfig.setForNextEpoch (src/runtime/EpochConfig.sol:99-113) still validates only the non-zero case and still allows the full uint64 domain including 2^64-1. applyPendingConfig (lines 122-138) writes it through unsanitized. In Reconfiguration._applyReconfiguration (src/blocker/Reconfiguration.sol:265-308) the pending EpochConfig is applied at :274 and lastReconfigurationTime is refreshed to a real microsecond timestamp at :293. _canTransition at :215-219 performs `lastReconfigurationTime + epochInterval` under Solidity ^0.8.30 checked arithmetic, which will panic once epochIntervalMicros == type(uint64).max and lastReconfigurationTime > 0. Blocker.onBlockStart (src/blocker/Blocker.sol:85-119) invokes checkAndStartTransition at :112 with no try/catch, so the panic aborts the prologue of every subsequent block. There is no MAX_EPOCH_INTERVAL, no upper-bound sanitizer elsewhere in src/, and the unit tests (test/unit/runtime/EpochConfig.t.sol) only cover the zero-check path — no test exercises or rejects type(uint64).max. Precondition is strong (a GOVERNANCE proposal), but the severity is a permanent chain halt with no on-chain recovery, so the vulnerability is live.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/EpochConfig.sol",
+      "lines": "99-113",
+      "excerpt": "function setForNextEpoch(uint64 _epochIntervalMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); if (_epochIntervalMicros == 0) { revert Errors.InvalidEpochInterval(); } _pendingEpochIntervalMicros = _epochIntervalMicros; hasPendingConfig = true; emit PendingEpochIntervalSet(_epochIntervalMicros); }",
+      "why_matters": "Only guard besides role/initialization is `== 0`; type(uint64).max is accepted verbatim. No upper bound defined anywhere in src/."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "215-219",
+      "excerpt": "function _canTransition() internal view returns (bool) { uint64 currentTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint64 epochInterval = EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros(); return currentTime >= lastReconfigurationTime + epochInterval; }",
+      "why_matters": "uint64 checked addition under pragma ^0.8.30 panics when epochInterval == 2^64-1 and lastReconfigurationTime > 0. Pure read, no fallback."
+    },
+    {
+      "file": "src/blocker/Blocker.sol",
+      "lines": "109-112",
+      "excerpt": "// 3. Check and potentially start epoch transition // Reconfiguration handles all transition logic internally // Returns true if DKG was started, but we don't need to act on this IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();",
+      "why_matters": "No try/catch — any revert from the chain Blocker→Reconfiguration→_canTransition fails the block prologue and thus every block after that."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-293",
+      "excerpt": "function _applyReconfiguration() internal { ... EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig(); ... lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); ... }",
+      "why_matters": "This is the single-block choke point where the poisoned pending value becomes the active epochIntervalMicros and lastReconfigurationTime is simultaneously set to a large (real) microsecond value, arming the overflow."
+    },
+    {
+      "file": "src/runtime/EpochConfig.sol",
+      "lines": "122-138",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) { return; } uint64 oldValue = epochIntervalMicros; epochIntervalMicros = _pendingEpochIntervalMicros; ... }",
+      "why_matters": "Applies pending value with zero sanitization — no bound check at apply-time either."
+    }
+  ],
+  "counterargument": "One could argue this is not a real bug because (a) it requires a successful governance proposal, so a malicious majority could do many worse things directly, and (b) setting the interval to type(uint64).max is a plainly absurd value that governance would never actually pass. However, the Critical rating is defensible regardless of intent: the input is 18_446_744_073_709_551_615 µs (~584,554 years), well above any realistic upper bound like a decade (~3.15e17 µs) — a principled `MAX_EPOCH_INTERVAL` such as 30 days (~2.6e12 µs) would cost nothing and would also catch typos, proxy-parameter-decoding mistakes, or buggy off-chain tooling that emits a sentinel value. More importantly, unlike other governance parameters where a bad value causes economic harm recoverable by a corrective proposal, this one makes the system unable to process any transaction at all (block prologue reverts), so no counter-proposal can land — only an off-chain hard fork. The asymmetry (trivial one-line defence vs. unrecoverable permanent halt) defeats the 'governance is trusted' counterargument. Also, the same expression in getRemainingTimeSeconds (src/blocker/Reconfiguration.sol:194) could be reached via any off-chain monitoring view, making the failure surface even wider than just the block prologue.",
+  "related_existing_tests": [
+    "test/unit/runtime/EpochConfig.t.sol::test_SetForNextEpoch (covers normal 4h value only)",
+    "test/unit/runtime/EpochConfig.t.sol::test_RevertWhen_SetForNextEpoch_Zero (only checks 0-revert; no upper bound tested)",
+    "test/unit/runtime/EpochConfig.t.sol::test_ApplyPendingConfig (no sanity on applied value)",
+    "test/unit/blocker/Reconfiguration.t.sol (only uses TWO_HOURS-scale epochIntervalMicros; never exercises _canTransition with a pathologically large interval)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

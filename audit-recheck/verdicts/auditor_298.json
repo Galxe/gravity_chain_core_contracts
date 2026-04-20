@@ -1,0 +1,96 @@
+{
+  "issue_number": 298,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Attacker creates a proposal targeting setForNextEpoch(type(uint128).max, type(uint256).max, 1)",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:130-149",
+      "verified": "partial",
+      "current_state_summary": "setForNextEpoch still accepts arbitrary uint128/uint256/uint64 params and is still restricted to SystemAddresses.GOVERNANCE, so a governance proposal could still be crafted to call it with the attacker-chosen values.",
+      "gating_conditions": "Caller must be GOVERNANCE; _initialized must be true; _validateConfig must pass.",
+      "differs_from_original": "_validateConfig is now invoked with all three parameters (not just duration), so the attempted call is bounded before PendingConfig is written.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_validateConfig only checks votingDurationMicros > 0, leaving minVotingThreshold and requiredProposerStake unvalidated so extreme values are accepted.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:188-213",
+      "verified": "no",
+      "current_state_summary": "_validateConfig now validates all three fields: rejects minVotingThreshold == 0 (InvalidVotingThreshold) and == type(uint128).max (ExcessiveMinVotingThreshold); rejects requiredProposerStake == 0 (InvalidProposerStake) and == type(uint256).max (ExcessiveRequiredProposerStake); enforces MIN_VOTING_DURATION = 1 hour and MAX_VOTING_DURATION = 365 days in microseconds (VotingDurationTooShort / VotingDurationTooLong).",
+      "gating_conditions": "Pure function; all three parameters must fall within the new bounds.",
+      "differs_from_original": "The original signature only took _votingDurationMicros and only checked !=0. The current function has 3 parameters and 6 distinct reverts.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Proposal passes and is executed; pending config is stored with extreme values.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:141-148",
+      "verified": "no",
+      "current_state_summary": "PendingConfig assignment happens only after _validateConfig passes. With the new guards, the exploit inputs (type(uint128).max / type(uint256).max / 1 microsecond) revert before _pendingConfig is written or hasPendingConfig is set.",
+      "gating_conditions": "_validateConfig must not revert.",
+      "differs_from_original": "Previously any value would reach this block; now extreme values are filtered.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "At next epoch boundary applyPendingConfig() activates the malicious values permanently bricking governance.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:158-178",
+      "verified": "partial",
+      "current_state_summary": "applyPendingConfig still overwrites state from _pendingConfig with no re-validation, but because _pendingConfig cannot be populated with the bricking values in step 3, the activation cannot produce the claimed bricked state.",
+      "gating_conditions": "hasPendingConfig must be true; caller must be RECONFIGURATION.",
+      "differs_from_original": "No new validation here, but the upstream gate makes this step unreachable with the exploit payload.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Governance is permanently dead: createProposal always reverts, quorum unreachable, 1-microsecond voting window; no admin override.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:18-23,188-213",
+      "verified": "no",
+      "current_state_summary": "MIN_VOTING_DURATION = 1 hour and MAX_VOTING_DURATION = 365 days bound the voting window; minVotingThreshold and requiredProposerStake cannot be set to 0 or to their type max. A 1-microsecond voting window, zero-threshold, or max-value stake requirement are all explicitly rejected.",
+      "gating_conditions": "Applied on both initialize() (line 92) and setForNextEpoch() (line 139).",
+      "differs_from_original": "The described bricking scenario is no longer reachable via governance.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 3, 4, 5],
+  "reasoning_chain": "The original issue targets GovernanceConfig._validateConfig only checking votingDurationMicros != 0. Current code at src/runtime/GovernanceConfig.sol:188-213 validates all three parameters: InvalidVotingThreshold (==0), ExcessiveMinVotingThreshold (==type(uint128).max), InvalidProposerStake (==0), ExcessiveRequiredProposerStake (==type(uint256).max), VotingDurationTooShort (< MIN_VOTING_DURATION = 1 hour in micros), VotingDurationTooLong (> MAX_VOTING_DURATION = 365 days in micros). These guards are applied on both initialize (line 92) and setForNextEpoch (line 139). The exact exploit payload (type(uint128).max, type(uint256).max, 1) is rejected three times over. Error selectors exist in src/foundation/Errors.sol:280,283,465,468,473,478. Tests in test/unit/governance/GovernanceConfig.t.sol cover InvalidVotingThreshold, InvalidProposerStake, and VotingDurationTooShort boundaries. Issue is fixed.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "188-213",
+      "excerpt": "function _validateConfig(uint128 _minVotingThreshold, uint256 _requiredProposerStake, uint64 _votingDurationMicros) internal pure { if (_minVotingThreshold == 0) revert Errors.InvalidVotingThreshold(); if (_minVotingThreshold == type(uint128).max) revert Errors.ExcessiveMinVotingThreshold(); if (_requiredProposerStake == 0) revert Errors.InvalidProposerStake(); if (_requiredProposerStake == type(uint256).max) revert Errors.ExcessiveRequiredProposerStake(); if (_votingDurationMicros < MIN_VOTING_DURATION) revert Errors.VotingDurationTooShort(_votingDurationMicros, MIN_VOTING_DURATION); if (_votingDurationMicros > MAX_VOTING_DURATION) revert Errors.VotingDurationTooLong(_votingDurationMicros, MAX_VOTING_DURATION); }",
+      "why_matters": "Directly contradicts the reported absence of bounds: all three fields now have explicit rejection of the malicious values named in the exploit scenario."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "18-23",
+      "excerpt": "uint64 public constant MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000; uint64 public constant MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;",
+      "why_matters": "The recommended 'minimum 1 hour voting duration' is implemented as a constant lower bound; upper bound of 365 days blocks absurdly long windows."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "130-149",
+      "excerpt": "setForNextEpoch(...) { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(_minVotingThreshold, _requiredProposerStake, _votingDurationMicros); _pendingConfig = PendingConfig({...}); hasPendingConfig = true; }",
+      "why_matters": "Validation now precedes storage write, so a malicious proposal cannot land a bricking PendingConfig."
+    },
+    {
+      "file": "src/foundation/Errors.sol",
+      "lines": "465-478",
+      "excerpt": "error ExcessiveMinVotingThreshold(); error ExcessiveRequiredProposerStake(); error VotingDurationTooShort(uint64 provided, uint64 minimum); error VotingDurationTooLong(uint64 provided, uint64 maximum);",
+      "why_matters": "Confirms error selectors exist in the registry, so the revert statements compile and are distinct."
+    }
+  ],
+  "counterargument": "One could argue the fix is insufficient because it only rejects the two exact type-max sentinels: a value of type(uint128).max - 1 or type(uint256).max - 1 (or any value larger than the total supply / any realistic stake) would still pass validation. If a governance attacker sets requiredProposerStake to, e.g., 2**255 (far above any plausible total stake) the pool would still be unable to create proposals, reproducing the same bricking outcome without hitting the == type(uint256).max check. Similarly minVotingThreshold could be set to type(uint128).max - 1 and still exceed any reachable vote total. The issue body's literal exploit payload (type(uint128).max, type(uint256).max, 1) is blocked, but the broader 'permanent governance bricking via unbounded values' concern the title describes is only partially mitigated because the current checks are equality-with-sentinels, not true upper bounds relative to realistic economic ceilings. Under this broader reading the issue could be labeled PARTIAL rather than NOT_EXISTS. However, the reported issue text specifically describes the validation as absent and proposes the exact guards that are now present (upper-bound for threshold/stake, lower-bound for duration), so with respect to the concrete described vulnerability the fix lands and the verdict remains NOT_EXISTS.",
+  "related_existing_tests": [
+    "test/unit/governance/GovernanceConfig.t.sol:76 (VotingDurationTooShort on initialize with 0)",
+    "test/unit/governance/GovernanceConfig.t.sol:82 (InvalidVotingThreshold)",
+    "test/unit/governance/GovernanceConfig.t.sol:88 (InvalidProposerStake)",
+    "test/unit/governance/GovernanceConfig.t.sol:121 (VotingDurationTooShort on setForNextEpoch)",
+    "test/unit/governance/GovernanceConfig.t.sol:129 (InvalidVotingThreshold on setForNextEpoch)",
+    "test/unit/governance/GovernanceConfig.t.sol:137 (InvalidProposerStake on setForNextEpoch)",
+    "test/unit/governance/GovernanceConfig.t.sol:270,290 (fuzz within MIN/MAX voting duration bounds)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

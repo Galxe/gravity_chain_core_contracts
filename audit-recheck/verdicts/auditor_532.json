@@ -1,0 +1,106 @@
+{
+  "issue_number": 532,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance proposal calls ConsensusConfig.setForNextEpoch(malformed_bytes) via Governance.execute low-level call",
+      "current_code_ref": "src/governance/Governance.sol:527-533",
+      "verified": "yes",
+      "current_state_summary": "Governance.execute iterates targets[i].call(datas[i]) with arbitrary calldata after checking only that execution hash matches the proposal's pre-committed targets/datas. No semantic validation of target-specific payloads.",
+      "gating_conditions": "Proposal must be SUCCEEDED, not already executed, onlyExecutor, and the (targets,datas) hash must match _proposals[proposalId].executionHash — none of which inspect the inner bytes payload.",
+      "differs_from_original": "None. The low-level call dispatch is exactly as described.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "setForNextEpoch checks only newConfig.length == 0; no format validation (constraint C8 missing)",
+      "current_code_ref": "src/runtime/ConsensusConfig.sol:106-120",
+      "verified": "yes",
+      "current_state_summary": "The only validation is requireAllowed(GOVERNANCE), _requireInitialized(), and newConfig.length == 0. Any non-empty bytes are accepted. Contract NatSpec and TODO comments (lines 13-14) explicitly state: 'The config is stored as opaque bytes (BCS-serialized), interpreted off-chain by nodes' and 'TODO(yxia): encoding format must be BCS or anything else?' — confirming no on-chain parser by design.",
+      "gating_conditions": "Caller must be SystemAddresses.GOVERNANCE; contract must be initialized; newConfig must be non-empty.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "_pendingConfig = newConfig is written",
+      "current_code_ref": "src/runtime/ConsensusConfig.sol:116-119",
+      "verified": "yes",
+      "current_state_summary": "_pendingConfig = newConfig; hasPendingConfig = true; PendingConsensusConfigSet(keccak256(newConfig)) emitted. Raw bytes stored as-is.",
+      "gating_conditions": "None beyond step 2.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "At epoch boundary, Reconfiguration._applyReconfiguration -> ConsensusConfig.applyPendingConfig copies pending -> current and emits ConsensusConfigUpdated",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-274; src/runtime/ConsensusConfig.sol:129-146",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration invokes ConsensusConfig(CONSENSUS_CONFIG).applyPendingConfig() (and ExecutionConfig, plus others). applyPendingConfig sets _currentConfig = _pendingConfig, clears pending, emits ConsensusConfigUpdated(keccak256(_currentConfig)). No parsing/validation step in this path.",
+      "gating_conditions": "Caller must be SystemAddresses.RECONFIGURATION; contract initialized; hasPendingConfig == true.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Off-chain consensus/VM nodes read getCurrentConfig() and BCS decode fails or yields out-of-range parameters",
+      "current_code_ref": "src/runtime/ConsensusConfig.sol:80-83; src/runtime/ExecutionConfig.sol:13,19,52,104-116",
+      "verified": "yes",
+      "current_state_summary": "getCurrentConfig() returns raw _currentConfig bytes. ExecutionConfig.sol mirrors the same pattern ('opaque bytes (BCS-serialized), interpreted off-chain by VM'). Any decode failure or range-violating parameter lives entirely off-chain. ExecutionConfig.setForNextEpoch at lines 104-114 is byte-for-byte the same length-only guard.",
+      "gating_conditions": "Off-chain node runtime behavior; depends on node implementation strictness (panic vs reject vs divergence).",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Affected nodes panic/refuse/diverge -> consensus halts or forks at new epoch",
+      "current_code_ref": "src/runtime/ConsensusConfig.sol:138-145; src/blocker/Reconfiguration.sol:265-274",
+      "verified": "partial",
+      "current_state_summary": "On-chain state transitions to the malformed config (event emitted, storage overwritten) regardless of off-chain decodability. The liveness impact is an off-chain consequence that cannot be observed in Solidity alone, but the prerequisite on-chain state (malformed bytes written to _currentConfig and picked up by nodes) is fully enabled by the current code.",
+      "gating_conditions": "Requires actual off-chain node behavior on malformed payload; cannot be proven solely from on-chain code.",
+      "differs_from_original": "None on-chain; off-chain impact severity depends on node-side handling not visible here.",
+      "breaks_attack": "partial"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "The issue's on-chain premise is fully confirmed in current code at main@a623eab. ConsensusConfig.setForNextEpoch (src/runtime/ConsensusConfig.sol:106-120) only guards against newConfig.length == 0 before writing _pendingConfig. NatSpec lines 13-14 explicitly document the config as opaque BCS bytes interpreted off-chain, with a TODO questioning the encoding — i.e., by design there is no on-chain parser, matching the reported missing C8 constraint. Governance.execute (src/governance/Governance.sol:527-533) dispatches the payload via a low-level call without inspecting its semantics; only the hash of (targets, datas) is validated against the proposal commitment, so any passed-governance proposal reaches setForNextEpoch with arbitrary bytes. Reconfiguration._applyReconfiguration (src/blocker/Reconfiguration.sol:265-274) unconditionally promotes pending -> current at the epoch boundary, emitting ConsensusConfigUpdated. ExecutionConfig (src/runtime/ExecutionConfig.sol:104-114) is structurally identical, broadening the attack surface to the VM config. The final liveness impact (nodes panic/fork) is inherently off-chain and cannot be fully proven from Solidity alone, hence step 6 is marked 'partial'; however, the entire on-chain precondition for the described scenario is intact. No parser, no range check, no versioning/magic-byte check, and no test exercising malformed payloads exists.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/ConsensusConfig.sol",
+      "lines": "106-120",
+      "excerpt": "function setForNextEpoch(bytes calldata newConfig) external {\n    requireAllowed(SystemAddresses.GOVERNANCE);\n    _requireInitialized();\n    if (newConfig.length == 0) { revert Errors.EmptyConfig(); }\n    _pendingConfig = newConfig;\n    hasPendingConfig = true;\n    emit PendingConsensusConfigSet(keccak256(newConfig));\n}",
+      "why_matters": "Demonstrates the sole validation is length != 0; no BCS/format/range check — the core missing constraint."
+    },
+    {
+      "file": "src/runtime/ConsensusConfig.sol",
+      "lines": "13-14",
+      "excerpt": "///      The config is stored as opaque bytes (BCS-serialized), interpreted off-chain by nodes.\n///      TODO(yxia): encoding format must be BCS or anything else?",
+      "why_matters": "Confirms the lack of parsing is intentional design (opaque bytes), and the TODO shows format is not even finalized — the exact condition the issue flags."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-274",
+      "excerpt": "function _applyReconfiguration() internal {\n    IRandomnessConfig(...).applyPendingConfig();\n    ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();\n    ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();\n    ...\n}",
+      "why_matters": "Epoch boundary unconditionally promotes the malformed pending payload to current — completing the on-chain data flow."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "527-533",
+      "excerpt": "for (uint256 i = 0; i < len; ++i) {\n    (bool success, bytes memory returnData) = targets[i].call(datas[i]);\n    if (!success) { revert Errors.ExecutionFailed(proposalId, returnData); }\n}",
+      "why_matters": "Governance performs an opaque low-level call on proposal-chosen calldata; no inner-payload semantic validation, so any passed proposal delivers arbitrary bytes to setForNextEpoch."
+    },
+    {
+      "file": "src/runtime/ExecutionConfig.sol",
+      "lines": "104-114",
+      "excerpt": "function setForNextEpoch(bytes calldata newConfig) external {\n    requireAllowed(SystemAddresses.GOVERNANCE);\n    _requireInitialized();\n    if (newConfig.length == 0) { revert Errors.EmptyConfig(); }\n    _pendingConfig = newConfig;\n    ...\n}",
+      "why_matters": "Shows the identical pattern for VM-consumed config, extending the issue's scope to execution-layer liveness."
+    }
+  ],
+  "counterargument": "A reviewer could argue this is acceptable because (a) the payload is gated behind GOVERNANCE (passed proposal + timelock/quorum) and (b) the design explicitly defers encoding/validation to the off-chain layer, which presumably refuses malformed configs safely and continues running the previous config. Under that posture, an accepted-but-malformed BCS would be a governance mistake, not a contract bug. However, this rebuttal fails for two concrete reasons rooted in the code: (1) applyPendingConfig at ConsensusConfig.sol:138 overwrites _currentConfig and emits ConsensusConfigUpdated unconditionally — on-chain state has irrevocably advanced before any off-chain node observes the payload, so even a graceful off-chain rejection leaves the chain pointing at a broken epoch configuration with no rollback primitive in ConsensusConfig (no admin setter, no rescue path). (2) Governance.execute dispatches arbitrary bytes (line 529) with hash-only verification, and human reviewers cannot read opaque BCS calldata without a decoder; truncated or range-violating bytes are indistinguishable from valid ones during the vote. Combined with the explicit TODO(yxia) at line 14 showing the encoding is not even finalized, the on-chain contract provides zero defense-in-depth and the residual liveness risk is real.",
+  "related_existing_tests": [
+    "test/unit/runtime/ConsensusConfig.t.sol (exists but contains no malformed-payload / BCS-format test; comment at line 15 just labels 'Common test values (BCS-serialized bytes)')"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

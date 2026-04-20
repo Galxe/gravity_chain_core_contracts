@@ -1,0 +1,91 @@
+{
+  "issue_number": 561,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "SYSTEM_CALLER invokes Genesis.initialize(params) at Genesis.sol:131",
+      "current_code_ref": "src/Genesis.sol:134-174",
+      "verified": "yes",
+      "current_state_summary": "initialize(GenesisInitParams calldata params) still enforces requireAllowed(SYSTEM_CALLER) and one-shot _isInitialized guard.",
+      "gating_conditions": "msg.sender == SYSTEM_CALLER; _isInitialized must be false",
+      "differs_from_original": "None of consequence.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_createPoolsAndValidators reads StakingConfig.lockupDurationMicros() and computes initialLockedUntil = 1798761600e6 + lockupDuration at Genesis.sol:284 — a literal anchor at 2027-01-01",
+      "current_code_ref": "src/Genesis.sol:266-291",
+      "verified": "no",
+      "current_state_summary": "The hard-coded literal 1798761600 is fully removed. _createPoolsAndValidators now takes a second parameter `uint64 initialLockedUntilMicros` supplied from GenesisInitParams.initialLockedUntilMicros (Genesis.sol:113) and forwards it unchanged to Staking.createPool (line 290). No internal arithmetic on any genesis literal remains.",
+      "gating_conditions": "Value of params.initialLockedUntilMicros is chosen by the deployer at genesis-construction time (see genesis-tool/src/genesis.rs:69,535 and genesis-tool/config/genesis_config.json:73).",
+      "differs_from_original": "Anchor is no longer hard-coded; it is an input parameter. Git log shows commit 6dc6f02 (GCC-036) explicitly: 'Make genesis lockedUntil configurable via initialLockedUntilMicros parameter in GenesisInitParams, replacing the hardcoded calculation.'",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Each Staking.createPool forwards this value to StakePool.constructor at StakePool.sol:114-118; because Timestamp.nowMicroseconds() returns 0 during genesis, the check `_lockedUntil >= now_ + minLockup` passes trivially",
+      "current_code_ref": "src/staking/StakePool.sol:137-156",
+      "verified": "partial",
+      "current_state_summary": "Constructor still performs `if (_lockedUntil < now_ + minLockup) revert LockupDurationTooShort`. At genesis time `now_` is 0, so the check remains loose. However, because `_lockedUntil` is now a deployer-chosen value rather than a fixed anchor, a correctly configured genesis (e.g., 1798848000000000 in genesis_config.json, ~2027-01-08 plus future operator choice) can be set well beyond chain-launch time; late launches can simply pick a larger value.",
+      "gating_conditions": "Requires deployer to pass a sane initialLockedUntilMicros at genesis. If deployer passes a past value the constraint EC4 is still violable, but this is now an operator-configuration concern, not a code time-bomb.",
+      "differs_from_original": "Check itself unchanged, but upstream input is no longer a 2027 literal.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Blocker.initialize (step 7) takes the NIL branch; Timestamp remains 0 after Genesis",
+      "current_code_ref": "src/Genesis.sol:170",
+      "verified": "yes",
+      "current_state_summary": "Blocker initialization is unchanged; not load-bearing for this issue in the current code because Step 2's root cause is gone.",
+      "gating_conditions": "n/a",
+      "differs_from_original": "None material.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "First normal block calls Timestamp.updateGlobalTime with a real timestamp ≥ 1798761600e6 — every genesis pool's lockedUntil is already in the past; constraint EC4 violated",
+      "current_code_ref": "src/Genesis.sol:285-291; src/staking/StakePool.sol:149-156",
+      "verified": "no",
+      "current_state_summary": "Because `lockedUntil` is a deployer-chosen parameter, there is no fixed year-2027 ceiling at which all pools auto-unlock. The claimed race-to-unstake condition on the first real block is no longer a function of the Solidity source; it would require the operator to explicitly genesis the chain with a past or near-past lockup, which is a config-time choice.",
+      "gating_conditions": "Would require operator malfeasance or misconfiguration at genesis-tool level; not a smart-contract bug.",
+      "differs_from_original": "Root precondition (hard-coded anchor) removed.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 3, 5],
+  "reasoning_chain": "The issue depended on one specific literal: `uint64(1798761600 * 1_000_000) + lockupDuration` in Genesis._createPoolsAndValidators. In the current main@a623eab tree, Genesis.sol:266-291 no longer performs this calculation: _createPoolsAndValidators receives `uint64 initialLockedUntilMicros` as a calldata parameter sourced from GenesisInitParams.initialLockedUntilMicros (Genesis.sol:113,159,268,290) and passes it directly to Staking.createPool. A global grep for `1798761600` across the repo returns zero hits. Git history confirms this was an intentional fix: commit 6dc6f02 (GCC-036) message — 'Make genesis lockedUntil configurable via initialLockedUntilMicros parameter in GenesisInitParams, replacing the hardcoded calculation.' The StakePool constructor's lockup check (StakePool.sol:147-151) is structurally unchanged, but because its input is no longer a fixed 2027 literal, the time-bomb scenario cannot materialize from source code; post-2027 launches simply supply a forward-dated value (e.g., genesis_config.json uses 1798848000000000 today, but operators regenerate this file per launch).",
+  "key_evidence": [
+    {
+      "file": "src/Genesis.sol",
+      "lines": "100-114",
+      "excerpt": "struct GenesisInitParams { ... InitialValidator[] validators; /// @notice Lockup expiration timestamp for initial validator stake pools (microseconds) uint64 initialLockedUntilMicros; }",
+      "why_matters": "Lockup anchor is now an explicit deployer-supplied field in the init params, not a hard-coded constant."
+    },
+    {
+      "file": "src/Genesis.sol",
+      "lines": "266-291",
+      "excerpt": "function _createPoolsAndValidators(InitialValidator[] calldata validators, uint64 initialLockedUntilMicros) internal returns (GenesisValidator[] memory) { ... address pool = Staking(SystemAddresses.STAKING).createPool{ value: v.stakeAmount }(v.owner, v.staker, v.operator, v.owner, initialLockedUntilMicros);",
+      "why_matters": "Shows the literal `1798761600 * 1_000_000 + lockupDuration` is gone; value flows through from params unchanged."
+    },
+    {
+      "file": "genesis-tool/config/genesis_config.json",
+      "lines": "73",
+      "excerpt": "\"initialLockedUntilMicros\": 1798848000000000,",
+      "why_matters": "Demonstrates the chosen value is a config-file artifact regenerated per deployment, not baked into compiled bytecode."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "137-156",
+      "excerpt": "constructor(... uint64 _lockedUntil) payable Ownable(_owner) { ... if (_lockedUntil < now_ + minLockup) revert Errors.LockupDurationTooShort(_lockedUntil, now_ + minLockup); ... lockedUntil = _lockedUntil;",
+      "why_matters": "Downstream consumer of the value still only checks the weak genesis-time inequality, but since input is configurable, the 2027 time-bomb vector is gone."
+    }
+  ],
+  "counterargument": "One could argue the bug is merely shifted rather than eliminated: the StakePool constructor's invariant `_lockedUntil >= now_ + minLockup` is trivially satisfied when `now_ == 0` during genesis, so nothing in Solidity prevents a deployer from passing `initialLockedUntilMicros = 0` or a past value. If a chain is launched in 2030 but the operator reuses an old genesis_config.json with 1798848000000000 (2027-01-08), every pool unlocks on the first real block exactly as the original report described. However: (a) this now requires an operator mistake or malice at config-generation time, not a code-level time-bomb; (b) the genesis-tool file is expected to be regenerated per-launch; (c) any lockup-invariant regression would be the operator's responsibility, not a vulnerability in the smart-contract source. The original report's core claim — 'No governance setter exists to patch the literal after deployment' — is moot because there is no literal; `initialLockedUntilMicros` is simply an input.",
+  "related_existing_tests": [
+    "test/unit/GenesisTest.t.sol:113 (params.initialLockedUntilMicros = 1798848000000000)",
+    "test/unit/staking/Staking.t.sol:328-337 (lockup extension assertions on initial lockedUntil)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

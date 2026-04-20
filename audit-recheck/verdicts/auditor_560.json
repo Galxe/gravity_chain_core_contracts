@@ -1,0 +1,136 @@
+{
+  "issue_number": 560,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Genesis caller invokes ValidatorManagement.initialize(validators) at src/staking/ValidatorManagement.sol:115 after requireAllowed(GENESIS) passes.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:115-135",
+      "verified": "yes",
+      "current_state_summary": "initialize(GenesisValidator[] calldata validators) is gated only by requireAllowed(GENESIS) at line 118 and the _initialized one-shot at line 120-122. No additional structural checks beyond moniker/pubkey-length and PoP-nonempty.",
+      "gating_conditions": "Caller must be SystemAddresses.GENESIS; _initialized must be false.",
+      "differs_from_original": "None. Line numbers match.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Loop writes _validators[v.stakePool] with status=ACTIVE and pushes v.stakePool into _activeValidators WITHOUT calling IStaking.isPool(v.stakePool); registerValidator enforces this via _validateRegistration.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:127-135, 147-188, 257-264",
+      "verified": "yes",
+      "current_state_summary": "_initializeGenesisValidator (lines 147-188) populates _validators[v.stakePool] with status=ACTIVE (line 169), writes _pubkeyToValidator[keccak256(v.consensusPubkey)] (line 175), and pushes v.stakePool into _activeValidators (line 182). No IStaking.isPool call anywhere in initialize/_initializeGenesisValidator. registerValidator's _validateRegistration at lines 257-264 does check IStaking(STAKING).isPool(stakePool) and reverts Errors.InvalidPool(stakePool); the genesis path is missing this check.",
+      "gating_conditions": "None beyond moniker<=MAX_MONIKER_LENGTH (line 152), consensusPubkey length == BLS12381_PUBKEY_LENGTH (line 157), consensusPop.length != 0 (line 160).",
+      "differs_from_original": "Minor: the logic is extracted into _initializeGenesisValidator, so exact line numbers shifted (status=ACTIVE now line 169, _pubkeyToValidator now line 175, push now line 182, _initialized=true now line 132, totalVotingPower now line 131). Substance identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "At the first epoch boundary, Reconfiguration._applyReconfiguration invokes ValidatorManagement.onNewEpoch, which calls _renewActiveValidatorLockups.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-308; src/staking/ValidatorManagement.sol:537-589",
+      "verified": "yes",
+      "current_state_summary": "Reconfiguration._applyReconfiguration calls IValidatorManagement(VALIDATOR_MANAGER).onNewEpoch() at line 280. onNewEpoch at lines 537-589 first computes next set via _computeNextEpochValidatorSet() at line 542, then runs _applyDeactivations/_applyActivations/..., then calls _renewActiveValidatorLockups() at line 569, then _applyPendingFeeRecipients, _applyPendingConsensusKeys, and finally _syncBondsAndCalculateTotalVotingPower() at line 581.",
+      "gating_conditions": "onNewEpoch requires requireAllowed(RECONFIGURATION) (line 538).",
+      "differs_from_original": "onNewEpoch now performs _computeNextEpochValidatorSet BEFORE the renew loop (line 542 vs. later in the issue's description). This changes the actual revert point but not the outcome.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "_renewActiveValidatorLockups iterates _activeValidators and calls IStaking(STAKING).renewPoolLockup(pool).",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:816-830",
+      "verified": "partial",
+      "current_state_summary": "_renewActiveValidatorLockups now wraps the call in try/catch: 'try IStaking(SystemAddresses.STAKING).renewPoolLockup(pool) { } catch { // Ignore failure to ensure epoch transition liveness }' (lines 822-828). Comment at 821 explicitly states: 'Use try/catch to ensure one bad/malicious pool doesn't revert the entire reconfiguration'.",
+      "gating_conditions": "N/A - any revert is swallowed.",
+      "differs_from_original": "Material difference: the issue assumes 'no try/catch on the renew loop' but the code at 822-828 does wrap the call in try/catch. However, this mitigation does NOT break the attack because other, unwrapped external calls on the bad pool happen in the same onNewEpoch/epoch-start path (see step 5/6).",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 5,
+      "original": "Staking.renewPoolLockup applies the onlyValidPool modifier - if pool is not in _isPool, it reverts InvalidPool(pool).",
+      "current_code_ref": "src/staking/Staking.sol:39-46, 94-99, 219-222",
+      "verified": "yes",
+      "current_state_summary": "onlyValidPool modifier at lines 39-46 reverts Errors.InvalidPool(pool) if !_isPool[pool]. renewPoolLockup at line 219-222 uses onlyValidPool. CRUCIALLY, getPoolVotingPower at lines 94-99 ALSO uses onlyValidPool, and this getPoolVotingPower is called by ValidatorManagement._getValidatorVotingPower at line 938 with NO try/catch. _getValidatorVotingPower is invoked from _computeNextEpochValidatorSet at lines 1033 and 1049 (called unconditionally by onNewEpoch line 542) and from _syncBondsAndCalculateTotalVotingPower at line 888 (called by onNewEpoch line 581) and from getNextValidatorConsensusInfos at line 1254 (called by _startDkgSession at Reconfiguration.sol:237).",
+      "gating_conditions": "pool not registered in Staking._isPool -> unconditional revert InvalidPool.",
+      "differs_from_original": "Revert surface is WIDER than the issue claims: not only renewPoolLockup but every onlyValidPool-gated view (getPoolVotingPower, getPoolOwner, etc.) will revert when invoked on the genesis-planted bad address. The specific renewPoolLockup revert is swallowed by try/catch, but _getValidatorVotingPower -> getPoolVotingPower is not, so onNewEpoch still reverts in _computeNextEpochValidatorSet(line 1033) and _syncBondsAndCalculateTotalVotingPower (line 888). Same outcome: reconfiguration reverts atomically.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "The revert propagates up through onNewEpoch and _applyReconfiguration; _transitionState stays DkgInProgress.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:83-115, 117-138, 228-250, 265-308",
+      "verified": "partial",
+      "current_state_summary": "Two cases (randomness off vs. on). (a) DKG Off: checkAndStartTransition (line 84-115) -> _doImmediateReconfigure (line 252-260) -> _applyReconfiguration (line 265) -> IValidatorManagement.onNewEpoch() (line 280) REVERTS (via _computeNextEpochValidatorSet or later _syncBondsAndCalculateTotalVotingPower). Entire tx reverts atomically; _transitionState remains Idle but no progress is made, and _canTransition keeps returning true forever, so every subsequent block re-enters and re-reverts. (b) DKG On: checkAndStartTransition -> _startDkgSession at line 230; line 237 invokes IValidatorManagement.getNextValidatorConsensusInfos() which internally calls _computeNextEpochValidatorSet -> _getValidatorVotingPower(badPool) -> reverts BEFORE line 246 sets _transitionState=DkgInProgress. Same result: tx reverts, no state change, retries revert identically.",
+      "gating_conditions": "_canTransition returns true once epoch interval elapses; evictUnderperformingValidators runs first but doesn't touch isPool, so it passes.",
+      "differs_from_original": "The original posits that _transitionState stays at DkgInProgress because the assignment at Reconfiguration.sol:296 is rolled back. In reality: in DKG-on mode the revert happens before _transitionState=DkgInProgress (line 246), so state is Idle; in DKG-off mode assignment at line 296 never existed (old path assigned _transitionState; new code assigns _transitionState = TransitionState.Idle at line 296 which never executes due to revert). Either way, liveness is broken: state is Idle and every re-entry reverts, so no epoch ever advances. Impact identical to original claim - permanent liveness DoS.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 7,
+      "original": "Every subsequent block prologue repeats the same path and reverts; forceLeaveValidatorSet/leaveValidatorSet are whenNotReconfiguring and also revert; no on-chain recovery path exists.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:222-227, 394-396, 432-434",
+      "verified": "partial",
+      "current_state_summary": "whenNotReconfiguring modifier at lines 222-227 reverts if IReconfiguration(RECONFIGURATION).isTransitionInProgress(). leaveValidatorSet at line 394-396 and forceLeaveValidatorSet at line 432-434 both use whenNotReconfiguring. Note: isTransitionInProgress returns true only when _transitionState==DkgInProgress (Reconfiguration.sol:179-181). In the DKG-off revert case, state is Idle so leaveValidatorSet/forceLeaveValidatorSet are NOT blocked by whenNotReconfiguring - however, both require validatorExists(stakePool) (lines 394, 432) AND onlyOperator(stakePool) for leaveValidatorSet (line 394). validatorExists will pass because initialize wrote the record (line 165-169). onlyOperator (lines 200-208) calls IStaking.getPoolOperator(stakePool) which is onlyValidPool-gated at Staking.sol:155 and will revert InvalidPool for the bad address. forceLeaveValidatorSet has no onlyOperator and instead checks governance/minimum-bond conditions - need to inspect further.",
+      "gating_conditions": "leaveValidatorSet requires operator; operator lookup reverts. forceLeaveValidatorSet may require DKG-on mode to be blocked via whenNotReconfiguring, OR may hit similar isPool-gated paths.",
+      "differs_from_original": "The original claim that both are 'blocked by whenNotReconfiguring' is only partially correct: in the DKG-off case _transitionState never becomes DkgInProgress, so whenNotReconfiguring passes. However, leaveValidatorSet's operator check reverts via Staking's onlyValidPool guard. forceLeaveValidatorSet may still offer a recovery path if it doesn't trigger an onlyValidPool-gated call - needs separate verification. Even so, forceLeaveValidatorSet typically requires the pool to be below minimumBond or under-performing, which is checked via Staking view calls also gated by onlyValidPool. Recovery is at minimum severely impaired and likely impossible on-chain.",
+      "breaks_attack": "partial"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "The genesis ValidatorManagement.initialize path at src/staking/ValidatorManagement.sol:115-188 performs NO IStaking.isPool check on v.stakePool, in contrast to registerValidator's _validateRegistration at lines 257-264 which enforces this. Any genesis-provided address (EOA, foreign contract, stale address) is pushed into _validators and _activeValidators with status ACTIVE. At the first epoch boundary, Reconfiguration orchestrates onNewEpoch. The issue's claim that Staking.renewPoolLockup reverts inside _renewActiveValidatorLockups is only partially current - that specific call is now wrapped in try/catch at ValidatorManagement.sol:822-828, which swallows the InvalidPool revert. HOWEVER, the DoS is not eliminated: the epoch-transition code also calls IStaking.getPoolVotingPower (onlyValidPool-gated, Staking.sol:94-99) via _getValidatorVotingPower (line 934-940) from (a) _computeNextEpochValidatorSet at lines 1033 and 1049 (called at the top of onNewEpoch, line 542), (b) _syncBondsAndCalculateTotalVotingPower at line 888 (called near the end of onNewEpoch, line 581), and (c) getNextValidatorConsensusInfos at line 1254 (called by Reconfiguration._startDkgSession at line 237 in DKG-enabled mode). Any of these reverts with InvalidPool(badAddress) and since none are wrapped in try/catch, the entire epoch transition tx reverts atomically. Recovery via leaveValidatorSet is blocked because onlyOperator calls IStaking.getPoolOperator (onlyValidPool-gated, Staking.sol:133) which also reverts InvalidPool. The exact revert path differs from the issue's description, but the root cause (missing isPool check in genesis) and the impact (permanent epoch-transition DoS) are real.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "115-188",
+      "excerpt": "function initialize(GenesisValidator[] calldata validators) external { requireAllowed(SystemAddresses.GENESIS); if (_initialized) revert Errors.AlreadyInitialized(); ... totalPower += _initializeGenesisValidator(validators[i], uint64(i)); ... } function _initializeGenesisValidator(...) internal returns (uint256 votingPower) { ... record.status = ValidatorStatus.ACTIVE; ... _activeValidators.push(v.stakePool); ... }",
+      "why_matters": "Shows that initialize populates _validators and _activeValidators with whatever v.stakePool is passed, with no IStaking.isPool guard. Status is written as ACTIVE."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "257-264",
+      "excerpt": "function _validateRegistration(address stakePool, string calldata moniker) internal view { if (!IStaking(SystemAddresses.STAKING).isPool(stakePool)) { revert Errors.InvalidPool(stakePool); } ... }",
+      "why_matters": "Post-genesis registration enforces isPool; genesis path omits the identical check, confirming the asymmetry."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "816-830",
+      "excerpt": "function _renewActiveValidatorLockups() internal { ... try IStaking(SystemAddresses.STAKING).renewPoolLockup(pool) { } catch { // Ignore failure to ensure epoch transition liveness } }",
+      "why_matters": "Partial mitigation: the issue's exact renew-loop revert is swallowed. But the DoS arises from other unwrapped calls, so this try/catch alone does not save liveness."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "934-941",
+      "excerpt": "function _getValidatorVotingPower(address stakePool) internal view returns (uint256) { uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_); ... }",
+      "why_matters": "No try/catch. Each call hits Staking's onlyValidPool-gated getPoolVotingPower; for the bad genesis address this reverts InvalidPool, bubbling out of onNewEpoch."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "1017-1055",
+      "excerpt": "for (uint256 i = 0; i < activeLen; i++) { address pool = _activeValidators[i]; ... result.validators[idx] = ValidatorConsensusInfo({ ..., votingPower: _getValidatorVotingPower(pool), ... }); idx++; }",
+      "why_matters": "_computeNextEpochValidatorSet iterates _activeValidators unconditionally and calls _getValidatorVotingPower -> unwrapped revert on the bad pool. Invoked at the very start of onNewEpoch (line 542) and by getNextValidatorConsensusInfos (line 1254) that Reconfiguration._startDkgSession calls at line 237 BEFORE setting DkgInProgress."
+    },
+    {
+      "file": "src/staking/Staking.sol",
+      "lines": "39-46",
+      "excerpt": "modifier onlyValidPool(address pool) { if (!_isPool[pool]) { revert Errors.InvalidPool(pool); } _; }",
+      "why_matters": "All staking view/mutation functions used by onNewEpoch (getPoolVotingPower, renewPoolLockup, getPoolOperator, ...) are gated by this modifier, which reverts for any non-factory-created address."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "228-250",
+      "excerpt": "function _startDkgSession(RandomnessConfig.RandomnessConfigData memory config) internal { ... ValidatorConsensusInfo[] memory targets = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getNextValidatorConsensusInfos(); ... _transitionState = TransitionState.DkgInProgress; ... }",
+      "why_matters": "In DKG-on mode, the revert on the bad pool happens at line 237 BEFORE _transitionState is set (line 246). The whole tx rolls back; no progress or state-change is recorded, and the next attempt reverts identically."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-308",
+      "excerpt": "function _applyReconfiguration() internal { ... IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).onNewEpoch(); ... _transitionState = TransitionState.Idle; ... }",
+      "why_matters": "In DKG-off mode (and at finishTransition), _applyReconfiguration runs onNewEpoch which reverts through the unwrapped _getValidatorVotingPower path. No recovery is possible because every retry hits the same revert."
+    }
+  ],
+  "counterargument": "One could argue the issue is fixed because _renewActiveValidatorLockups at lines 816-830 now wraps IStaking.renewPoolLockup in try/catch with an explicit comment: 'Use try/catch to ensure one bad/malicious pool doesn't revert the entire reconfiguration'. This neutralizes the EXACT revert chain described in the issue (steps 4-6 referring to Staking.renewPoolLockup's onlyValidPool modifier). However, this counterargument fails because the onlyValidPool-gated getPoolVotingPower is called by _getValidatorVotingPower at line 938 WITHOUT try/catch from three unwrapped sites on the epoch-transition critical path (_computeNextEpochValidatorSet at lines 1033/1049, _syncBondsAndCalculateTotalVotingPower at line 888, and getNextValidatorConsensusInfos at line 1254 used by _startDkgSession). Any of these produces the same DoS outcome for a bad genesis address. The ONLY way the counterargument would hold is if the genesis caller cannot practically submit an invalid address - but the bug scenario explicitly accepts that possibility (it only requires an operator error or a genesis-tool bug, the latter of which is already filed as issues #534-#536). Thus a small targeted fix (wrapping renewPoolLockup in try/catch) does not plug the broader class of DoS, and the missing isPool precheck in initialize remains the correct fix.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol:1903 test_initialize_success - passes valid pool addresses, no negative test for non-pool genesis address",
+    "test/unit/staking/ValidatorManagement.t.sol:2086 test_RevertWhen_initialize_notGenesis - tests only the caller gate, not the pool validity",
+    "test/unit/staking/ValidatorManagement.t.sol:2113 test_RevertWhen_initialize_monikerTooLong - input validation only"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

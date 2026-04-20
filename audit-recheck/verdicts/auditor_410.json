@@ -1,0 +1,114 @@
+{
+  "issue_number": 410,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls setFee but never calls setExpiration; _expirationDurations[sourceType] stays 0",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:250-260",
+      "verified": "yes",
+      "current_state_summary": "setExpiration still independent of setFee; default zero value is still possible at storage level (Solidity default).",
+      "gating_conditions": "Governance role",
+      "differs_from_original": "No difference in storage default behavior.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Attacker calls OracleRequestQueue.request(sourceType, sourceId, data) with 1 ETH",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:99-145",
+      "verified": "yes",
+      "current_state_summary": "request() entrypoint still exists with the same signature; anyone can call it.",
+      "gating_conditions": "isSupported(sourceType, sourceId) must return true; msg.value >= _fees[sourceType]",
+      "differs_from_original": "Same entrypoint, same validations prior to expiration computation.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "duration = _expirationDurations[sourceType] = 0; expiresAt = block.timestamp + 0 = block.timestamp",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:115-119",
+      "verified": "no",
+      "current_state_summary": "Code now reads `uint64 duration = _expirationDurations[sourceType]; if (duration == 0) revert ExpirationNotConfigured(sourceType); uint64 expiresAt = uint64(block.timestamp) + duration;`. A zero duration triggers a revert before the request is stored.",
+      "gating_conditions": "duration must be > 0 to proceed",
+      "differs_from_original": "Explicit zero-duration guard added (GCC-R2-005 fix in commit f9290d2). Previously no such check existed.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Request stored with expiresAt == block.timestamp (same block)",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:121-135",
+      "verified": "no",
+      "current_state_summary": "Unreachable when duration==0; the revert at line 118 aborts the tx before storage writes. When duration>0 the minimum effective expiresAt is block.timestamp + 1.",
+      "gating_conditions": "Only reached if duration > 0",
+      "differs_from_original": "Attack precondition (zero expiresAt offset) can no longer be produced through the normal governance misconfiguration path.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Attacker immediately calls refund(requestId) in same tx",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:192-230",
+      "verified": "partial",
+      "current_state_summary": "refund() still callable by anyone; same-tx pattern unchanged.",
+      "gating_conditions": "Requires a valid requestId — but step 3 now blocks creation when duration==0.",
+      "differs_from_original": "No change to refund itself.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Line 194 check is `if (block.timestamp < req.expiresAt)` — same-block means false, no revert",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:211-213",
+      "verified": "partial",
+      "current_state_summary": "The expiry check is still strict `<`, unchanged. If expiresAt == block.timestamp the refund would indeed be allowed in the same tx — but by step 3 fix this condition can no longer be produced through a zero-duration configuration.",
+      "gating_conditions": "req.expiresAt <= block.timestamp",
+      "differs_from_original": "Logic unchanged, but now unreachable via the documented attack vector because expiresAt = block.timestamp + duration with duration >= 1.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 7,
+      "original": "req.refunded=true; 1 ETH sent back to attacker",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:216-227",
+      "verified": "partial",
+      "current_state_summary": "Refund transfer logic unchanged.",
+      "gating_conditions": "Must pass the `< expiresAt` gate first.",
+      "differs_from_original": "No change.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 8,
+      "original": "Off-chain validators still deliver oracle data — free ride",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:144",
+      "verified": "no",
+      "current_state_summary": "RequestSubmitted event is only emitted if the request() call succeeds; with duration==0 the whole transaction reverts and no event is produced.",
+      "gating_conditions": "Requires successful request() execution",
+      "differs_from_original": "Event emission now gated by non-zero duration.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [3, 4, 8],
+  "reasoning_chain": "The issue relies on the invariant that _expirationDurations[sourceType] can remain 0 while _fees[sourceType] is configured, producing expiresAt == block.timestamp and enabling same-tx refund. In the current HEAD (a623eab), OracleRequestQueue.sol:117-118 explicitly reverts with ExpirationNotConfigured(sourceType) when duration == 0. This change is introduced by commit f9290d2 under audit ticket GCC-R2-005 ('fix(oracle): validate expiration duration is configured in OracleRequestQueue'). A regression test (test_Request_RevertWhenExpirationNotConfigured) exists at test/unit/oracle/OracleRequestQueue.t.sol:183-195. Therefore the attacker cannot create a request with zero expiration offset through the governance-misconfiguration path described in the issue; the free-oracle scenario is blocked at request submission time.",
+  "key_evidence": [
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "115-119",
+      "excerpt": "uint64 duration = _expirationDurations[sourceType];\n// Ensure expiration duration has been configured\nif (duration == 0) revert ExpirationNotConfigured(sourceType);\nuint64 expiresAt = uint64(block.timestamp) + duration;",
+      "why_matters": "Directly blocks the root cause — zero-duration default — preventing expiresAt from ever being set equal to block.timestamp via the default-storage path."
+    },
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "50-51",
+      "excerpt": "/// @notice Expiration duration not configured for source type\nerror ExpirationNotConfigured(uint32 sourceType);",
+      "why_matters": "Dedicated error declared specifically for this misconfiguration fix."
+    },
+    {
+      "file": "test/unit/oracle/OracleRequestQueue.t.sol",
+      "lines": "183-195",
+      "excerpt": "function test_Request_RevertWhenExpirationNotConfigured() public { ... vm.expectRevert(abi.encodeWithSelector(OracleRequestQueue.ExpirationNotConfigured.selector, customSourceType)); ... }",
+      "why_matters": "Regression test pinning the fix; demonstrates that request() reverts when only fee is set without expiration."
+    }
+  ],
+  "counterargument": "One could argue that governance could still call setExpiration(sourceType, 1) with a one-second duration, which would let an attacker wait one second and then refund in the next block. However, the original issue is specifically about the zero-default path where governance forgot to call setExpiration; with duration >= 1, the refund gate at line 211 requires block.timestamp >= expiresAt = requestedAt + duration, so a same-transaction free-oracle attack (the core exploit) is no longer feasible. A separate argument could be: the attack requires validators to fulfill the request before the revert is visible — but since the entire transaction including the RequestSubmitted event reverts atomically when duration==0, validators never observe the event. Thus neither counterargument preserves the exploit.",
+  "related_existing_tests": [
+    "test/unit/oracle/OracleRequestQueue.t.sol::test_Request_RevertWhenExpirationNotConfigured (line 183)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

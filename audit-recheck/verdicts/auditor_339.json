@@ -1,0 +1,124 @@
+{
+  "issue_number": 339,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Executor calls Governance.execute(proposalId, targets, datas) at src/governance/Governance.sol:494 — targets contain two governanceReconfigure() calls",
+      "current_code_ref": "src/governance/Governance.sol:482-536",
+      "verified": "yes",
+      "current_state_summary": "execute() loops over targets[i] and invokes each via low-level .call(datas[i]) atomically; there is no uniqueness/dedup check on targets or selectors, so the same target+selector may appear twice in a single batch.",
+      "gating_conditions": "caller must be executor (onlyExecutor, line 486); proposal must exist, be not-yet-executed, be resolved and SUCCEEDED; executionHash of (targets,datas) must match (lines 488-521).",
+      "differs_from_original": "Line numbers shifted (execute at 482 vs stated 494) but loop semantics unchanged (lines 527-533).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "First target: Reconfiguration.governanceReconfigure() — _transitionState is Idle, passes check",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:141-166",
+      "verified": "yes",
+      "current_state_summary": "governanceReconfigure requires caller == GOVERNANCE; only reverts if _transitionState == DkgInProgress (line 146-148). With DKG Off, it calls evictUnderperformingValidators() then _doImmediateReconfigure().",
+      "gating_conditions": "Only DkgInProgress blocks entry; Idle state passes. No cooldown, no per-epoch counter, no lastReconfigurationTime check.",
+      "differs_from_original": "Line shifted from 137 to 141 (comment-only drift); logic identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "governanceReconfigure() calls _doImmediateReconfigure() when DKG variant=Off",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:159-165, 254-260",
+      "verified": "yes",
+      "current_state_summary": "When RandomnessConfig.variant == Off, _doImmediateReconfigure() is invoked synchronously, which then calls _applyReconfiguration().",
+      "gating_conditions": "Requires randomness variant == Off. Attacker does not need to toggle this; many deployments run with DKG off.",
+      "differs_from_original": "None",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "_applyReconfiguration() calls evictUnderperformingValidators(), onNewEpoch(), then PerformanceTracker.onNewEpoch() which RESETS all performance counters to zero",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-308, src/blocker/ValidatorPerformanceTracker.sol:96-117",
+      "verified": "yes",
+      "current_state_summary": "Order: applyPendingConfig for all modules (267-274); ValidatorManagement.onNewEpoch() (280); PerformanceTracker.onNewEpoch(newValidatorCount) (287-288) which pops all entries then pushes zero-filled IndividualPerformance structs matching activeValidatorCount. evictUnderperformingValidators() is now called ONCE per governanceReconfigure — at line 151 (before _doImmediateReconfigure) — not inside _applyReconfiguration.",
+      "gating_conditions": "none — unconditional reset each reconfigure.",
+      "differs_from_original": "Original said evict is called from _applyReconfiguration line 274; actually evict moved to governanceReconfigure itself (line 151) and checkAndStartTransition (line 99). Same net effect: each top-level entry runs evict once before resetting perf.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "_applyReconfiguration() sets _transitionState = TransitionState.Idle",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:296",
+      "verified": "yes",
+      "current_state_summary": "_transitionState = TransitionState.Idle at end of _applyReconfiguration, making the second governanceReconfigure entry pass the DkgInProgress guard.",
+      "gating_conditions": "none",
+      "differs_from_original": "None",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Second target: governanceReconfigure() — _transitionState is Idle again, passes check",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:141-166",
+      "verified": "yes",
+      "current_state_summary": "The state-machine guard only looks at DkgInProgress; after step 5 state is Idle so the second call proceeds, re-entering evictUnderperformingValidators before _applyReconfiguration.",
+      "gating_conditions": "closingEpoch check at ValidatorManagement.sol:623-626 requires epoch > 1; currentEpoch was incremented by first call (line 291-292), so second call sees closingEpoch >= 2 and proceeds.",
+      "differs_from_original": "None",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 7,
+      "original": "Second evictUnderperformingValidators() reads PerformanceTracker.getAllPerformances() which now returns ALL ZEROS",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:610-725, src/blocker/ValidatorPerformanceTracker.sol:135-144",
+      "verified": "yes",
+      "current_state_summary": "After first _applyReconfiguration, _activeValidators.length == getActiveValidatorCount() == PerformanceTracker._validators.length (via onNewEpoch(newValidatorCount) at Reconfiguration.sol:287-288). So the strict activeLen==perfLen guard at ValidatorManagement.sol:679-682 passes. getAllPerformances() returns freshly-zeroed structs.",
+      "gating_conditions": "autoEvictEnabled must be true (checked at line 665-668); if already enabled on-chain, no config change needed. allowValidatorSetChange must be true (line 617-619).",
+      "differs_from_original": "Line references drifted (evict function at 610 vs 550); core logic unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 8,
+      "original": "perfs[i].successfulProposals (=0) <= threshold — ALL validators meet eviction criteria, all marked PENDING_INACTIVE except last (liveness check)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:694-723",
+      "verified": "yes",
+      "current_state_summary": "At lines 695-709: if total==0 shouldEvict=true; else if successfulProposals==0 shouldEvict=true; else check successPct < thresholdPct. With fresh zeros, total==0 triggers shouldEvict=true regardless of thresholdPct. Liveness guard at 712-715 skips when remainingActive <= 1, so all but one validator are set to PENDING_INACTIVE. onNewEpoch in _applyReconfiguration then moves them to INACTIVE, collapsing the active set to 1.",
+      "gating_conditions": "autoEvictEnabled==true and allowValidatorSetChange==true; threshold value is irrelevant because total==0 path always evicts.",
+      "differs_from_original": "Issue implied attacker sets autoEvictThresholdPct=0 to trigger — actually even that is unnecessary, since the total==0 branch unconditionally evicts. Attack is stronger than described.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Each step of the exploit remains intact in commit a623eab on main. Governance.execute runs targets in a for-loop with no dedup (lines 527-533). governanceReconfigure guards only against DkgInProgress (line 146-148) and has no cooldown, counter, same-block, or lastReconfigurationTime guard. _applyReconfiguration sets state back to Idle (line 296) and PerformanceTracker.onNewEpoch (ValidatorPerformanceTracker.sol:96-117) unconditionally wipes all performance counters to zero, then reseeds with zero-valued entries sized to getActiveValidatorCount so the strict length check in evictUnderperformingValidators passes on the second call. The second invocation of evictUnderperformingValidators then sees successfulProposals==0 for every validator and hits the total==0 branch at ValidatorManagement.sol:698-700, marking every validator except the last (liveness guard at 712-715) as PENDING_INACTIVE. onNewEpoch in the same transaction then transitions them to INACTIVE. The only new mitigation visible since the issue was written is that evict is now hoisted out of _applyReconfiguration into governanceReconfigure/checkAndStartTransition (Reconfiguration.sol:99, 151), but this does not change the two-step perf-reset→evict ordering required by the attack.",
+  "key_evidence": [
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "141-166",
+      "excerpt": "function governanceReconfigure() external override { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); if (_transitionState == TransitionState.DkgInProgress) revert Errors.ReconfigurationInProgress(); IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).evictUnderperformingValidators(); ... if (config.variant == RandomnessConfig.ConfigVariant.Off) { _doImmediateReconfigure(); }",
+      "why_matters": "Only DkgInProgress blocks re-entry; no cooldown, no nonce, no same-tx counter. With DKG off, two back-to-back calls from Governance.execute both complete synchronously within one tx."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-296",
+      "excerpt": "function _applyReconfiguration() internal { ... IValidatorManagement(VALIDATOR_MANAGER).onNewEpoch(); uint256 newValidatorCount = IValidatorManagement(VALIDATOR_MANAGER).getActiveValidatorCount(); IValidatorPerformanceTracker(PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount); ... _transitionState = TransitionState.Idle; }",
+      "why_matters": "After first call returns, _transitionState is Idle and PerformanceTracker holds zero-initialized entries sized to match _activeValidators — exactly the state the second evictUnderperformingValidators call requires."
+    },
+    {
+      "file": "src/blocker/ValidatorPerformanceTracker.sol",
+      "lines": "96-117",
+      "excerpt": "function onNewEpoch(uint256 activeValidatorCount) external override { requireAllowed(SystemAddresses.RECONFIGURATION); ... pops all entries ... for (i=0; i<activeValidatorCount; i++) _validators.push(IndividualPerformance({successfulProposals:0, failedProposals:0})); }",
+      "why_matters": "Destructively wipes performance history and reseeds with zeros sized to the freshly-mutated active validator set, guaranteeing the strict length check at ValidatorManagement.sol:679-682 passes on the second evict call."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "694-723",
+      "excerpt": "uint256 total = perfs[i].successfulProposals + perfs[i].failedProposals; if (total == 0) { shouldEvict = true; } ... if (shouldEvict) { if (remainingActive <= 1) continue; validator.status = PENDING_INACTIVE; _pendingInactive.push(pool); remainingActive--; }",
+      "why_matters": "With fresh zeros every validator hits the total==0 branch and is evicted; only the last-remaining liveness guard prevents total collapse to zero. This happens irrespective of threshold value."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "527-535",
+      "excerpt": "for (uint256 i = 0; i < len; ++i) { (bool success, bytes memory returnData) = targets[i].call(datas[i]); if (!success) revert Errors.ExecutionFailed(proposalId, returnData); }",
+      "why_matters": "Naive loop with no dedup allows the proposal author to list governanceReconfigure() twice. The executionHash binding just ensures the executor runs what was approved — it doesn't prevent duplicates."
+    }
+  ],
+  "counterargument": "Could argue the attack is impractical because (a) governance proposal review should catch a proposal containing two identical governanceReconfigure targets, and (b) autoEvictEnabled must already be true on-chain OR the attacker must include a ValidatorConfig.setPendingConfig target — but setPendingConfig only stakes pending values, and applyPendingConfig is invoked inside _applyReconfiguration (src/blocker/Reconfiguration.sol:270), so the first governanceReconfigure call DOES activate the enabled flag before the second call reads it, so the three-target variant works end-to-end. Social review is out-of-scope as a code-level mitigation. Additionally one could claim the `closingEpoch <= 1` guard at ValidatorManagement.sol:623-626 prevents abuse — but currentEpoch is incremented by the first _applyReconfiguration (line 291-292) to at least 2, so the second evict proceeds. None of these defeat the attack.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "cannot_tell"
+}

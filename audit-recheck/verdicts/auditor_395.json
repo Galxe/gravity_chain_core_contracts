@@ -1,0 +1,97 @@
+{
+  "issue_number": 395,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "PRECISION_FACTOR = 1e4 defined at src/staking/ValidatorManagement.sol:51",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:51",
+      "verified": "yes",
+      "current_state_summary": "Constant exists verbatim: `uint256 internal constant PRECISION_FACTOR = 1e4;` at line 51.",
+      "gating_conditions": "none",
+      "differs_from_original": "Line number matches exactly.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "maxIncrease calculation at line 795: (currentTotal * limitPct * 1e4) / (100 * 1e4)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:984",
+      "verified": "partial",
+      "current_state_summary": "Formula is present verbatim, but at line 984 not 795: `uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);`. Line-number mismatch but mathematical claim is correct — PRECISION_FACTOR cancels algebraically.",
+      "gating_conditions": "Only reached when currentTotal > 0 (line 1005). Guard at ValidatorConfig.sol:293-295 restricts limitPct domain.",
+      "differs_from_original": "Issue cites line 795; actual line is 984. Math is as described.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "1e4 multiplied in numerator and denominator cancels out algebraically",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:984",
+      "verified": "yes",
+      "current_state_summary": "Mathematically correct: (a*b*k)/(c*k) = a*b/c. PRECISION_FACTOR is a no-op in this expression.",
+      "gating_conditions": "n/a — pure algebra.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Result is identical to: currentTotal * limitPct / 100",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:984",
+      "verified": "yes",
+      "current_state_summary": "Arithmetic reduction is correct; equivalent to `currentTotal * limitPct / 100`.",
+      "gating_conditions": "n/a",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "If governance sets limitPct to a value requiring sub-percent precision (e.g., expecting 1e4 scaling), the calculation silently truncates / ambiguity around scale",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:20, 110, 182, 293-295",
+      "verified": "no",
+      "current_state_summary": "limitPct is unambiguously a whole-percent integer in [1,50]. ValidatorConfig.sol:20 defines `uint64 public constant MAX_VOTING_POWER_INCREASE_LIMIT = 50;`. ValidatorConfig.sol:293-295 enforces: `if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) { revert Errors.InvalidVotingPowerIncreaseLimit(...); }`. NatSpec at lines 110 and 182 documents `Max % voting power join per epoch (1-50)` — whole percent, never basis points. Governance literally cannot supply a sub-percent or basis-point value; the domain is constrained to integer percent. Therefore no scaling ambiguity exists and PRECISION_FACTOR's redundancy has no security consequence.",
+      "gating_conditions": "Guard `_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > 50` in ValidatorConfig.sol:293; applied in both `initialize` (line 114) and `setPendingConfig`/update flow (line 274) — every entry point.",
+      "differs_from_original": "Issue assumes governance could intend basis-point scaling; current code rejects any such input via the [1,50] whole-percent bound.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [5],
+  "reasoning_chain": "Steps 1-4 (constant, formula, algebraic cancellation) are factually verified: PRECISION_FACTOR does mathematically cancel in the maxIncrease formula at src/staking/ValidatorManagement.sol:984. However, the exploit/impact in Step 5 requires that limitPct be interpretable as a sub-percent or basis-point value. This is categorically prevented by the domain-restricting guard at src/runtime/ValidatorConfig.sol:293-295 — `_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT(=50)` reverts. limitPct is a whole integer percent in [1,50] by contract; the NatSpec at lines 110/182 reinforces this. With that domain, `currentTotal * limitPct / 100` is exactly the intended semantics, PRECISION_FACTOR is a harmless code-cosmetic redundancy (dead scaling), and no governance input can produce orders-of-magnitude misbehavior. At worst this is a code-quality nit (misleading constant name), not a Medium vulnerability.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "984-984",
+      "excerpt": "uint256 maxIncrease = (currentTotal * limitPct * PRECISION_FACTOR) / (100 * PRECISION_FACTOR);",
+      "why_matters": "The cited formula is present; PRECISION_FACTOR does cancel. Confirms Steps 1-4."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "20-20",
+      "excerpt": "uint64 public constant MAX_VOTING_POWER_INCREASE_LIMIT = 50;",
+      "why_matters": "Defines the upper bound 50 — incompatible with basis-point (would need >10000) or sub-percent scaling interpretations."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "293-295",
+      "excerpt": "if (_votingPowerIncreaseLimitPct == 0 || _votingPowerIncreaseLimitPct > MAX_VOTING_POWER_INCREASE_LIMIT) { revert Errors.InvalidVotingPowerIncreaseLimit(_votingPowerIncreaseLimitPct); }",
+      "why_matters": "Hard on-chain validation of the expected scale — directly refutes the issue's claim that 'no on-chain validation of the expected scale' exists."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "110-110",
+      "excerpt": "/// @param _votingPowerIncreaseLimitPct Max % voting power join per epoch (1-50)",
+      "why_matters": "Documents the unit as whole percent in [1,50]. Same NatSpec at line 182 for the update path."
+    },
+    {
+      "file": "test/unit/staking/ValidatorManagement.t.sol",
+      "lines": "260-300",
+      "excerpt": "votingPowerIncreaseLimitPct = 20 (from setUp). ... maxIncrease = 100 ... david: 100+100 = 200 > 100? true -> kept pending",
+      "why_matters": "Existing regression test uses limitPct=20 as whole-percent (20%) and asserts semantics consistent with `currentTotal * 20 / 100`, confirming intended interpretation."
+    }
+  ],
+  "counterargument": "One could argue that governance intent is subject to change and a future upgrade might reinterpret limitPct as basis points, at which point the misleading PRECISION_FACTOR constant would become actively dangerous. Additionally, a reader auditing the code could reasonably be confused by the redundant multiplication and wrongly assume fractional-percent support exists, leading to off-chain tooling or frontends that feed basis-point values through governance (which would then revert, but still signals a real design-hygiene defect). Finally, if MAX_VOTING_POWER_INCREASE_LIMIT were ever raised above 10000 as part of a careless upgrade, the no-op precision factor would suddenly mask an intended scaling. These are code-quality / future-proofing concerns, not an exploitable vulnerability in the current code — which is why the verdict remains NOT_EXISTS rather than UNCERTAIN.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol::test_audit_votingPowerLimit_excludesPendingInactive",
+    "test/unit/runtime/ValidatorConfig.t.sol"
+  ],
+  "fp_or_fixed_hint": "fp"
+}

@@ -1,0 +1,97 @@
+{
+  "issue_number": 452,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Attacker (governance role) calls EpochConfig.setForNextEpoch(type(uint64).max); only zero is rejected.",
+      "current_code_ref": "src/runtime/EpochConfig.sol:99-113",
+      "verified": "yes",
+      "current_state_summary": "setForNextEpoch takes uint64 and only validates _epochIntervalMicros != 0 (line 105-107). Any value in [1, type(uint64).max] is accepted and stored in _pendingEpochIntervalMicros with hasPendingConfig = true. No upper bound / sanity check exists.",
+      "gating_conditions": "Caller must pass requireAllowed(SystemAddresses.GOVERNANCE) (line 102) and contract must be initialized (line 103).",
+      "differs_from_original": "None — exact match.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "At next epoch boundary, Reconfiguration._applyReconfiguration() calls EpochConfig.applyPendingConfig(), setting epochIntervalMicros = type(uint64).max.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-274",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration() unconditionally calls EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig() at line 274. applyPendingConfig (EpochConfig.sol:122-138) copies _pendingEpochIntervalMicros verbatim into epochIntervalMicros with no validation, so the stored interval becomes type(uint64).max.",
+      "gating_conditions": "Requires one successful reconfiguration (_doImmediateReconfigure or finishTransition). Either path works: governance can even force it immediately via governanceReconfigure() (line 141-166) when DKG variant == Off.",
+      "differs_from_original": "None — matches original description.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Every subsequent block: VM calls Blocker.onBlockStart() which calls IReconfiguration.checkAndStartTransition() with no try-catch.",
+      "current_code_ref": "src/blocker/Blocker.sol:85-119",
+      "verified": "yes",
+      "current_state_summary": "onBlockStart() executes IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition() unconditionally at line 112 with no try/catch. A revert here bubbles up and aborts the entire block prologue. Grep confirms zero try/catch statements in Blocker.sol.",
+      "gating_conditions": "Called by SYSTEM_CALLER (VM) on every block; no way to skip.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "_canTransition() computes lastReconfigurationTime + epochIntervalMicros which overflows uint64 under Solidity 0.8+ checked math.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:215-219",
+      "verified": "yes",
+      "current_state_summary": "_canTransition() returns `currentTime >= lastReconfigurationTime + epochInterval` with both operands uint64. Under pragma solidity ^0.8.30 (foundry.toml solc = 0.8.30) with no `unchecked {}` block wrapping the add, the addition uses checked arithmetic. With epochInterval = type(uint64).max and lastReconfigurationTime > 0 (set by initialize() to TIMESTAMP.nowMicroseconds, always non-zero post-genesis), the sum overflows and triggers Panic(0x11) ArithmeticOverflow, reverting.",
+      "gating_conditions": "Only requires lastReconfigurationTime >= 1. Reconfiguration.initialize() (line 70) sets lastReconfigurationTime = TIMESTAMP.nowMicroseconds() at genesis and it is refreshed each epoch (line 293); thus always >= 1 in any post-genesis live chain.",
+      "differs_from_original": "None — exact code match.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Revert propagates through checkAndStartTransition() → onBlockStart() — every block prologue reverts → chain permanently halted.",
+      "current_code_ref": "src/blocker/Blocker.sol:109-112",
+      "verified": "yes",
+      "current_state_summary": "checkAndStartTransition() calls _canTransition() at line 94; overflow panic bubbles up uncaught to Blocker.onBlockStart(). The block prologue thus reverts every block. Because governance transactions are included in user blocks, and blocks cannot finalize, there is no on-chain recovery: EpochConfig.setForNextEpoch cannot be called to restore a smaller interval.",
+      "gating_conditions": "No catch clause exists at any layer; the chain relies on the prologue never reverting.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "All five data-flow steps verified against current code at commit a623eab. (1) setForNextEpoch in src/runtime/EpochConfig.sol only rejects zero, has no upper bound on the uint64 argument. (2) _applyReconfiguration unconditionally applies the pending value. (3) Blocker.onBlockStart invokes checkAndStartTransition with no try/catch (confirmed via grep for 'try|catch' returning only the doc-comment match on the word 'entry'). (4) _canTransition performs `lastReconfigurationTime + epochInterval` in plain (checked) uint64 arithmetic under Solidity 0.8.30; with epochInterval = type(uint64).max and lastReconfigurationTime >= 1 the addition panics. (5) The revert reaches the block prologue uncaught, halting every block; governance cannot self-heal because governance transactions require block progression. The attack requires GOVERNANCE privilege, which is the documented threat model for a governance-misuse/compromise scenario; because the impact is permanent chain halt with no on-chain recovery, the lack of input sanitization is a genuine critical defect. The issue remains EXISTS with high confidence.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/EpochConfig.sol",
+      "lines": "99-113",
+      "excerpt": "function setForNextEpoch(uint64 _epochIntervalMicros) external { ... if (_epochIntervalMicros == 0) { revert Errors.InvalidEpochInterval(); } _pendingEpochIntervalMicros = _epochIntervalMicros; hasPendingConfig = true; ... }",
+      "why_matters": "Only zero is blocked. type(uint64).max is accepted, enabling the toxic value to be queued for the next epoch."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "215-219",
+      "excerpt": "function _canTransition() internal view returns (bool) { uint64 currentTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint64 epochInterval = EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros(); return currentTime >= lastReconfigurationTime + epochInterval; }",
+      "why_matters": "The addition is plain (checked) uint64 under Solidity 0.8.30 with no `unchecked` block. With epochInterval = type(uint64).max and lastReconfigurationTime >= 1 this reverts with Panic(0x11)."
+    },
+    {
+      "file": "src/blocker/Blocker.sol",
+      "lines": "109-112",
+      "excerpt": "// 3. Check and potentially start epoch transition\n//    Reconfiguration handles all transition logic internally\n//    Returns true if DKG was started, but we don't need to act on this\nIReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();",
+      "why_matters": "No try/catch wraps this call in the block prologue. Any revert from _canTransition is fatal to the block, guaranteeing permanent halt."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "69-77",
+      "excerpt": "currentEpoch = 1; lastReconfigurationTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();",
+      "why_matters": "Guarantees lastReconfigurationTime >= 1 in any live chain — so `lastReconfigurationTime + type(uint64).max` always overflows, not merely saturates to max."
+    },
+    {
+      "file": "foundry.toml",
+      "lines": "6-8",
+      "excerpt": "solc = \"0.8.30\"",
+      "why_matters": "Confirms checked arithmetic semantics apply to the unchecked addition in _canTransition()."
+    }
+  ],
+  "counterargument": "One could argue that GOVERNANCE is a trusted role and any governance-signed action is permitted by design, so accepting type(uint64).max is just a governance misconfiguration — not a contract vulnerability. However, (a) Solidity best practice and the existing Errors.InvalidEpochInterval enum already acknowledge that epoch interval values need validation (the zero check exists precisely because a bogus value corrupts the chain), (b) the effect is unrecoverable — unlike other misconfigurations that a future governance tx can revert, this one freezes the chain so governance itself cannot act, and (c) a related fuzz/PR-review bug or mistyped value (e.g., passing seconds instead of microseconds scaled wrong) could trigger the same overflow without malicious intent. A simple upper-bound check (e.g., require _epochIntervalMicros < type(uint64).max / 2) eliminates an entire class of bricking paths with no functional cost. The claim of 'bogus, because governance is trusted' fails because permanent loss-of-liveness with no recovery path is a defect regardless of intent.",
+  "related_existing_tests": [
+    "test/unit/runtime/EpochConfig.t.sol (covers zero-rejection and normal update paths; does NOT test upper bound or overflow in _canTransition)",
+    "test/unit/blocker/Reconfiguration.t.sol (tests transition logic but not the pathological max-interval case)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

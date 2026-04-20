@@ -1,0 +1,127 @@
+{
+  "issue_number": 485,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls setForNextEpoch(..., autoEvictEnabled=true, autoEvictThreshold=type(uint256).max)",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:186-223",
+      "verified": "no",
+      "current_state_summary": "Signature has changed: the last parameter is now uint64 _autoEvictThresholdPct (a success-percentage threshold, 0-100), not uint256 _autoEvictThreshold. Passing type(uint256).max is impossible — uint64 caps the argument at 2^64-1, and further validation constrains it to <=100.",
+      "gating_conditions": "requireAllowed(SystemAddresses.GOVERNANCE) + _requireInitialized() + _validateConfig(...)",
+      "differs_from_original": "Parameter redesigned from absolute uint256 proposal-count threshold to bounded uint64 percentage threshold.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "_validateConfig() does not check autoEvictThreshold, allowing type(uint256).max",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:270-304",
+      "verified": "no",
+      "current_state_summary": "_validateConfig now accepts _autoEvictThresholdPct as a 6th parameter and explicitly enforces `if (_autoEvictThresholdPct > 100) revert Errors.InvalidAutoEvictThresholdPct(_autoEvictThresholdPct, 100);` at line 301-303. Any value above 100 reverts.",
+      "gating_conditions": "Revert on threshold > 100 via Errors.InvalidAutoEvictThresholdPct",
+      "differs_from_original": "The missing bound the issue flagged has been added — threshold is now hard-capped at 100.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "_pendingConfig.autoEvictThreshold = type(uint256).max is stored",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:209-219",
+      "verified": "no",
+      "current_state_summary": "PendingConfig struct now contains a deprecated uint256 slot (__deprecated_autoEvictThreshold, always written as 0) plus a new uint64 autoEvictThresholdPct that stores the already-validated 0..100 value. type(uint256).max cannot reach this state.",
+      "gating_conditions": "Reachable only after passing validation in step 2",
+      "differs_from_original": "Storage layout migrated; old uint256 field preserved but zeroed, new bounded field introduced.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "applyPendingConfig promotes threshold to live storage",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:232-257",
+      "verified": "partial",
+      "current_state_summary": "applyPendingConfig still runs at epoch boundary and copies autoEvictThresholdPct (line 248) into the live slot, but the only value that can be promoted is a validated 0..100 percentage.",
+      "gating_conditions": "requireAllowed(SystemAddresses.RECONFIGURATION); hasPendingConfig",
+      "differs_from_original": "Semantics preserved, value domain is now bounded.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Reconfiguration calls evictUnderperformingValidators at ValidatorManagement.sol:550",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:610-725",
+      "verified": "partial",
+      "current_state_summary": "evictUnderperformingValidators still exists and is still called from Reconfiguration, but now has additional pre-gates (allowValidatorSetChange freeze check at 617-619; skip when closingEpoch <= 1 at 623-626) and two phases (underbond + performance).",
+      "gating_conditions": "allowValidatorSetChange == true, closingEpoch > 1, autoEvictEnabled for phase 2",
+      "differs_from_original": "Entry path intact; additional guards added that do not affect this attack.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "threshold = autoEvictThreshold() returns type(uint256).max",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:670 ; src/runtime/IValidatorConfig.sol:32",
+      "verified": "no",
+      "current_state_summary": "The consumer now reads `uint64 thresholdPct = IValidatorConfig(...).autoEvictThresholdPct();` (line 670). The old getter `autoEvictThreshold()` is not in IValidatorConfig. The returned value is bounded to 0..100 by the validator contract.",
+      "gating_conditions": "autoEvictEnabled() == true",
+      "differs_from_original": "Getter renamed and its value type is uint64 percent, so type(uint256).max is unreachable.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 7,
+      "original": "For every validator: successfulProposals <= type(uint256).max is always true; all marked PENDING_INACTIVE",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:694-709",
+      "verified": "no",
+      "current_state_summary": "The eviction predicate is completely rewritten. It now computes a success rate: `successPct = successfulProposals * 100 / total` and evicts only if `successPct < thresholdPct`. Special cases: evict if total==0 or successfulProposals==0. Since thresholdPct is in [0,100], a validator with any nonzero successful proposals and a healthy success rate >= thresholdPct is safe. There is no path to a universally-true comparison.",
+      "gating_conditions": "thresholdPct in [0,100]; successfulProposals, failedProposals from tracker",
+      "differs_from_original": "The original unbounded-threshold `<=` check no longer exists.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 8,
+      "original": "remainingActive<=1 liveness guard stops after one validator left; all others evicted",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:711-724",
+      "verified": "partial",
+      "current_state_summary": "The liveness guard (`if (remainingActive <= 1) continue;` at line 713) still exists, but it is now only reached when a validator actually has sub-threshold performance; it is not the sole bound on mass eviction.",
+      "gating_conditions": "Only triggered for underperforming validators",
+      "differs_from_original": "Guard unchanged, but no longer the last line of defense against the described attack.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 6, 7],
+  "reasoning_chain": "The reported attack requires setting an absolute uint256 `autoEvictThreshold` to type(uint256).max so that the per-validator check `successfulProposals <= threshold` is trivially true. Current code has redesigned this knob into `autoEvictThresholdPct` (uint64), explicitly validated to be <=100 in `_validateConfig` (src/runtime/ValidatorConfig.sol:301-303). Governance calls now take a uint64 percentage, and any value >100 reverts with `InvalidAutoEvictThresholdPct`. The consumer in `ValidatorManagement.evictUnderperformingValidators` (src/staking/ValidatorManagement.sol:670-709) reads this bounded pct and evaluates `successPct = successful*100/total` against it, so a well-performing validator (e.g., 100% success rate, which is equal to or above any valid threshold) is never evicted. The only way to force mass eviction is thresholdPct=100 AND validators with <100% success rate — which reflects legitimate performance policy rather than an unbounded-parameter vulnerability. The old uint256 field remains only as `__deprecated_autoEvictThreshold` for storage-layout compatibility and is always zero.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "301-303",
+      "excerpt": "if (_autoEvictThresholdPct > 100) { revert Errors.InvalidAutoEvictThresholdPct(_autoEvictThresholdPct, 100); }",
+      "why_matters": "Explicit upper bound at 100 on the threshold parameter — the precise missing check the issue reports."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "186-207",
+      "excerpt": "function setForNextEpoch(..., uint64 _autoEvictThresholdPct) external { ... _validateConfig(..., _autoEvictThresholdPct); ...",
+      "why_matters": "Governance entry now takes uint64 percent and forwards it through validation; no uint256 channel survives."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "670-709",
+      "excerpt": "uint64 thresholdPct = IValidatorConfig(...).autoEvictThresholdPct(); ... uint256 successPct = (successfulProposals * 100) / total; if (successPct < thresholdPct) shouldEvict = true;",
+      "why_matters": "Consumer logic rewritten: compares success percentage (0..100) against a bounded threshold (0..100); no unbounded `<=` comparison remains."
+    },
+    {
+      "file": "src/runtime/IValidatorConfig.sol",
+      "lines": "32",
+      "excerpt": "function autoEvictThresholdPct() external view returns (uint64);",
+      "why_matters": "Interface no longer exposes uint256 autoEvictThreshold(); the attacker's required getter is gone."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "40-43",
+      "excerpt": "struct PendingConfig { ... bool autoEvictEnabled; uint256 __deprecated_autoEvictThreshold; uint64 autoEvictThresholdPct; }",
+      "why_matters": "The uint256 slot is explicitly deprecated and zeroed (line 217), confirming intentional migration away from the vulnerable design."
+    }
+  ],
+  "counterargument": "One could argue residual risk remains because governance can still set thresholdPct=100 with autoEvictEnabled=true, which in theory evicts every validator whose success rate is strictly below 100%. However, that is functionally bounded: validators achieving 100% success in the epoch are preserved, the underbond/performance phases both honor the `remainingActive <= 1` liveness guard (lines 652, 713), and the `allowValidatorSetChange` freeze short-circuits eviction entirely (lines 617-619). More importantly, the issue as filed is specifically about passing `type(uint256).max` through an unvalidated parameter; under current code that input space does not exist (uint64 type + <=100 validation), so the exact vulnerability reported is eliminated. Any remaining 'governance can choose an aggressive policy' concern is a governance-trust issue, not the parameter-validation bug described.",
+  "related_existing_tests": [
+    "test/unit/blocker/Blocker.t.sol:162",
+    "test/unit/blocker/Reconfiguration.t.sol"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

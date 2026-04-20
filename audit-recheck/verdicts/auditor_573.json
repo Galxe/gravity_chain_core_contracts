@@ -1,0 +1,114 @@
+{
+  "issue_number": 573,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "createProposal verifies pool voting power >= requiredProposerStake at creation time at Governance.sol:283-285",
+      "current_code_ref": "src/governance/Governance.sol:299-311",
+      "verified": "yes",
+      "current_state_summary": "createProposal computes expirationTime = now + votingDurationMicros, calls _staking().getPoolVotingPower(stakePool, expirationTime), and reverts with InsufficientVotingPower if the returned voting power at expirationTime is less than requiredProposerStake.",
+      "gating_conditions": "Caller must be pool's voter; pool must be valid; voting power is evaluated at the FUTURE expirationTime, not at 'now'.",
+      "differs_from_original": "Same one-shot check at creation as described.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Proposal struct does not snapshot requiredProposerStake",
+      "current_code_ref": "src/governance/Governance.sol:322-334",
+      "verified": "yes",
+      "current_state_summary": "Proposal struct stores id, proposer, executionHash, metadataUri, creationTime, expirationTime, minVoteThreshold, yesVotes, noVotes, isResolved, resolutionTime. It does not persist requiredProposerStake.",
+      "gating_conditions": "None.",
+      "differs_from_original": "No material difference.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Proposer calls StakePool.unstake(amount) at StakePool.sol:281-285, onlyStaker+whenNotReconfiguring, no governance awareness",
+      "current_code_ref": "src/staking/StakePool.sol:430-434, 572-610",
+      "verified": "yes",
+      "current_state_summary": "unstake() is indeed gated only by onlyStaker + whenNotReconfiguring; no governance hooks. It reduces activeStake by amount and appends the amount to a pending bucket with lockedUntil = pool.lockedUntil (never decreased).",
+      "gating_conditions": "onlyStaker modifier, whenNotReconfiguring modifier, and (for ACTIVE/PENDING_ACTIVE/PENDING_INACTIVE validators) activeStake after unstake must remain >= minimumBond.",
+      "differs_from_original": "No difference in governance awareness — confirmed absent.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "unstake moves amount into a pending bucket; effective voting power at p.expirationTime may drop below requiredProposerStake",
+      "current_code_ref": "src/staking/StakePool.sol:607-610, 675-708",
+      "verified": "no",
+      "current_state_summary": "_getEffectiveStakeAt(atTime) = (lockedUntil >= atTime ? activeStake : 0) + sum of pending buckets whose lockedUntil >= atTime. unstake() creates a new pending bucket at lockedUntil = pool.lockedUntil (see StakePool.sol:607, _addToPendingBucket(lockedUntil, amount)). Because pool.lockedUntil is monotonically non-decreasing (only write sites at lines 156/423/479/515 all increase it) and createProposal's check at expirationTime only passed if pool.lockedUntil >= expirationTime, the unstaked amount sits in a bucket with lockedUntil >= expirationTime and thus still counts in getVotingPower(expirationTime). Net voting power at expirationTime is unchanged after unstake. Test_getVotingPower_excludesIneffectivePending at Staking.t.sol:741-752 explicitly verifies: unstake 3 of 10 → getVotingPower(now)==10 (because pending is still locked).",
+      "gating_conditions": "Invariant: pool.lockedUntil only increases. For createProposal to have succeeded, pool.lockedUntil >= expirationTime at creation, so it remains >= expirationTime forever after.",
+      "differs_from_original": "The original claim 'effective voting power at p.expirationTime may drop below requiredProposerStake' is factually incorrect for the current code.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "resolve() never re-reads requiredProposerStake; neither does getProposalState",
+      "current_code_ref": "src/governance/Governance.sol:142-175, 443-479",
+      "verified": "yes",
+      "current_state_summary": "resolve and getProposalState compute state only from yesVotes, noVotes, minVoteThreshold, expirationTime, executed and lastVoteTime. Neither re-consults requiredProposerStake nor proposer's current voting power.",
+      "gating_conditions": "None for this observation.",
+      "differs_from_original": "No difference.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Proposal remains votable/resolvable/executable despite proposer having revoked economic commitment",
+      "current_code_ref": "src/staking/StakePool.sol:759-785 (_getClaimableAmount), src/staking/StakePool.sol:437-441 (withdrawAvailable)",
+      "verified": "partial",
+      "current_state_summary": "While the proposer technically calls unstake, the unstaked funds are NOT actually 'revoked' during the voting window. Withdrawal requires now > lockedUntil + unbondingDelay. Since lockedUntil >= expirationTime (by createProposal's check) and expirationTime > now for the entire voting window, the staker cannot withdraw until strictly after the proposal's voting period ends plus unbondingDelay. Economic commitment is thus actually locked for the duration of the proposal, contrary to the issue's exploit premise.",
+      "gating_conditions": "Withdrawal requires claimable = buckets with lockedUntil < now - unbondingDelay, so unlock only happens after voting period + unbondingDelay.",
+      "differs_from_original": "The claim that proposer 'recovers their stake into a pending bucket' is technically true but the bucket is not claimable, and more importantly the stake still counts toward getVotingPower(expirationTime), so no economic or spam-prevention property is violated.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [4, 6],
+  "reasoning_chain": "Step 1 of the attack is real: createProposal does a one-shot check against requiredProposerStake. Steps 2, 3, 5 are also accurate descriptions. However steps 4 and 6 are wrong against the current code. unstake() places the unstaked amount into a pending bucket at the current pool.lockedUntil; since createProposal must have seen getVotingPower(expirationTime) >= requiredStake, pool.lockedUntil >= expirationTime, and because lockedUntil is monotonically non-decreasing, the pending bucket's lockedUntil >= expirationTime. _getEffectiveStakeAt(expirationTime) sums both activeStake (still counted, since pool.lockedUntil >= expirationTime) and pending buckets whose lockedUntil >= expirationTime — so the unstaked amount continues to count. Net voting power at expirationTime does not drop after unstake. Moreover, withdrawAvailable cannot release the funds until now > lockedUntil + unbondingDelay > expirationTime, so the proposer cannot actually reclaim tokens during the voting window. The staking test test_getVotingPower_excludesIneffectivePending (Staking.t.sol:741) explicitly asserts this: after unstaking 3 of 10 while still locked, getVotingPower returns 10. The economic commitment is preserved; the alleged bypass does not exist.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "299-311",
+      "excerpt": "uint64 expirationTime = now_ + votingDuration; uint256 votingPower = _staking().getPoolVotingPower(stakePool, expirationTime); uint256 requiredStake = _config().requiredProposerStake(); if (votingPower < requiredStake) { revert Errors.InsufficientVotingPower(requiredStake, votingPower); }",
+      "why_matters": "The check evaluates voting power AT expirationTime (a future snapshot). This implicitly requires pool.lockedUntil >= expirationTime (otherwise effective active stake would be 0), ensuring the commitment covers the whole voting window."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "603-610",
+      "excerpt": "activeStake -= amount; _addToPendingBucket(lockedUntil, amount); emit Unstaked(address(this), amount, lockedUntil);",
+      "why_matters": "Unstaked funds are bucketed with bucketLockedUntil = pool.lockedUntil. Because lockedUntil is monotonically non-decreasing, the bucket inherits the same unlock constraint as the activeStake had when the proposal was created."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "675-708",
+      "excerpt": "uint256 effectiveActive = (lockedUntil >= atTime) ? activeStake : 0; ... if (ineffective >= totalPending) return effectiveActive; return effectiveActive + (totalPending - ineffective);",
+      "why_matters": "Voting power at atTime = effectiveActive + pending-with-lockedUntil>=atTime. Because all pending buckets produced by unstake have lockedUntil = pool.lockedUntil >= expirationTime, they remain 'effective' for the entire voting window. Unstake therefore does not reduce voting power at expirationTime."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "156-156,423,479,515",
+      "excerpt": "lockedUntil = _lockedUntil; ... if (newLockedUntil > lockedUntil) { lockedUntil = newLockedUntil; } ... lockedUntil = newLockedUntil; (in renewLockUntil requires newLockedUntil > old) ... if (newLockedUntil > lockedUntil) { lockedUntil = newLockedUntil; }",
+      "why_matters": "All writes to lockedUntil are monotonic (only set higher). This is the crucial invariant that prevents any future reduction of lockup below expirationTime once a proposal is created."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "759-785",
+      "excerpt": "if (now_ <= unbondingDelay) { return 0; } uint64 threshold = now_ - unbondingDelay; uint256 claimableCumulative = _getCumulativeAmountAtTime(threshold);",
+      "why_matters": "withdrawAvailable can only release buckets with lockedUntil < now - unbondingDelay. Since bucket lockedUntil >= expirationTime > now during the voting window, no funds can actually be withdrawn until after the proposal ends — the proposer truly cannot recover stake during the voting window."
+    },
+    {
+      "file": "test/unit/staking/Staking.t.sol",
+      "lines": "741-758",
+      "excerpt": "IStakePool(pool).unstake(3 ether); ... assertEq(IStakePool(pool).getVotingPower(now_), 10 ether, 'All stake should be effective when locked');",
+      "why_matters": "Direct regression test proving unstake does not reduce voting power while the bucket's lockedUntil remains in the future."
+    }
+  ],
+  "counterargument": "One could argue the 'economic commitment' is weaker because the staker has signaled intent to exit and their stake now sits in a pending bucket rather than activeStake. However, in this code the voting-power computation treats any pending bucket whose lockedUntil >= atTime as equivalent to active stake for voting-power purposes, and the withdrawAvailable gate additionally prevents the tokens from leaving the contract until strictly after lockedUntil + unbondingDelay. Together, these enforce: (a) getVotingPower(expirationTime) after unstake equals its value before unstake; and (b) tokens are not redeemable during the voting window. Also, an attacker cannot reduce lockedUntil on the pool — all write sites are monotone increases. A separate concern — that the proposer could transfer the staker role to a different address — still leaves the stake and its lockedUntil in place; the tokens remain committed. Therefore the 'skin-in-the-game for duration' property IS enforced by the combination of (monotonic lockedUntil) + (pending still counts for voting power) + (withdrawal requires lockedUntil+unbondingDelay in the past). The reported vulnerability relies on a misread of _getEffectiveStakeAt that excludes pending buckets; in reality those buckets continue to contribute.",
+  "related_existing_tests": [
+    "test/unit/staking/Staking.t.sol:test_getVotingPower_excludesIneffectivePending (lines 741-759)",
+    "test/unit/staking/Staking.t.sol:test_getEffectiveStake_excludesIneffectivePending (lines 761+)",
+    "test/unit/governance/Governance.t.sol:test_RevertWhen_CreateProposalInsufficientVotingPower (line 249)"
+  ],
+  "fp_or_fixed_hint": "fp"
+}

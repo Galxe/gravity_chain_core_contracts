@@ -1,0 +1,18 @@
+Compiling 41 files with Solc 0.8.30
+Solc 0.8.30 finished in 3.32s
+Compiler run successful!
+
+Ran 1 test for test/POC_273.t.sol:POC_273
+[FAIL: ExcessiveLockupDuration(18445742864109551614 [1.844e19], 126144000000000 [1.261e14])] test_attackSucceedsIfVulnerable() (gas: 2199480)
+Logs:
+  BEFORE lockedUntil (micros): 1001209600000000
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 1.90ms (487.40µs CPU time)
+
+Ran 1 test suite in 12.74ms (1.90ms CPU time): 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/POC_273.t.sol:POC_273
+[FAIL: ExcessiveLockupDuration(18445742864109551614 [1.844e19], 126144000000000 [1.261e14])] test_attackSucceedsIfVulnerable() (gas: 2199480)
+
+Encountered a total of 1 failing tests, 0 tests succeeded

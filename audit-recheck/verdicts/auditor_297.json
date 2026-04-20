@@ -1,0 +1,83 @@
+{
+  "issue_number": 297,
+  "verdict": "PARTIAL",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Attacker flash-borrows tokens at T = expirationTime - 1, addStake + vote with inflated power.",
+      "current_code_ref": "src/governance/Governance.sol:381-440",
+      "verified": "yes",
+      "current_state_summary": "_voteInternal still requires now_ < p.expirationTime (line 396) and records lastVoteTime[proposalId] = now_ (line 437). Vote with inflated power is mechanically possible at T = expirationTime - 1.",
+      "gating_conditions": "Caller must be pool's voter (_requireVoter line 409); pool lockup must cover voting period (line 411-413).",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "At T+1 = expirationTime, executor calls execute() directly (skipping resolve()).",
+      "current_code_ref": "src/governance/Governance.sol:482-514",
+      "verified": "no",
+      "current_state_summary": "execute() now contains an explicit isResolved check at lines 506-508: `if (!_proposals[proposalId].isResolved) { revert Errors.ProposalNotResolved(proposalId); }`. This check sits BEFORE the getProposalState() call. Calling execute without first calling resolve reverts.",
+      "gating_conditions": "onlyExecutor modifier (line 486); array length checks (488-493); proposal must exist (496-498); not already executed (501-503); MUST be resolved (506-508).",
+      "differs_from_original": "Issue claims execute() does not require p.isResolved. Current code DOES require it — the bypass path described no longer exists.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Atomicity guard never checked; proposal executes with flash-loan-inflated votes.",
+      "current_code_ref": "src/governance/Governance.sol:443-479",
+      "verified": "partial",
+      "current_state_summary": "Because execute() now demands isResolved=true, attacker MUST call resolve() first. resolve() runs the atomicity guard at lines 467-470: `if (lastVote > 0 && now_ <= lastVote) revert ResolutionCannotBeAtomic(lastVote)`. However, the issue's secondary claim is correct: the guard branch is unreachable in normal flow. _voteInternal enforces now_ < expirationTime (line 396) so lastVoteTime < expirationTime; resolve enforces now_ >= expirationTime (line 461). Therefore now_ >= expirationTime > lastVoteTime, and now_ <= lastVote can never be true. The guard is dead code as the issue claims.",
+      "gating_conditions": "lastVote > 0 (some vote happened); now_ <= lastVote (timestamp ordering).",
+      "differs_from_original": "no — guard is indeed unreachable, but attack already blocked at step 2.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 4,
+      "original": "Attacker repays flash loan; off-chain monitors miss ProposalResolved events; resolutionTime never set.",
+      "current_code_ref": "src/governance/Governance.sol:472-478, 506-508",
+      "verified": "no",
+      "current_state_summary": "Because execute() requires isResolved and resolve() emits ProposalResolved (line 478) and sets p.resolutionTime = now_ (line 474), every executable proposal will have emitted ProposalResolved and have resolutionTime set. The secondary impact described no longer occurs.",
+      "gating_conditions": "n/a — attack path closed.",
+      "differs_from_original": "Original assumed direct execute() bypass; that bypass is closed.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 4],
+  "reasoning_chain": "The issue has two distinct claims: (A) execute() bypasses the resolve() atomicity guard because it lacks an isResolved check, and (B) the atomicity guard itself is dead code due to vote/resolve timestamp constraints. Claim A is FIXED in current code: Governance.sol:506-508 explicitly reverts with ProposalNotResolved if !p.isResolved, before any getProposalState() check. Therefore the flash-loan exploit scenario as described (vote at T, execute directly at T+1) cannot succeed — the attacker must call resolve() first, which runs the atomicity guard and emits ProposalResolved. Claim B remains technically TRUE: _voteInternal requires now_ < expirationTime (line 396) and resolve requires now_ >= expirationTime (line 461), so lastVote < expirationTime ≤ now_ always, making the now_ <= lastVote branch (line 468) unreachable. However, since the primary execute-bypass is closed, the practical impact (a successful flash-loan governance attack) is blocked. The dead-code observation is a code-quality finding, not an exploitable vulnerability — there is no attack path that benefits from the guard being non-functional once execute() requires isResolved. Hence: PARTIAL — primary High-severity claim fixed; secondary informational claim remains.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "505-508",
+      "excerpt": "// Verify proposal is explicitly resolved\n        if (!_proposals[proposalId].isResolved) {\n            revert Errors.ProposalNotResolved(proposalId);\n        }",
+      "why_matters": "This is the explicit isResolved gate the issue claims is missing. It blocks the entire described exploit chain by forcing resolution (and thus the atomicity guard, ProposalResolved event, and resolutionTime write) before execution."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "394-398",
+      "excerpt": "// Verify voting period not ended\n        uint64 now_ = _now();\n        if (now_ >= p.expirationTime) {\n            revert Errors.VotingPeriodEnded(p.expirationTime);\n        }",
+      "why_matters": "Vote-time constraint guarantees lastVoteTime < expirationTime, which combined with resolve's now_ >= expirationTime makes the now_ <= lastVote guard branch unreachable — confirming the dead-code part of the issue."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "458-470",
+      "excerpt": "uint64 now_ = _now();\n        if (now_ < p.expirationTime) { revert Errors.VotingPeriodNotEnded(p.expirationTime); }\n        uint64 lastVote = lastVoteTime[proposalId];\n        if (lastVote > 0 && now_ <= lastVote) {\n            revert Errors.ResolutionCannotBeAtomic(lastVote);\n        }",
+      "why_matters": "Atomicity guard remains; combined with line 396 it is mathematically unreachable, confirming the issue's secondary observation. But this no longer matters because execute() requires resolve() to have run first."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "472-478",
+      "excerpt": "p.isResolved = true;\n        p.resolutionTime = now_;\n        ProposalState state = getProposalState(proposalId);\n        emit ProposalResolved(proposalId, state);",
+      "why_matters": "Refutes the secondary impact: since execute() now mandates isResolved, every executed proposal has resolutionTime set and ProposalResolved emitted."
+    }
+  ],
+  "counterargument": "One could argue the issue is still EXISTS because the atomicity guard truly is dead code: if the codebase were ever refactored to relax the now_ < expirationTime constraint in _voteInternal (e.g., allow vote at exactly expirationTime), the guard would still fail to fire and execute() would reach a state where votes and resolution happen in the same timestamp. However, this is hypothetical — under the current vote-time constraint the guard cannot fire, but it also cannot be exploited because (a) execute() requires isResolved and (b) resolve() requires now_ > lastVoteTime by virtue of the expiration-time inequality chain. The flash-loan attack requires more than the guard being inert; it requires execute() to be reachable without resolve(), which the new check at line 506-508 prevents. Therefore the High-severity exploit claim is fixed; only the dead-code observation (Informational at most) remains.",
+  "related_existing_tests": [
+    "test/unit/governance/Governance.t.sol:1305 test_AtomicityGuard_CannotResolveInSameTimestamp",
+    "test/unit/governance/Governance.t.sol:1391 test_AtomicityGuard_SimulatedFlashLoan",
+    "test/unit/governance/Governance.t.sol:1427 test_AtomicityGuard_VoteThenResolve_SameBlock",
+    "test/unit/governance/Governance.t.sol:1472 test_AtomicityGuard_ProposalWithNoVotes"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

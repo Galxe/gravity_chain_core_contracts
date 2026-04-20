@@ -1,0 +1,113 @@
+{
+  "issue_number": 414,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "SYSTEM_CALLER calls NativeOracle.record(sourceType, sourceId, nonce=200, ...) at src/oracle/NativeOracle.sol:74",
+      "current_code_ref": "src/oracle/NativeOracle.sol:74-101",
+      "verified": "yes",
+      "current_state_summary": "record() still gated by requireAllowed(SYSTEM_CALLER) and delegates nonce check to _updateNonce before invoking callback.",
+      "gating_conditions": "msg.sender == SYSTEM_CALLER",
+      "differs_from_original": "Same entry point; signature and flow unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_updateNonce allows any nonce > currentNonce, so nonce=200 overwrites _nonces while currentNonce=100",
+      "current_code_ref": "src/oracle/NativeOracle.sol:257-270",
+      "verified": "no",
+      "current_state_summary": "The check has been tightened to strict sequentiality: 'if (nonce != currentNonce + 1) revert Errors.NonceNotSequential(...)'. Only nonce == currentNonce+1 is accepted.",
+      "gating_conditions": "nonce must equal _nonces[sourceType][sourceId] + 1",
+      "differs_from_original": "Original vulnerable check was 'if (nonce <= currentNonce) revert NonceNotIncreasing'. Now it is 'if (nonce != currentNonce + 1) revert NonceNotSequential'. The NonceNotIncreasing error no longer exists in Errors.sol — only NonceNotSequential remains.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Nonces 101-199 become permanently unreachable after jump to 200",
+      "current_code_ref": "src/oracle/NativeOracle.sol:265-267",
+      "verified": "no",
+      "current_state_summary": "Jumping to 200 when current is 100 now reverts, so _nonces stays at 100 and 101..199 remain the only acceptable next values. No gap can form from SYSTEM_CALLER input.",
+      "gating_conditions": "Strict sequential nonce.",
+      "differs_from_original": "Attack precondition (ability to skip nonces) is removed.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Bridge payload at nonce=150 never reaches _invokeCallback, GBridgeReceiver.onOracleEvent never fires",
+      "current_code_ref": "src/oracle/NativeOracle.sol:85-90, src/oracle/evm/native_token_bridge/GBridgeReceiver.sol:63-105",
+      "verified": "no",
+      "current_state_summary": "Because the skip is impossible, every in-sequence nonce reaches _invokeCallback. GBridgeReceiver._handlePortalMessage processes in order; comments at GBridgeReceiver.sol:30-32,84-85 explicitly state that replay protection now relies on NativeOracle's sequential enforcement.",
+      "gating_conditions": "Requires the previous step to succeed, which it cannot.",
+      "differs_from_original": "GBridgeReceiver refactored; the old _processedNonces map is deprecated (renamed __deprecated_processedNonces at GBridgeReceiver.sol:30-32).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "_processedNonces[messageNonce] stays false; mint precompile never executes",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeReceiver.sol:30-32,94-99",
+      "verified": "partial",
+      "current_state_summary": "The _processedNonces map referenced by the report no longer exists as active state (deprecated slot preserved only for storage layout). The mint-precompile call still happens in _handlePortalMessage, and it will fire for every in-order nonce.",
+      "gating_conditions": "Any in-order oracle record hitting the bridge callback mints.",
+      "differs_from_original": "Replay protection model was redesigned. Even if a skip were possible, the exploit description's mechanism (stale _processedNonces) no longer applies.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "isSyncedPast(..., 150) returns true (latestNonce=200>=150), false-positive masking dropped event",
+      "current_code_ref": "src/oracle/NativeOracle.sol:239-246",
+      "verified": "partial",
+      "current_state_summary": "isSyncedPast still uses 'latestNonce > 0 && latestNonce >= nonce'. The semantic would still mis-report if a gap existed, but a gap cannot occur due to the sequential enforcement at step 2.",
+      "gating_conditions": "Needs a preceding nonce skip, which is impossible.",
+      "differs_from_original": "View logic unchanged, but the preimage (skippable nonces) is eliminated.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 7,
+      "original": "getRecord(..., 150) returns zero-struct; user's 100 ETH locked with no mint",
+      "current_code_ref": "src/oracle/NativeOracle.sol:222-228",
+      "verified": "partial",
+      "current_state_summary": "getRecord still returns a default DataRecord for unknown nonces, but this only matters if a gap exists. No gap is possible under the current _updateNonce.",
+      "gating_conditions": "Requires unreachable precondition.",
+      "differs_from_original": "Read path unchanged; preimage eliminated.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 3],
+  "reasoning_chain": "The report assumes _updateNonce allows any nonce strictly greater than currentNonce, which is the pattern in the quoted snippet ('if (nonce <= currentNonce) revert NonceNotIncreasing'). At commit a623eab the function has been rewritten at src/oracle/NativeOracle.sol:257-270 to enforce strict sequentiality: 'if (nonce != currentNonce + 1) revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);'. The Errors.sol file at :412 now only defines NonceNotSequential (NonceNotIncreasing has been removed). Tests at test/unit/oracle/NativeOracle.t.sol:136-158 explicitly verify that a jump from nonce=1 to nonce=5 reverts with NonceNotSequential — exactly the exploit precondition. GBridgeReceiver has also been refactored (src/oracle/evm/native_token_bridge/GBridgeReceiver.sol:30-32,84-85): the _processedNonces mapping is deprecated and replay protection is delegated to the oracle's sequential enforcement. Because SYSTEM_CALLER can no longer skip nonces, nonce=150 can never be silently dropped; any attempt to submit a later event first reverts until 150 is recorded. The exploit's core data-flow step (writing _nonces=200 while leaving 150 unpopulated) is infeasible.",
+  "key_evidence": [
+    {
+      "file": "src/oracle/NativeOracle.sol",
+      "lines": "262-267",
+      "excerpt": "uint128 currentNonce = _nonces[sourceType][sourceId];\\n// Nonce must be sequential (currentNonce defaults to 0, so first nonce must be 1)\\nif (nonce != currentNonce + 1) {\\n    revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);\\n}",
+      "why_matters": "This is the exact check the report claims is missing. The current implementation enforces strict +1 sequentiality, making any nonce skip impossible at the entry point."
+    },
+    {
+      "file": "src/foundation/Errors.sol",
+      "lines": "412",
+      "excerpt": "error NonceNotSequential(uint32 sourceType, uint256 sourceId, uint128 expectedNonce, uint128 providedNonce);",
+      "why_matters": "Confirms the legacy NonceNotIncreasing error (referenced verbatim in the report) has been replaced with a stricter sequentiality error."
+    },
+    {
+      "file": "src/oracle/evm/native_token_bridge/GBridgeReceiver.sol",
+      "lines": "30-32,84-85",
+      "excerpt": "// @deprecated Kept for storage layout compatibility after hardfork.\\n// Replay protection is already guaranteed by NativeOracle's sequential nonce enforcement.\\nuint256 private __deprecated_processedNonces;\\n...\\n// Replay protection is handled by NativeOracle's sequential nonce enforcement\\n// (nonce must equal currentNonce + 1), so no duplicate check is needed here.",
+      "why_matters": "Documents that the design explicitly relies on sequential oracle nonces — skips are assumed impossible by construction."
+    },
+    {
+      "file": "test/unit/oracle/NativeOracle.t.sol",
+      "lines": "136-158",
+      "excerpt": "function test_Record_RevertWhenNonceNotSequential() public {\\n    ...oracle.record(..., 1, ...);\\n    vm.expectRevert(abi.encodeWithSelector(Errors.NonceNotSequential.selector, SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2, 5));\\n    oracle.record(..., 5, ...);\\n}",
+      "why_matters": "A direct regression test asserting that jumping from nonce=1 to nonce=5 reverts — the precise exploit gadget the report describes."
+    }
+  ],
+  "counterargument": "One could argue the threat is not fully extinguished: if the off-chain consensus engine (SYSTEM_CALLER) genuinely loses the payload for nonce=150 (e.g., validator bug drops it before submission), then the chain is now stuck — every subsequent record reverts until 150 is provided, creating a liveness/DoS on the bridge rather than a silent fund loss. This is a strictly different (and arguably worse for liveness) risk profile, and it is a deliberate design trade-off acknowledged by GBridgeReceiver's comments. It does not restore the vulnerability claimed in the report, which was about a silent skip + false isSyncedPast — that path is now impossible. An additional counter is that a malicious/compromised SYSTEM_CALLER could still refuse to submit nonce=150 indefinitely, locking all later bridge events, but this is a trust-root failure (SYSTEM_CALLER is the consensus engine) rather than an oracle contract bug, and it cannot produce the specific data-flow outcome (isSyncedPast=true while getRecord=0) that the report describes.",
+  "related_existing_tests": [
+    "test/unit/oracle/NativeOracle.t.sol::test_Record_RevertWhenNonceIsZero (lines 125-134)",
+    "test/unit/oracle/NativeOracle.t.sol::test_Record_RevertWhenNonceNotSequential (lines 136-158)",
+    "test/unit/oracle/NativeOracle.t.sol::test_RecordBatch_RevertWhenNonceNotSequential (lines 260+)",
+    "test/unit/oracle/GBridgeReceiver.t.sol"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

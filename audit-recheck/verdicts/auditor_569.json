@@ -1,0 +1,102 @@
+{
+  "issue_number": 569,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "SystemAddresses.sol defines ORACLE_REQUEST_QUEUE = address(0x1625F4002) as a reserved system address",
+      "current_code_ref": "src/foundation/SystemAddresses.sol:117-119",
+      "verified": "yes",
+      "current_state_summary": "Constant ORACLE_REQUEST_QUEUE = address(0x0000000000000000000000000001625F4002) exists exactly as claimed, with NatSpec declaring it the 'Oracle request queue contract'.",
+      "gating_conditions": "none — compile-time constant",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "genesis-tool/src/utils.rs enumerates all 21 predeploys; OracleRequestQueue is absent (only OnDemandOracleTaskConfig is present)",
+      "current_code_ref": "genesis-tool/src/utils.rs:110-132",
+      "verified": "yes",
+      "current_state_summary": "CONTRACTS: [(&str, Address); 21] lists exactly 21 contracts. Grep confirms 'OracleRequestQueue' appears nowhere in the CONTRACTS array; only 'OnDemandOracleTaskConfig' (at ON_DEMAND_ORACLE_TASK_CONFIG_ADDR = 0x1625F100A) is included. The constant ORACLE_REQUEST_QUEUE_ADDR is declared at utils.rs:99 but is dead code — never read.",
+      "gating_conditions": "none — static data array",
+      "differs_from_original": "no (length matches: 21)",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "genesis-tool/src/execute.rs iterates CONTRACTS only — no code/balance is inserted at 0x1625F4002",
+      "current_code_ref": "genesis-tool/src/execute.rs:31-67, 195-215",
+      "verified": "yes",
+      "current_state_summary": "deploy_bsc_style() at line 31 iterates `for (contract_name, target_address) in CONTRACTS` and reads `{byte_code_dir}/{contract_name}.hex` for each. Post-genesis state assembly at line 195 iterates the same CONTRACTS. Since ORACLE_REQUEST_QUEUE_ADDR is not in CONTRACTS, no `OracleRequestQueue.hex` is loaded and no AccountInfo { code: Some(...) } is inserted at 0x1625F4002. db.insert_account_info is only invoked per CONTRACTS entry plus SYSTEM_CALLER (line 25).",
+      "gating_conditions": "none — unconditional loop",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "OracleRequestQueue.sol constructor would set _taskConfig, _treasury, _nextRequestId = 1 — never runs",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:82-92",
+      "verified": "yes",
+      "current_state_summary": "Constructor assigns _taskConfig = taskConfigAddr, _treasury = treasuryAddr, _nextRequestId = 1 and reverts with ZeroAddress if either arg is zero. Because no CREATE tx targets this address at genesis and there is no storage injection for 0x1625F4002 in execute.rs/post_genesis.rs/genesis.rs, _taskConfig and _treasury at the reserved address remain address(0) and _nextRequestId remains 0 (even if code were somehow injected later).",
+      "gating_conditions": "constructor can only run via CREATE or via genesis storage injection — neither happens",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Any CALL to 0x1625F4002 is a call to an account with no code",
+      "current_code_ref": "genesis-tool/src/execute.rs:31-54",
+      "verified": "yes",
+      "current_state_summary": "Because no AccountInfo is ever inserted for 0x1625F4002, the address is a zero-code account. A Solidity external interface call `IOracleRequestQueue(0x1625F4002).request(...)` compiled with modern Solidity (>=0.8.0) performs EXTCODESIZE check and reverts; low-level call succeeds with empty returndata which ABI-decoders treat as zero values (requestId = 0).",
+      "gating_conditions": "depends on caller's Solidity version / call style",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Any governance action that later adds code at this address would also need to seed _taskConfig/_treasury via storage injection — currently no such path exists",
+      "current_code_ref": "src/foundation/SystemAddresses.sol:117-119, grep of 'SystemAddresses.ORACLE_REQUEST_QUEUE' across src/",
+      "verified": "yes",
+      "current_state_summary": "Repo-wide grep for `SystemAddresses.ORACLE_REQUEST_QUEUE` returned zero matches in src/ — no governance module, no upgrade hook, and no oracle module currently references this constant. There is no ProxyAdmin-style upgrade path and no storage-injection code in genesis-tool that would populate the _taskConfig / _treasury slots at 0x1625F4002.",
+      "gating_conditions": "governance/upgrade subsystem would have to add both code and storage — no such mechanism exists today",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Every step of the original data-flow checks out at current HEAD: (1) SystemAddresses.sol:119 still reserves 0x1625F4002 as ORACLE_REQUEST_QUEUE; (2) utils.rs:110-132 CONTRACTS array has exactly 21 entries and does not contain 'OracleRequestQueue' (ORACLE_REQUEST_QUEUE_ADDR constant at utils.rs:99 is declared but unused); (3) execute.rs:31 and :195 iterate only CONTRACTS, so no bytecode is loaded and no AccountInfo with code is inserted for 0x1625F4002; (4) the constructor in OracleRequestQueue.sol:82-92 therefore never runs, leaving _taskConfig = address(0), _treasury = address(0), _nextRequestId = 0 if code is ever placed there; (5) the advertised system address is an EOA at runtime. No genesis storage-injection path or governance upgrade path currently backfills this. Severity is correctly 'medium' / latent — no in-repo caller yet references SystemAddresses.ORACLE_REQUEST_QUEUE, so no active exploit, but the invariant that 'SystemAddresses constants point to live contracts' is broken and will mis-lead any future integration or off-chain tool.",
+  "key_evidence": [
+    {
+      "file": "src/foundation/SystemAddresses.sol",
+      "lines": "117-119",
+      "excerpt": "/// @notice Oracle request queue contract\n/// @dev Accepts user-initiated on-demand oracle requests with fee payment\naddress internal constant ORACLE_REQUEST_QUEUE = address(0x0000000000000000000000000001625F4002);",
+      "why_matters": "The Solidity side of the contract advertises 0x1625F4002 as a live system contract, creating a source-of-truth mismatch with the genesis tool."
+    },
+    {
+      "file": "genesis-tool/src/utils.rs",
+      "lines": "99-132",
+      "excerpt": "pub const ORACLE_REQUEST_QUEUE_ADDR: Address = address!(\"00000000000000000000000000000001625F4002\");\n...\npub const CONTRACTS: [(&str, Address); 21] = [\n    (\"Genesis\", GENESIS_ADDR), ... (\"OnDemandOracleTaskConfig\", ON_DEMAND_ORACLE_TASK_CONFIG_ADDR),\n];",
+      "why_matters": "The Rust-side declares the address constant but omits it from the deployable CONTRACTS array — proving the absence of any pre-deploy plan."
+    },
+    {
+      "file": "genesis-tool/src/execute.rs",
+      "lines": "31-54",
+      "excerpt": "for (contract_name, target_address) in CONTRACTS {\n    let hex_path = format!(\"{}/{}.hex\", byte_code_dir, contract_name);\n    ...\n    db.insert_account_info(target_address, AccountInfo { code: Some(Bytecode::new_raw(...)), balance, ..AccountInfo::default() });\n}",
+      "why_matters": "This is the sole site that installs runtime bytecode at genesis; it iterates only CONTRACTS, so 0x1625F4002 ends up with no code."
+    },
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "82-92",
+      "excerpt": "constructor(address taskConfigAddr, address treasuryAddr) {\n    if (taskConfigAddr == address(0) || treasuryAddr == address(0)) { revert ZeroAddress(); }\n    _taskConfig = taskConfigAddr;\n    _treasury = treasuryAddr;\n    _nextRequestId = 1;\n}",
+      "why_matters": "Even if bytecode were later placed at 0x1625F4002 by governance without a companion storage-injection step, _taskConfig/_treasury would be zero and _nextRequestId would be 0 instead of 1 — the invariants this constructor enforces cannot be re-established by CREATE-less deployment."
+    }
+  ],
+  "counterargument": "One could argue this is not a present-day exploitable bug: (a) no Solidity contract in src/ currently calls SystemAddresses.ORACLE_REQUEST_QUEUE, so no on-chain flow dereferences the empty EOA today; (b) users cannot themselves cause a call to an IOracleRequestQueue interface at 0x1625F4002 because no entry-point accepts the address; (c) if the queue is intentionally deferred (e.g. feature-gated / to be deployed via a later governance upgrade), the reserved address is merely a placeholder and the 'bug' is really 'unfinished feature'. Under this reading the severity is informational, not medium. However, the lack of any code path that would re-seed _taskConfig/_treasury/_nextRequestId if/when the code is installed later means the gap is a real footgun, and off-chain tooling that scans SystemAddresses for liveness assumptions is mis-led today — so the issue is correctly EXISTS at medium latent severity, not FP.",
+  "related_existing_tests": [
+    "test/unit/foundation/SystemAddresses.t.sol:42 — asserts SystemAddresses.ORACLE_REQUEST_QUEUE equals 0x1625F4002 but does NOT assert code.length > 0 at that address",
+    "test/unit/foundation/SystemAddresses.t.sol:83 — asserts the constant is non-zero; again does not probe runtime code presence",
+    "test/unit/oracle/OracleRequestQueue.t.sol:44 — deploys a fresh OracleRequestQueue via `new` in the unit test harness, bypassing the genesis gap entirely (so tests pass despite the predeploy hole)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

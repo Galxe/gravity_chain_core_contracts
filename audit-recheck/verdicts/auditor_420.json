@@ -1,0 +1,114 @@
+{
+  "issue_number": 420,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Owner calls Governance.removeExecutor(lastExecutor) — _executors.remove() succeeds, set length drops to 0",
+      "current_code_ref": "src/governance/Governance.sol:564-570",
+      "verified": "yes",
+      "current_state_summary": "removeExecutor is external onlyOwner and only wraps _executors.remove(executor) + emits ExecutorRemoved. No length/min-count check, no size precondition.",
+      "gating_conditions": "onlyOwner (Ownable2Step). Caller must be current owner.",
+      "differs_from_original": "Line numbers moved (564-570 vs. reported 530-536) but behavior is identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "No `require(_executors.length() > 1)` guard exists; the removal succeeds unconditionally",
+      "current_code_ref": "src/governance/Governance.sol:564-570",
+      "verified": "yes",
+      "current_state_summary": "Function body is only `if (_executors.remove(executor)) { emit ExecutorRemoved(executor); }`. No guard on _executors.length() before or after removal. getExecutorCount() exists (260-262) but is never consulted inside removeExecutor.",
+      "gating_conditions": "None — any onlyOwner call with a currently-present executor succeeds.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "onlyExecutor modifier checks `_executors.contains(msg.sender)` — with empty set, this reverts for every caller",
+      "current_code_ref": "src/governance/Governance.sol:72-77",
+      "verified": "yes",
+      "current_state_summary": "modifier onlyExecutor { if (!_executors.contains(msg.sender)) revert Errors.NotExecutor(msg.sender); _; }. EnumerableSet.contains on empty set returns false for every msg.sender.",
+      "gating_conditions": "None that mitigates — check is purely set membership.",
+      "differs_from_original": "Line numbers 72-77 vs. reported 61-65, same logic.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "execute() is decorated with onlyExecutor — all future execute() calls revert",
+      "current_code_ref": "src/governance/Governance.sol:482-536",
+      "verified": "yes",
+      "current_state_summary": "function execute(uint64, address[], bytes[]) external onlyExecutor { ... } — the sole entry point to apply a resolved, succeeded proposal's batch of calls. With empty _executors, modifier reverts before any proposal logic.",
+      "gating_conditions": "onlyExecutor. No alternative execution path is exposed.",
+      "differs_from_original": "Line numbers 482-536 vs. reported 453-457 (which was only the declaration); logic unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "addExecutor() is decorated onlyOwner — if owner == address(this) (self-governance), recovery requires an executor to call execute() which was just locked, creating a deadlock",
+      "current_code_ref": "src/governance/Governance.sol:555-561",
+      "verified": "yes",
+      "current_state_summary": "addExecutor is external onlyOwner, body `if (_executors.add(executor)) emit ExecutorAdded(executor);`. When owner is transferred to address(this) via Ownable2Step (nothing prevents this; renounceOwnership is blocked at 85-87 but transferOwnership to self is not), only a governance proposal execution can reach addExecutor, and execution itself requires an executor.",
+      "gating_conditions": "onlyOwner gating means self-governance (owner == address(this)) traps recovery behind execute(), which needs onlyExecutor.",
+      "differs_from_original": "None. renounceOwnership is prevented but owner-is-self assignment is unconstrained.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "No timelock, no emergency bypass, no recovery path on-chain",
+      "current_code_ref": "src/governance/Governance.sol:1-571",
+      "verified": "yes",
+      "current_state_summary": "Whole contract has no rescue admin, no timelocked queue, no pause, no socially-recoverable key, and no fallback executor. The only executor-mutating paths are addExecutor/removeExecutor, both onlyOwner. Constructor (63-65) does not seed an initial executor either — initial executor must be added by the owner post-deployment.",
+      "gating_conditions": "No escape hatch in code.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "I located removeExecutor at src/governance/Governance.sol:564-570 and confirmed it contains only `_executors.remove(executor)` under onlyOwner with no min-count guard. The onlyExecutor modifier (72-77) uses EnumerableSet.contains, which returns false for every caller when the set is empty. execute() (482-536) is the only path to run proposal batch calls and is gated by onlyExecutor, so emptying _executors makes execute() permanently revert. addExecutor (555-561) is onlyOwner, and renounceOwnership is disabled (85-87) but nothing prevents transferring ownership to address(this). Once that self-governance configuration holds, the only way to call addExecutor is through a proposal execution, which itself requires at least one executor. The constructor (63-65) does not auto-register any executor. Tests (test/unit/governance/Governance.t.sol:814-903, 964-) cover add/remove happy paths and even the 'execute after executor removed' revert, but none assert a minimum-count invariant or recovery path. Spec (spec_v2/governance.spec.md:610-619, 655-656) documents removeExecutor behavior as 'Remove executor; emit if removed' with owner-only access and no minimum-count requirement. All six data-flow steps verify against current code; the vulnerability exists unchanged.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "564-570",
+      "excerpt": "function removeExecutor(address executor) external onlyOwner { if (_executors.remove(executor)) { emit ExecutorRemoved(executor); } }",
+      "why_matters": "Confirms the absence of any min-count or last-executor guard. The removal is unconditional beyond onlyOwner, so the set can be drained to zero."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "72-77",
+      "excerpt": "modifier onlyExecutor { if (!_executors.contains(msg.sender)) revert Errors.NotExecutor(msg.sender); _; }",
+      "why_matters": "With an empty _executors set, EnumerableSet.contains is false for every caller, so every onlyExecutor-gated function reverts."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "482-486",
+      "excerpt": "function execute(uint64 proposalId, address[] calldata targets, bytes[] calldata datas) external onlyExecutor {",
+      "why_matters": "execute() is the sole dispatcher for resolved, succeeded proposals; once onlyExecutor reverts, no proposal — including one that would re-add an executor — can ever be applied."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "555-561",
+      "excerpt": "function addExecutor(address executor) external onlyOwner { if (_executors.add(executor)) { emit ExecutorAdded(executor); } }",
+      "why_matters": "Recovery via addExecutor requires onlyOwner. Under self-governance (owner == address(this)), only execute() can invoke it, which is exactly the path that is locked."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "85-87",
+      "excerpt": "function renounceOwnership() public pure override { revert Errors.OperationNotSupported(); }",
+      "why_matters": "Only renouncing ownership is blocked; Ownable2Step.transferOwnership is inherited unmodified, so ownership can still be transferred to address(this), enabling the self-governance pattern described in the exploit."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "63-65",
+      "excerpt": "constructor(address initialOwner) Ownable(initialOwner) { }",
+      "why_matters": "The constructor seeds no executor, so the invariant ‘at least one executor exists’ is never established on-chain; it relies entirely on operational discipline."
+    }
+  ],
+  "counterargument": "One could argue that ownership is held by an EOA/multisig rather than by the contract itself, in which case the owner can always call addExecutor directly and restore governance — making the freeze self-inflicted operational error, not a contract bug. The code supports this: Ownable2Step requires a two-step transferOwnership with acceptOwnership, so the transition to self-governance is deliberate and signaled. Additionally, the exploit requires that (a) ownership has already been moved to address(this) and (b) a proposal removes the final executor without pairing it with addExecutor in the same batch; if proposal reviewers enforce 'rotate atomically' discipline the deadlock never materializes. Because the harm is a governance configuration failure that becomes irreversible only under a specific owner topology, some reviewers downgrade this from a code-level vulnerability to a procedural/design finding. However, the code provides no structural safety net — no invariant check, no seeded fallback executor, no timelock rescue — so once the configuration holds, on-chain recovery is impossible, which is precisely what the report claims.",
+  "related_existing_tests": [
+    "test/unit/governance/Governance.t.sol:814-826 test_RemoveExecutor",
+    "test/unit/governance/Governance.t.sol:889-903 test_GetExecutorCount",
+    "test/unit/governance/Governance.t.sol:964- test_RevertWhen_ExecuteAfterExecutorRemoved"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

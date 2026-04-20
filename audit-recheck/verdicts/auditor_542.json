@@ -1,0 +1,94 @@
+{
+  "issue_number": 542,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Operator calls setFeeRecipient(pool, X); writes validator.pendingFeeRecipient = X. No immediate effect.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:515-528",
+      "verified": "yes",
+      "current_state_summary": "setFeeRecipient still writes validator.pendingFeeRecipient = newRecipient at line 525 after rejecting zero address; emits FeeRecipientUpdated at 527.",
+      "gating_conditions": "validatorExists + onlyOperator + whenNotReconfiguring; newRecipient != address(0).",
+      "differs_from_original": "Adds ZeroAddress guard at 520; otherwise identical pending-write semantics.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Operator calls leaveValidatorSet(pool); validator ACTIVE -> PENDING_INACTIVE.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:394-429",
+      "verified": "yes",
+      "current_state_summary": "leaveValidatorSet sets status to PENDING_INACTIVE at line 425 and pushes to _pendingInactive at 426.",
+      "gating_conditions": "Not the last active validator; validator is ACTIVE; validator set changes allowed.",
+      "differs_from_original": "Same transition as described.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "onNewEpoch step 2 _applyDeactivations moves validator to INACTIVE; step 6 _setActiveValidators overwrites _activeValidators; the deactivated validator is absent.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:537-589, 730-749, 797-810",
+      "verified": "yes",
+      "current_state_summary": "onNewEpoch calls _applyDeactivations (line 545) then _setActiveValidators (line 558). _setActiveValidators deletes and rewrites _activeValidators from the computed next set (lines 800-803), excluding the deactivated pool.",
+      "gating_conditions": "Caller must be RECONFIGURATION.",
+      "differs_from_original": "Ordering and array overwrite unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "_applyPendingFeeRecipients iterates only post-step-6 _activeValidators, so pendingFeeRecipient = X is not applied and not cleared, leaking across the INACTIVE window.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:730-749, 833-845",
+      "verified": "no",
+      "current_state_summary": "_applyDeactivations now explicitly clears validator.pendingFeeRecipient = address(0) at line 744 (Audit #85 comment at 741-743) for every validator it transitions to INACTIVE. _applyPendingFeeRecipients still iterates only _activeValidators (lines 833-845), but the stale pending value has already been zeroed before deactivation completes.",
+      "gating_conditions": "None — unconditional clear inside the deactivation loop.",
+      "differs_from_original": "Explicit fix: pendingFeeRecipient cleared at the moment of PENDING_INACTIVE -> INACTIVE transition.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Operator calls joinValidatorSet; INACTIVE -> PENDING_ACTIVE; becomes ACTIVE at next epoch.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:357-391, 754-766",
+      "verified": "yes",
+      "current_state_summary": "joinValidatorSet still transitions INACTIVE -> PENDING_ACTIVE; _applyActivations flips to ACTIVE at the next epoch.",
+      "gating_conditions": "Min bond, maxValidatorSetSize not exceeded, allowValidatorSetChange true.",
+      "differs_from_original": "Lifecycle preserved.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "_applyPendingFeeRecipients reads the long-stale pendingFeeRecipient = X and writes feeRecipient = X on rejoin, without fresh operator action.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:833-845",
+      "verified": "no",
+      "current_state_summary": "On rejoin, validator.pendingFeeRecipient is address(0) (zeroed in step 4), so the guard at line 838 (pendingFeeRecipient != address(0)) is false and feeRecipient is not overwritten. The stale-value hijack path is eliminated; test_audit_pendingFeeRecipient_clearedOnDeactivation (test/unit/staking/ValidatorManagement.t.sol:306-343) asserts feeRecipient remains originalRecipient post-rejoin and pendingFeeRecipient is cleared after deactivation.",
+      "gating_conditions": "N/A — precondition (pending != 0) is falsified by the fix.",
+      "differs_from_original": "The stale write no longer occurs.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [4, 6],
+  "reasoning_chain": "The reported vulnerability hinges on pendingFeeRecipient surviving a PENDING_INACTIVE -> INACTIVE transition because _applyPendingFeeRecipients iterates only _activeValidators. Current code plugs exactly this gap: _applyDeactivations at ValidatorManagement.sol:730-749 now unconditionally sets validator.pendingFeeRecipient = address(0) at line 744 for every validator being deactivated, with an in-code comment explicitly referencing 'Audit #85' and the stale-recipient-on-rejoin scenario. On a later joinValidatorSet and epoch transition, _applyPendingFeeRecipients (833-845) sees pendingFeeRecipient == address(0) and skips the write, so feeRecipient is untouched. A dedicated regression test (test/unit/staking/ValidatorManagement.t.sol:306-343) replays the exact exploit sequence (setFeeRecipient, leave, epoch, join, epoch) and asserts feeRecipient stays at originalRecipient, that pendingFeeRecipient is cleared at deactivation, and that the stale address never becomes live. The exploit therefore cannot be reproduced on main at a623eab.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "730-749",
+      "excerpt": "function _applyDeactivations(address[] memory validators, uint256 count) internal { for (uint256 i = 0; i < count; i++) { address pool = validators[i]; ValidatorRecord storage validator = _validators[pool]; validator.status = ValidatorStatus.INACTIVE; validator.validatorIndex = type(uint64).max; // Audit #85: clear pending fee recipient on deactivation so a stale value // set by a (potentially compromised) operator before deactivation cannot // silently activate when the pool later rejoins the validator set. validator.pendingFeeRecipient = address(0); emit ValidatorDeactivated(pool); } delete _pendingInactive; }",
+      "why_matters": "This is the direct fix: pendingFeeRecipient is zeroed at the moment of PENDING_INACTIVE -> INACTIVE, closing the leak window that the issue relies on."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "833-845",
+      "excerpt": "function _applyPendingFeeRecipients() internal { uint256 length = _activeValidators.length; for (uint256 i = 0; i < length; i++) { address pool = _activeValidators[i]; ValidatorRecord storage validator = _validators[pool]; if (validator.pendingFeeRecipient != address(0)) { address oldRecipient = validator.feeRecipient; validator.feeRecipient = validator.pendingFeeRecipient; validator.pendingFeeRecipient = address(0); emit FeeRecipientApplied(pool, oldRecipient, validator.feeRecipient); } } }",
+      "why_matters": "The guard pendingFeeRecipient != address(0) is now falsified for a deactivate/rejoin cycle because step-1 value was already cleared. Also now emits FeeRecipientApplied so the moment of activation is observable (addressing the 'no event marks the moment of activation' complaint)."
+    },
+    {
+      "file": "test/unit/staking/ValidatorManagement.t.sol",
+      "lines": "302-343",
+      "excerpt": "function test_audit_pendingFeeRecipient_clearedOnDeactivation() public { ... validatorManager.setFeeRecipient(alicePool, staleRecipient); ... validatorManager.leaveValidatorSet(alicePool); _processEpoch(); ... assertEq(afterDeactivate.pendingFeeRecipient, address(0), \"pendingFeeRecipient must be cleared on deactivation\"); ... validatorManager.joinValidatorSet(alicePool); _processEpoch(); ... assertEq(afterRejoin.feeRecipient, originalRecipient, \"stale recipient must not activate on rejoin\"); assertTrue(afterRejoin.feeRecipient != staleRecipient, \"stale recipient must not leak through deactivate/rejoin cycle\"); }",
+      "why_matters": "Regression test that replays the exploit scenario described in the issue end-to-end and asserts the stale recipient is never adopted; locks in the fix."
+    }
+  ],
+  "counterargument": "One could argue a race could still leak: between setFeeRecipient and the epoch that processes the leave, the validator is still in _activeValidators, so _applyPendingFeeRecipients would run in that same epoch and apply the pending value before _applyDeactivations zeroes it. However, this contradicts the issue's claimed flow: in onNewEpoch, _applyDeactivations runs first (line 545) and sets pendingFeeRecipient = 0 before _applyPendingFeeRecipients runs (line 572), so even within the same epoch, a PENDING_INACTIVE validator's stale recipient never gets applied. Another counterargument is that auto-eviction via evictUnderperformingValidators (called by Reconfiguration before onNewEpoch) marks validators PENDING_INACTIVE and they still stay in _activeValidators at the start of onNewEpoch; yet _applyDeactivations still runs first and clears the pending field, so the same property holds. A final counterargument is that an operator could re-call setFeeRecipient(pool, X) after rejoin to 'fresh-authorize' X — but that is an explicit operator action with a current FeeRecipientUpdated event, not the silent activation the issue describes.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol::test_audit_pendingFeeRecipient_clearedOnDeactivation"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

@@ -1,0 +1,100 @@
+{
+  "issue_number": 273,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Attacker compromises the staker private key (phishing, key leak, malware).",
+      "current_code_ref": "src/staking/StakePool.sol:457-459",
+      "verified": "yes",
+      "current_state_summary": "renewLockUntil is gated by onlyStaker modifier; same access model as before.",
+      "gating_conditions": "onlyStaker, whenNotReconfiguring",
+      "differs_from_original": "unchanged",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Attacker calls renewLockUntil(type(uint64).max - lockedUntil - 1).",
+      "current_code_ref": "src/staking/StakePool.sol:460-463",
+      "verified": "yes",
+      "current_state_summary": "The very first check rejects any durationMicros > MAX_LOCKUP_DURATION (4 * 365 days * 1e6 microseconds = 4 years).",
+      "gating_conditions": "`if (durationMicros > MAX_LOCKUP_DURATION) revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION);`",
+      "differs_from_original": "CHANGED: previous code had no cap (only the TODO(yxia) comment). Current code adds a hard 4-year cap via MAX_LOCKUP_DURATION constant defined at StakePool.sol:35.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "lockedUntil is set to type(uint64).max - 1 (~584,942 years from Unix epoch).",
+      "current_code_ref": "src/staking/StakePool.sol:466-469, 478-479",
+      "verified": "no",
+      "current_state_summary": "Unreachable: any duration large enough to push lockedUntil beyond now + 4 years is rejected at step 2. Each call can at most add 4 years to the existing lockedUntil, and the overflow check at L467 still prevents wraparound.",
+      "gating_conditions": "MAX_LOCKUP_DURATION cap at L461, overflow check at L467, min-lockup floor at L474.",
+      "differs_from_original": "Because durationMicros is capped at ~4 years, lockedUntil can never jump to type(uint64).max-1 in one call. Even repeated calls only move lockedUntil forward in 4-year increments from the current lockedUntil, not from now, so attacker can still slowly accumulate lockup; see counterargument.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "All overflow and minimum-duration checks pass.",
+      "current_code_ref": "src/staking/StakePool.sol:465-476",
+      "verified": "partial",
+      "current_state_summary": "Overflow and min-lockup checks are still there, plus the new max-lockup cap executes before them.",
+      "gating_conditions": "LockupOverflow, LockupDurationTooShort, ExcessiveLockupDuration",
+      "differs_from_original": "Additional max-cap guard added before the existing checks.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "All funds in activeStake are permanently locked. Future addStake() deposits are also trapped.",
+      "current_code_ref": "src/staking/StakePool.sol:405-427",
+      "verified": "partial",
+      "current_state_summary": "addStake still extends lockup to max(current, now + minLockup), but with the per-call 4-year cap the worst attainable permanent lock is only 4 years from the last successful renew (requires repeated staker calls with time passing to grow beyond that).",
+      "gating_conditions": "Same onlyStaker gate; no new floor-reset path, but no catastrophic centuries-long lock either.",
+      "differs_from_original": "Permanent fund destruction claim no longer holds; worst case is bounded by MAX_LOCKUP_DURATION per call.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "_unstake() creates pending buckets inheriting this lockedUntil, so even unstaked funds require now > lockedUntil + unbondingDelay.",
+      "current_code_ref": "src/staking/StakePool.sol:457-482",
+      "verified": "yes",
+      "current_state_summary": "Pending bucket logic is unchanged; however the input lockedUntil it inherits is now bounded by the 4-year cap rather than uint64.max.",
+      "gating_conditions": "Bounded by MAX_LOCKUP_DURATION upstream.",
+      "differs_from_original": "Indirectly mitigated by the upstream cap.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2],
+  "reasoning_chain": "The vulnerability has been fixed by the explicit TODO(yxia) the issue itself flagged. At StakePool.sol:461-463 the function now rejects any `durationMicros > MAX_LOCKUP_DURATION`, where MAX_LOCKUP_DURATION is defined at StakePool.sol:35 as `uint64(4 * 365 days) * 1_000_000` (~4 years in microseconds). The exploit requires passing `type(uint64).max - lockedUntil - 1`, which is orders of magnitude larger than 4 years, so the very first guard in the function reverts with `Errors.ExcessiveLockupDuration`. The attack chain is definitively broken at step 2.",
+  "key_evidence": [
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "34-35",
+      "excerpt": "/// @notice Maximum allowed lockup duration (4 years in microseconds)\n    uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000;",
+      "why_matters": "Defines the hard cap the issue's TODO requested."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "457-482",
+      "excerpt": "function renewLockUntil(uint64 durationMicros) external onlyStaker whenNotReconfiguring {\n        // Max lockup protection\n        if (durationMicros > MAX_LOCKUP_DURATION) {\n            revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION);\n        }\n\n        // Check for overflow\n        uint64 newLockedUntil = lockedUntil + durationMicros;\n        if (newLockedUntil <= lockedUntil) {\n            revert Errors.LockupOverflow(lockedUntil, durationMicros);\n        }\n        ...\n        emit LockupRenewed(address(this), oldLockedUntil, newLockedUntil);\n    }",
+      "why_matters": "The TODO(yxia) has been replaced with an actual max-lockup protection check as the very first statement in the function."
+    },
+    {
+      "file": "src/foundation/Errors.sol",
+      "lines": "95-95",
+      "excerpt": "error ExcessiveLockupDuration(uint64 provided, uint64 maximum);",
+      "why_matters": "Corresponding error type exists and is used by the new guard."
+    }
+  ],
+  "counterargument": "A determined compromised staker could still call renewLockUntil repeatedly (each call adds up to 4 years to lockedUntil, compounding monotonically). Over time, and if the staker waits for `lockedUntil` to approach `now`, each successive renew could extend the lock by 4 more years, so the theoretical reachable lockedUntil still grows unbounded across many transactions. However: (a) each successful call requires the staker remaining compromised and wall-clock time passing, (b) the governance owner can rotate the staker via setStaker() between calls to stop further extension, and (c) the 4-year per-call cap converts the issue from 'one transaction permanently destroys funds for ~584k years' into 'funds have at most 4 years added per transaction', which is qualitatively different and not the critical single-shot fund-destruction the issue describes. The issue text explicitly frames criticality as 'A single unauthorized transaction is sufficient' — that property is no longer true.",
+  "related_existing_tests": [
+    "test/unit/staking/Staking.t.sol::test_RevertWhen_renewLockUntil_overflow",
+    "test/unit/staking/Staking.t.sol::test_RevertWhen_renewLockUntil_resultTooShort",
+    "test/unit/staking/Staking.t.sol::test_RevertWhen_renewLockUntil_notStaker",
+    "test/unit/staking/Staking.t.sol::test_renewLockUntil_extendsLockup",
+    "test/unit/staking/Staking.t.sol::test_renewLockUntil_emitsLockupRenewedEvent",
+    "test/unit/staking/Staking.t.sol::test_renewLockUntil_extendsLockupPeriod",
+    "test/unit/staking/Staking.t.sol::test_renewLockUntil_allowsSmallExtensionWhenFarInFuture"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

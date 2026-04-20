@@ -1,0 +1,90 @@
+{
+  "issue_number": 577,
+  "verdict": "PARTIAL",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls StakingConfig.setMinimumStake(type(uint256).max) — setter has ZERO validation (no min, no max, no >0).",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "partial",
+      "current_state_summary": "setMinimumStake no longer exists. The only governance lever is setForNextEpoch(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros) which stores into _pendingConfig (pending-pattern). It is guarded by requireAllowed(SystemAddresses.GOVERNANCE) and by _validateConfig.",
+      "gating_conditions": "Caller must be SystemAddresses.GOVERNANCE. _validateConfig (lines 181-195) only rejects _minimumStake == 0; there is no upper bound check for minimumStake. Lockup and unbonding have MAX caps (MAX_LOCKUP_DURATION, MAX_UNBONDING_DELAY) but minimumStake has none.",
+      "differs_from_original": "Function name/shape changed: single-parameter setMinimumStake replaced by tri-parameter setForNextEpoch + pending-config pattern (applied at epoch boundary via RECONFIGURATION). Original reference to line 89/95 no longer applies.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "minimumStake storage written immediately (no pending pattern).",
+      "current_code_ref": "src/runtime/StakingConfig.sol:139-146,156-171",
+      "verified": "partial",
+      "current_state_summary": "Writes go to _pendingConfig + hasPendingConfig=true; effective minimumStake is only overwritten when RECONFIGURATION calls applyPendingConfig() at epoch boundary (lines 156-171).",
+      "gating_conditions": "Requires one epoch transition for the new value to take effect; there is no social/timelock delay beyond the epoch boundary and no community veto window.",
+      "differs_from_original": "Original issue claimed 'no pending pattern'. Current code now uses a pending pattern. However this only delays, not prevents, the bricking: once applyPendingConfig runs, the oversized minimumStake is live.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 3,
+      "original": "Staking.createPool reads minStake = IStakingConfig(STAKE_CONFIG).minimumStake() at src/staking/Staking.sol:185.",
+      "current_code_ref": "src/staking/Staking.sol:194-198",
+      "verified": "yes",
+      "current_state_summary": "createPool fetches minStake via IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake() and enforces msg.value >= minStake, reverting InsufficientStakeForPoolCreation otherwise.",
+      "gating_conditions": "Also reverts earlier if IReconfiguration.isTransitionInProgress() or if owner/staker==0; otherwise the check is deterministic.",
+      "differs_from_original": "Line numbers shifted (now 194-198 instead of 185-186) and a transition-in-progress guard precedes it, but the read and the revert condition are identical in semantics.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "msg.value is bounded by native token supply, strictly below type(uint256).max, so every createPool reverts.",
+      "current_code_ref": "src/staking/Staking.sol:196-198",
+      "verified": "yes",
+      "current_state_summary": "msg.value is a uint256 bounded by circulating native supply. If minimumStake is set to type(uint256).max (or any value above total supply), msg.value < minStake is always true and createPool reverts unconditionally.",
+      "gating_conditions": "None — purely arithmetic.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Every createPool invocation reverts; new validator/pool onboarding is permanently blocked until governance reverses.",
+      "current_code_ref": "src/staking/Staking.sol:178-198, src/runtime/StakingConfig.sol:130-147",
+      "verified": "yes",
+      "current_state_summary": "Post-apply, all createPool calls revert. Recovery requires another GOVERNANCE setForNextEpoch + epoch transition to lower minimumStake; existing pools' addStake/unstake are unaffected (createPool is the only reader on the staking path that enforces minimumStake).",
+      "gating_conditions": "DoS persists until GOVERNANCE issues a corrective pending config and RECONFIGURATION applies it at the next epoch boundary.",
+      "differs_from_original": "No material difference on the DoS outcome; only the recovery path now also passes through the pending-config/epoch boundary.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Current StakingConfig.sol no longer exposes a direct setMinimumStake. Governance sets minimumStake via setForNextEpoch (src/runtime/StakingConfig.sol:130-147) which routes through _validateConfig (lines 181-195). _validateConfig rejects only zero — there is no MAX_MINIMUM_STAKE or sanity cap, while lockup and unbonding explicitly cap with MAX_LOCKUP_DURATION and MAX_UNBONDING_DELAY. A value such as type(uint256).max passes validation, is stored in _pendingConfig, and is applied at the next epoch boundary by applyPendingConfig (lines 156-171). After apply, createPool (src/staking/Staking.sol:194-198) reads minimumStake and reverts whenever msg.value < minStake; since msg.value can never exceed total native supply, the revert is guaranteed and new pool creation is bricked. Thus the root DoS vector persists. What changed: (a) setter name/arity, (b) effect is deferred by one epoch rather than immediate, (c) line references. These are partial mitigations (governance still must take two actions — set + wait — and any revert similarly requires an epoch), but the absence of an upper-bound validation on minimumStake — the core issue — is unchanged.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "181-195",
+      "excerpt": "function _validateConfig(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) internal pure { if (_minimumStake == 0) revert Errors.InvalidMinimumStake(); if (_lockupDurationMicros == 0) revert Errors.InvalidLockupDuration(); if (_lockupDurationMicros > MAX_LOCKUP_DURATION) { revert Errors.ExcessiveDuration(...); } if (_unbondingDelayMicros == 0) revert Errors.InvalidUnbondingDelay(); if (_unbondingDelayMicros > MAX_UNBONDING_DELAY) { revert Errors.ExcessiveDuration(...); } }",
+      "why_matters": "This is the only validation gate. It enforces upper caps on the two duration fields but NOT on _minimumStake, so type(uint256).max passes unimpeded."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(...); _pendingConfig = PendingConfig({ minimumStake: _minimumStake, ... }); hasPendingConfig = true; emit PendingStakingConfigSet(); }",
+      "why_matters": "Governance's sole post-genesis entry point for writing minimumStake; it queues any validator-passing value for activation at the next epoch."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "156-171",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) return; minimumStake = _pendingConfig.minimumStake; ... }",
+      "why_matters": "Shows the pending value becomes the live minimumStake at the epoch boundary — i.e. the attack still materializes, just one epoch later."
+    },
+    {
+      "file": "src/staking/Staking.sol",
+      "lines": "194-198",
+      "excerpt": "uint256 minStake = IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake(); if (msg.value < minStake) { revert Errors.InsufficientStakeForPoolCreation(msg.value, minStake); }",
+      "why_matters": "The consumer site that turns a pathologically large minimumStake into an unconditional revert for every new pool creation."
+    }
+  ],
+  "counterargument": "One could argue this is not a real bug because (a) only SystemAddresses.GOVERNANCE can call setForNextEpoch, so it requires a malicious/erroneous governance proposal; (b) the pending-config pattern plus one-epoch delay gives the community time to notice and submit a corrective proposal before activation; and (c) governance can always reset minimumStake to a sane value via another setForNextEpoch, so the brick is reversible, making it a liveness/configuration concern rather than a security flaw. Rebuttal: severity is Medium precisely because the risk model already assumes governance can misbehave or be compromised; the mitigations above are procedural not protocol-enforced. Analogous fields (lockupDurationMicros, unbondingDelayMicros) DO have protocol-level MAX caps, which shows the codebase's own standard is to sanity-bound governance-settable parameters — minimumStake is asymmetrically unguarded. An on-chain MAX_MINIMUM_STAKE (e.g. total native supply or a multiple thereof) would make the class of governance mistake impossible without relying on social recovery.",
+  "related_existing_tests": [
+    "test/unit/runtime/StakingConfig.t.sol (covers setForNextEpoch and applyPendingConfig happy paths and zero-value rejection, but no upper-bound or type(uint256).max tests)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

@@ -1,0 +1,101 @@
+{
+  "issue_number": 398,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance executes a proposal calling StakingConfig.setMinimumStake(huge_value) at src/runtime/StakingConfig.sol:89",
+      "current_code_ref": "src/runtime/StakingConfig.sol:13-201",
+      "verified": "no",
+      "current_state_summary": "There is NO setMinimumStake(uint256) function in StakingConfig.sol. The contract exposes only initialize() (GENESIS-only, one-shot), setForNextEpoch(...) (GOVERNANCE, stages PendingConfig), and applyPendingConfig() (RECONFIGURATION-only, applies at epoch boundary).",
+      "gating_conditions": "Callable surface for GOVERNANCE is limited to setForNextEpoch at line 130-147; this function never writes minimumStake directly — it writes _pendingConfig and sets hasPendingConfig = true.",
+      "differs_from_original": "Immediate setter removed; replaced by pending-config pattern that mirrors the other 7 config contracts the issue author cites.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "minimumStake is written immediately to storage at src/runtime/StakingConfig.sol:95 — no pending stage, no epoch boundary wait",
+      "current_code_ref": "src/runtime/StakingConfig.sol:95, 139-146, 156-171",
+      "verified": "no",
+      "current_state_summary": "Line 95 'minimumStake = _minimumStake' exists ONLY inside initialize() (GENESIS one-shot, gated by `if (_initialized) revert AlreadyInitialized()` at line 92). Post-genesis updates flow through setForNextEpoch (line 139-146: writes _pendingConfig, not minimumStake) and only applyPendingConfig (line 161, guarded by requireAllowed(RECONFIGURATION) at line 157) commits the change to the live minimumStake slot.",
+      "gating_conditions": "requireAllowed(SystemAddresses.GENESIS) at line 91 + _initialized guard at line 92 for immediate write; requireAllowed(RECONFIGURATION) at line 157 for applyPendingConfig.",
+      "differs_from_original": "The 'immediate storage write' path is no longer reachable by GOVERNANCE.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "A user calls Staking.createStakePool() at src/staking/Staking.sol:183 in the same epoch",
+      "current_code_ref": "src/staking/Staking.sol:176-198",
+      "verified": "partial",
+      "current_state_summary": "createStakePool still exists and still reads IStakingConfig.minimumStake() at line 195. But since minimumStake cannot be changed mid-epoch by GOVERNANCE (it is only updatable via applyPendingConfig at epoch boundary), the read returns the pre-existing epoch value.",
+      "gating_conditions": "No mid-epoch mutation possible upstream; createStakePool is itself blocked during transition by `isTransitionInProgress()` guard at line 186-188.",
+      "differs_from_original": "Behavior unchanged at this layer, but the upstream precondition (mid-epoch minimumStake mutation) is no longer achievable.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Staking reads IStakingConfig.minimumStake() at src/staking/Staking.sol:185, gets the new huge value",
+      "current_code_ref": "src/staking/Staking.sol:195",
+      "verified": "no",
+      "current_state_summary": "The read returns the currently-committed minimumStake; since GOVERNANCE cannot commit a new value mid-epoch (only stage it via setForNextEpoch), no 'new huge value' can appear until RECONFIGURATION invokes applyPendingConfig at the epoch boundary.",
+      "gating_conditions": "Value changes only via applyPendingConfig (line 156-171), which is RECONFIGURATION-gated.",
+      "differs_from_original": "Cannot observe a mid-epoch change.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "The user's msg.value < new minimumStake, so the call reverts at src/staking/Staking.sol:186-187 with InsufficientStakeForPoolCreation",
+      "current_code_ref": "src/staking/Staking.sol:196-198",
+      "verified": "partial",
+      "current_state_summary": "The revert branch exists (line 196-198) but only triggers against the stable, epoch-boundary-committed minimumStake, not against an attacker-triggered mid-epoch spike.",
+      "gating_conditions": "N/A — no mid-epoch spike possible.",
+      "differs_from_original": "Revert no longer constitutes a 'mid-epoch DoS' since the threshold cannot be moved mid-epoch.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "Unlike all other 7 config contracts, StakingConfig has no pending pattern — the TODO at line 13 acknowledges this gap",
+      "current_code_ref": "src/runtime/StakingConfig.sol:10-12, 28-35, 58-62, 125-147, 156-171",
+      "verified": "no",
+      "current_state_summary": "The alleged TODO is gone. The NatSpec at line 10-12 now explicitly states: 'Uses pending config pattern: changes are queued and applied at epoch boundaries.' A PendingConfig struct (line 29-35), _pendingConfig storage (line 59), hasPendingConfig flag (line 62), setForNextEpoch (line 130-147), and applyPendingConfig (line 156-171) all implement the pending pattern. StakingConfig is no longer the 'sole exception'.",
+      "gating_conditions": "N/A",
+      "differs_from_original": "Core premise of the finding is inverted by the current code.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 4, 5, 6],
+  "reasoning_chain": "The vulnerability is fully fixed. Step 1 is broken because no setMinimumStake(uint256) function exists in StakingConfig.sol — the only GOVERNANCE-callable mutator is setForNextEpoch (src/runtime/StakingConfig.sol:130-147), which writes the staged PendingConfig struct at lines 139-146 and sets hasPendingConfig = true, but never touches the live minimumStake slot. Step 2 is broken by two guards: the immediate-write path at line 95 is inside initialize() and gated by requireAllowed(GENESIS) (line 91) plus `if (_initialized) revert AlreadyInitialized()` (line 92); the live-slot update at line 161 is inside applyPendingConfig, gated by requireAllowed(SystemAddresses.RECONFIGURATION) (line 157), so GOVERNANCE cannot cause a mid-epoch write. Steps 4-5 collapse because without a mid-epoch mutation, the createStakePool read at src/staking/Staking.sol:195 returns the stable epoch value. Step 6's core premise — that StakingConfig lacks the pending pattern — is explicitly falsified by the NatSpec 'Uses pending config pattern' at line 12 and the presence of PendingConfig/hasPendingConfig/setForNextEpoch/applyPendingConfig (lines 29-35, 62, 130-147, 156-171).",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(...); _pendingConfig = PendingConfig({ minimumStake: _minimumStake, ... }); hasPendingConfig = true; emit PendingStakingConfigSet(); }",
+      "why_matters": "This is the only GOVERNANCE-callable mutator. It stages into _pendingConfig, never writes live minimumStake — exactly the pending pattern the issue claims is missing."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "156-171",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) return; minimumStake = _pendingConfig.minimumStake; ... hasPendingConfig = false; delete _pendingConfig; emit StakingConfigUpdated(); emit PendingStakingConfigCleared(); }",
+      "why_matters": "Only path that writes the live minimumStake post-genesis; RECONFIGURATION-gated, invoked at epoch boundary — matches the invariant the issue author claims is broken."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "10-12",
+      "excerpt": "/// @dev Initialized at genesis, updatable via governance (GOVERNANCE).\n///      Uses pending config pattern: changes are queued and applied at epoch boundaries.",
+      "why_matters": "Documents the very pattern the issue claims is absent; directly contradicts the finding's premise."
+    },
+    {
+      "file": "src/staking/Staking.sol",
+      "lines": "186-198",
+      "excerpt": "if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) { revert Errors.ReconfigurationInProgress(); } ... uint256 minStake = IStakingConfig(SystemAddresses.STAKE_CONFIG).minimumStake(); if (msg.value < minStake) { revert Errors.InsufficientStakeForPoolCreation(msg.value, minStake); }",
+      "why_matters": "Downstream read is unchanged, but it observes only the epoch-boundary-committed value; the transition-in-progress guard further ensures no observation during apply."
+    }
+  ],
+  "counterargument": "A skeptic could argue: even with the pending pattern, governance can still stage a huge minimumStake via setForNextEpoch, and once RECONFIGURATION calls applyPendingConfig at the next epoch boundary the value becomes effective, potentially DoS-ing createStakePool thereafter. However, this is no longer the 'mid-epoch, in-flight' scenario the issue describes — it is a deliberate governance policy choice taking effect atomically at an epoch boundary, which is exactly the invariant the issue claims was violated. Additionally, setForNextEpoch calls _validateConfig (line 137) which enforces _minimumStake != 0 but has NO upper bound, so an abusive 'huge value' proposal is still possible post-epoch; but that is governance trust, not a mid-epoch bypass. Finally, a tiny residual concern: setForNextEpoch overwrites any previously staged PendingConfig without a cooldown, so governance could keep re-staging values — still bounded by epoch boundary semantics and thus out of scope for this specific finding.",
+  "related_existing_tests": [
+    "test/unit/runtime/StakingConfig.t.sol::setForNextEpoch (lines 96-158)",
+    "test/unit/runtime/StakingConfig.t.sol::applyPendingConfig (lines 173-221)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

@@ -1,0 +1,92 @@
+{
+  "issue_number": 570,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Pool voter calls Governance.createProposal(stakePool, targets, datas, uri) at Governance.sol:253 — sets expirationTime, executionHash; isResolved=false, resolutionTime=0.",
+      "current_code_ref": "src/governance/Governance.sol:276-337",
+      "verified": "yes",
+      "current_state_summary": "createProposal still sets expirationTime=now+votingDuration, stores executionHash=keccak256(abi.encode(targets,datas)), and initializes isResolved=false/resolutionTime=0 (lines 322-334). Behavior matches description.",
+      "gating_conditions": "Caller must be pool's voter (_requireVoter line 297); pool must be valid; votingPower >= requiredProposerStake; targets.length in [1, MAX_PROPOSAL_TARGETS].",
+      "differs_from_original": "Line reference shifted (was 253, now 276-337) but semantics identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Voters call vote()/_voteInternal at Governance.sol:352 — accumulates p.yesVotes/p.noVotes; lastVoteTime[id] written. _voteInternal requires now_ < p.expirationTime.",
+      "current_code_ref": "src/governance/Governance.sol:381-440",
+      "verified": "yes",
+      "current_state_summary": "_voteInternal reverts if now_>=p.expirationTime (line 396-398); accumulates yesVotes/noVotes (lines 429-433); records lastVoteTime[proposalId] (line 437). Matches description.",
+      "gating_conditions": "Proposal exists, voting window open, not resolved, pool valid, caller is voter.",
+      "differs_from_original": "Only line numbers shifted; logic unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Time advances past expirationTime. NO ONE calls resolve(); p.isResolved stays false, p.resolutionTime stays 0, ProposalResolved event never fires.",
+      "current_code_ref": "src/governance/Governance.sol:443-479",
+      "verified": "yes",
+      "current_state_summary": "resolve() remains a permissionless but optional function. If never called, isResolved=false and resolutionTime=0 persist. This precondition for the attack is still reachable.",
+      "gating_conditions": "None (skipping resolve is a no-op).",
+      "differs_from_original": "No change.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Executor calls Governance.execute(id, targets, datas). getProposalState(id) enters the expired-unresolved branch (now_>=expirationTime; yesVotes>noVotes && yes+no>=minVoteThreshold) and returns SUCCEEDED.",
+      "current_code_ref": "src/governance/Governance.sol:482-514",
+      "verified": "no",
+      "current_state_summary": "execute() now has an EXPLICIT resolution gate BEFORE the state check: lines 505-508 `if (!_proposals[proposalId].isResolved) { revert Errors.ProposalNotResolved(proposalId); }`. Only AFTER this check does it compute getProposalState(). The expired-unresolved SUCCEEDED branch at getProposalState lines 171-174 still exists but is unreachable from execute() because the !isResolved revert fires first.",
+      "gating_conditions": "execute() requires: onlyExecutor (line 486), arrays validated (488-493), proposal exists (496-498), not already executed (501-503), ISRESOLVED TRUE (506-508), state==SUCCEEDED (511-514), hash matches (517-521).",
+      "differs_from_original": "CRITICAL DIFFERENCE: a new `if (!_proposals[proposalId].isResolved) revert ProposalNotResolved(...)` guard was added between the 'already executed' check and the 'succeeded' check. Introduced by commit 7af7ed9 (`fix: Governance and NativeOracle security patches (PR-B) (#58)`), Errors.sol:316 adds the error selector.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "execute() proceeds, sets executed[id]=true, runs the call loop, emits ProposalExecuted. isResolved still false; resolutionTime still 0; ProposalResolved never emitted.",
+      "current_code_ref": "src/governance/Governance.sol:524-535",
+      "verified": "no",
+      "current_state_summary": "Unreachable under the attack precondition (isResolved=false). The code path that would set executed[id]=true and emit ProposalExecuted is guarded by the new revert at line 507, so the inconsistent state (executed=true while isResolved=false/resolutionTime=0) can no longer occur.",
+      "gating_conditions": "Requires passing step 4's !isResolved check, which fails under the exploit preconditions.",
+      "differs_from_original": "Reachability eliminated — the inconsistent post-state described in the report can no longer be produced through execute().",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [4, 5],
+  "reasoning_chain": "The issue hinges on execute() relying solely on getProposalState()==SUCCEEDED, which can return SUCCEEDED via the expired-unresolved branch (Governance.sol:171-174) without requiring p.isResolved==true. The current code (post-commit 7af7ed9, PR #58) adds a dedicated pre-check at Governance.sol:505-508 — `if (!_proposals[proposalId].isResolved) revert Errors.ProposalNotResolved(proposalId)` — placed BEFORE the state comparison. The new error selector is declared at foundation/Errors.sol:316. Consequently, any attempt to execute a proposal where resolve() was skipped now reverts with ProposalNotResolved, so: (a) executed[id] cannot be flipped to true, (b) the ProposalExecuted event cannot be emitted, (c) the claimed 'executed=true while isResolved=false' state is no longer reachable, (d) off-chain consumers that rely on ProposalResolved as the canonical signal are preserved — every execution is now preceded by a resolve() call which emits ProposalResolved. Commit history (`git log --oneline -- src/governance/Governance.sol`) shows 7af7ed9 with message 'Enforced check in ensuring proposals are strictly resolved before execution', matching the exact mitigation expected by the report.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "505-508",
+      "excerpt": "// Verify proposal is explicitly resolved\n        if (!_proposals[proposalId].isResolved) {\n            revert Errors.ProposalNotResolved(proposalId);\n        }",
+      "why_matters": "This is the exact mitigation that blocks the expired-unresolved SUCCEEDED bypass. Placed before the getProposalState() check at line 511, it guarantees execute() can only proceed on a proposal whose isResolved field is true, i.e., one that went through resolve() and thereby emitted ProposalResolved and wrote resolutionTime."
+    },
+    {
+      "file": "src/foundation/Errors.sol",
+      "lines": "316-316",
+      "excerpt": "error ProposalNotResolved(uint64 proposalId);",
+      "why_matters": "Confirms the new error selector underpinning the guard — indicates this was a deliberate, dedicated fix rather than an incidental side-effect."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "165-174",
+      "excerpt": "uint64 now_ = _now();\n        if (now_ < p.expirationTime) {\n            return ProposalState.PENDING;\n        }\n\n        // Voting ended but not resolved - determine outcome\n        if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) {\n            return ProposalState.SUCCEEDED;\n        }\n        return ProposalState.FAILED;",
+      "why_matters": "Demonstrates that getProposalState() STILL has the expired-unresolved SUCCEEDED branch — so the bypass is not removed at the state-machine level; it is blocked by a dedicated guard in execute(). This is important for evaluating whether the fix is complete: other call-sites of getProposalState() could in principle still observe SUCCEEDED for unresolved proposals, but only execute() mutates state."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "442-479",
+      "excerpt": "function resolve(uint64 proposalId) external { ... p.isResolved = true; p.resolutionTime = now_; ... emit ProposalResolved(proposalId, state); }",
+      "why_matters": "resolve() is the only writer of isResolved=true and the only emitter of ProposalResolved. Because execute() now requires isResolved==true, it is the only path to reach execution — guaranteeing ProposalResolved is emitted and resolutionTime!=0 prior to ProposalExecuted, restoring the invariant claimed in the issue impact."
+    }
+  ],
+  "counterargument": "One could argue the bug still partially exists because getProposalState() (Governance.sol:171-174) itself still reports SUCCEEDED for expired-unresolved proposals — so external contracts or off-chain consumers that call getProposalState() directly may still receive SUCCEEDED before resolve() runs, which could cause stale/premature UI signals. However, the issue's stated impact is specifically tied to execute() mutating the proposal to EXECUTED without resolve() having fired, producing the contradictory (executed=true, isResolved=false, resolutionTime=0) state and skipping ProposalResolved. That mutation path is now closed at Governance.sol:505-508, so the concrete state-corruption and event-ordering consequences described in the report cannot materialize. The residual view-layer quirk of getProposalState() reporting SUCCEEDED before resolve() is a distinct, arguably intentional preview behavior (it tells callers the proposal will succeed if resolve() is called) and is not the vulnerability described here.",
+  "related_existing_tests": [
+    "test/unit/governance/Governance.t.sol::test_RevertWhen_ExecuteProposalNotSucceeded (calls resolve() before execute(), so it doesn't exercise the new !isResolved guard)",
+    "test/unit/governance/Governance.t.sol::test_Execute (happy path; goes through resolve() then execute())",
+    "No dedicated regression test was added in commit 7af7ed9 for the ProposalNotResolved revert path — a gap worth flagging, though the fix itself is straightforward."
+  ],
+  "fp_or_fixed_hint": "fixed"
+}
