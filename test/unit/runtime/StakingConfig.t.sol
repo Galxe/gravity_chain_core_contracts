@@ -39,7 +39,7 @@ contract StakingConfigTest is Test {
 
     function test_Initialize() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, false);
 
         assertEq(config.minimumStake(), MIN_STAKE);
         assertEq(config.lockupDurationMicros(), LOCKUP_DURATION);
@@ -50,35 +50,35 @@ contract StakingConfigTest is Test {
     function test_RevertWhen_Initialize_ZeroMinimumStake() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidMinimumStake.selector);
-        config.initialize(0, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(0, LOCKUP_DURATION, UNBONDING_DELAY, false);
     }
 
     function test_RevertWhen_Initialize_ZeroLockupDuration() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidLockupDuration.selector);
-        config.initialize(MIN_STAKE, 0, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, 0, UNBONDING_DELAY, false);
     }
 
     function test_RevertWhen_Initialize_ZeroUnbondingDelay() public {
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, 0);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, 0, false);
     }
 
     function test_RevertWhen_Initialize_AlreadyInitialized() public {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, false);
 
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(Errors.AlreadyInitialized.selector);
-        config.initialize(MIN_STAKE * 2, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE * 2, LOCKUP_DURATION, UNBONDING_DELAY, false);
     }
 
     function test_RevertWhen_Initialize_NotGenesis() public {
         address notGenesis = address(0x1234);
         vm.prank(notGenesis);
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, notGenesis, SystemAddresses.GENESIS));
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, false);
     }
 
     // ========================================================================
@@ -286,7 +286,7 @@ contract StakingConfigTest is Test {
         vm.assume(unbondingDelay > 0 && unbondingDelay <= config.MAX_UNBONDING_DELAY());
 
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(minStake, lockupDuration, unbondingDelay);
+        config.initialize(minStake, lockupDuration, unbondingDelay, false);
 
         assertEq(config.minimumStake(), minStake);
         assertEq(config.lockupDurationMicros(), lockupDuration);
@@ -319,7 +319,7 @@ contract StakingConfigTest is Test {
         uint64 excessiveLockup = maxLockup + 1;
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveLockup, maxLockup));
-        config.initialize(MIN_STAKE, excessiveLockup, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, excessiveLockup, UNBONDING_DELAY, false);
     }
 
     function test_RevertWhen_Initialize_ExcessiveUnbondingDelay() public {
@@ -327,7 +327,7 @@ contract StakingConfigTest is Test {
         uint64 excessiveUnbonding = maxUnbonding + 1;
         vm.prank(SystemAddresses.GENESIS);
         vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessiveUnbonding, maxUnbonding));
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, excessiveUnbonding);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, excessiveUnbonding, false);
     }
 
     // ========================================================================
@@ -336,6 +336,6 @@ contract StakingConfigTest is Test {
 
     function _initializeConfig() internal {
         vm.prank(SystemAddresses.GENESIS);
-        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        config.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, false);
     }
 }

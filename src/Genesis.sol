@@ -51,6 +51,7 @@ contract Genesis {
         uint256 minimumStake;
         uint64 lockupDurationMicros;
         uint64 unbondingDelayMicros;
+        bool allowPoolCreation;
     }
 
     struct GovernanceConfigParams {
@@ -196,7 +197,8 @@ contract Genesis {
             .initialize(
                 params.stakingConfig.minimumStake,
                 params.stakingConfig.lockupDurationMicros,
-                params.stakingConfig.unbondingDelayMicros
+                params.stakingConfig.unbondingDelayMicros,
+                params.stakingConfig.allowPoolCreation
             );
 
         EpochConfig(SystemAddresses.EPOCH_CONFIG).initialize(params.epochIntervalMicros);

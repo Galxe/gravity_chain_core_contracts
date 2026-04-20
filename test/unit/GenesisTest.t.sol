@@ -74,6 +74,7 @@ contract GenesisTest is Test {
         params.stakingConfig.minimumStake = 10 ether;
         params.stakingConfig.lockupDurationMicros = 14 days * 1_000_000;
         params.stakingConfig.unbondingDelayMicros = 7 days * 1_000_000;
+        params.stakingConfig.allowPoolCreation = false;
 
         // Epoch Config
         params.epochIntervalMicros = 1 hours * 1_000_000;

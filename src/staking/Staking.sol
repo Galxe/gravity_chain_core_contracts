@@ -187,6 +187,15 @@ contract Staking is IStaking {
             revert Errors.ReconfigurationInProgress();
         }
 
+        // Gate permissionless pool creation; Genesis is always allowed so it can
+        // bootstrap the founding validator pools even while the gate is closed.
+        if (
+            msg.sender != SystemAddresses.GENESIS
+                && !IStakingConfig(SystemAddresses.STAKE_CONFIG).allowPoolCreation()
+        ) {
+            revert Errors.PoolCreationDisabled();
+        }
+
         // Validate critical addresses are not zero
         if (owner == address(0)) revert Errors.ZeroAddress();
         if (staker == address(0)) revert Errors.ZeroAddress();

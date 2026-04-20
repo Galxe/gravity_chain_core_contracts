@@ -61,6 +61,21 @@ contract StakingConfig {
     /// @notice Whether a pending configuration exists
     bool public hasPendingConfig;
 
+    /// @notice Whether permissionless pool creation via Staking.createPool is enabled.
+    /// @dev When false, only GENESIS may create pools (see Staking.createPool).
+    ///      Toggled via governance through setAllowPoolCreationForNextEpoch /
+    ///      applyPendingConfig. Packs with `hasPendingConfig` to preserve the
+    ///      storage layout of deployed contracts (append-only).
+    bool public allowPoolCreation;
+
+    /// @notice Pending value for `allowPoolCreation`, applied at the next epoch boundary.
+    bool private _pendingAllowPoolCreation;
+
+    /// @notice Whether a pending `allowPoolCreation` change exists.
+    /// @dev Independent from `hasPendingConfig` so the two governance paths
+    ///      (main staking config vs. pool-creation gate) don't interfere.
+    bool private _hasPendingAllowPoolCreation;
+
     // ========================================================================
     // EVENTS
     // ========================================================================
@@ -74,6 +89,12 @@ contract StakingConfig {
     /// @notice Emitted when pending configuration is cleared (applied or removed)
     event PendingStakingConfigCleared();
 
+    /// @notice Emitted when governance queues a change to `allowPoolCreation`
+    event PendingAllowPoolCreationSet(bool value);
+
+    /// @notice Emitted when `allowPoolCreation` is applied at an epoch boundary
+    event AllowPoolCreationUpdated(bool value);
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -83,10 +104,12 @@ contract StakingConfig {
     /// @param _minimumStake Minimum stake for governance participation (must be > 0)
     /// @param _lockupDurationMicros Lockup duration in microseconds (must be > 0)
     /// @param _unbondingDelayMicros Unbonding delay in microseconds (must be > 0)
+    /// @param _allowPoolCreation Whether permissionless Staking.createPool is enabled
     function initialize(
         uint256 _minimumStake,
         uint64 _lockupDurationMicros,
-        uint64 _unbondingDelayMicros
+        uint64 _unbondingDelayMicros,
+        bool _allowPoolCreation
     ) external {
         requireAllowed(SystemAddresses.GENESIS);
         if (_initialized) revert Errors.AlreadyInitialized();
@@ -95,6 +118,7 @@ contract StakingConfig {
         minimumStake = _minimumStake;
         lockupDurationMicros = _lockupDurationMicros;
         unbondingDelayMicros = _unbondingDelayMicros;
+        allowPoolCreation = _allowPoolCreation;
         _initialized = true;
 
         emit StakingConfigUpdated();
@@ -146,28 +170,53 @@ contract StakingConfig {
         emit PendingStakingConfigSet();
     }
 
+    /// @notice Queue a change to `allowPoolCreation` for the next epoch
+    /// @dev Only callable by GOVERNANCE. Applied at the next epoch boundary
+    ///      by applyPendingConfig(). Independent from the atomic `setForNextEpoch`
+    ///      pathway so flipping this gate does not require re-specifying other fields.
+    /// @param _allowPoolCreation New value to apply next epoch
+    function setAllowPoolCreationForNextEpoch(
+        bool _allowPoolCreation
+    ) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _requireInitialized();
+
+        _pendingAllowPoolCreation = _allowPoolCreation;
+        _hasPendingAllowPoolCreation = true;
+        emit PendingAllowPoolCreationSet(_allowPoolCreation);
+    }
+
     // ========================================================================
     // EPOCH TRANSITION (RECONFIGURATION only)
     // ========================================================================
 
     /// @notice Apply pending configuration at epoch boundary
     /// @dev Only callable by RECONFIGURATION during epoch transition.
-    ///      If no pending config exists, this is a no-op.
+    ///      Applies the atomic staking-config pending block AND the independent
+    ///      `allowPoolCreation` pending flip, if either is set. No-op if neither is set.
     function applyPendingConfig() external {
         requireAllowed(SystemAddresses.RECONFIGURATION);
         _requireInitialized();
-        if (!hasPendingConfig) return;
 
-        minimumStake = _pendingConfig.minimumStake;
-        lockupDurationMicros = _pendingConfig.lockupDurationMicros;
-        unbondingDelayMicros = _pendingConfig.unbondingDelayMicros;
-        hasPendingConfig = false;
+        if (hasPendingConfig) {
+            minimumStake = _pendingConfig.minimumStake;
+            lockupDurationMicros = _pendingConfig.lockupDurationMicros;
+            unbondingDelayMicros = _pendingConfig.unbondingDelayMicros;
+            hasPendingConfig = false;
 
-        // Clear pending config storage
-        delete _pendingConfig;
+            // Clear pending config storage
+            delete _pendingConfig;
 
-        emit StakingConfigUpdated();
-        emit PendingStakingConfigCleared();
+            emit StakingConfigUpdated();
+            emit PendingStakingConfigCleared();
+        }
+
+        if (_hasPendingAllowPoolCreation) {
+            allowPoolCreation = _pendingAllowPoolCreation;
+            _hasPendingAllowPoolCreation = false;
+            _pendingAllowPoolCreation = false;
+            emit AllowPoolCreationUpdated(allowPoolCreation);
+        }
     }
 
     // ========================================================================

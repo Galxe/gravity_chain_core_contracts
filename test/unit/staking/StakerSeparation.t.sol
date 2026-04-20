@@ -66,7 +66,7 @@ contract StakerSeparationTest is Test {
         vm.etch(SystemAddresses.RECONFIGURATION, address(new MockReconfiguration2()).code);
 
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, true);
 
         vm.prank(SystemAddresses.BLOCK);
         timestamp.updateGlobalTime(ownerAddr, INITIAL_TIMESTAMP);

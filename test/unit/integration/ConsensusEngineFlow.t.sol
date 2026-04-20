@@ -142,7 +142,7 @@ contract ConsensusEngineFlowTest is Test {
 
         // Initialize configs
         vm.prank(SystemAddresses.GENESIS);
-        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY);
+        stakingConfig.initialize(MIN_STAKE, LOCKUP_DURATION, UNBONDING_DELAY, true);
 
         vm.prank(SystemAddresses.GENESIS);
         validatorConfig.initialize(

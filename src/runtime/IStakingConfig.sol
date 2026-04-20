@@ -14,5 +14,8 @@ interface IStakingConfig {
 
     /// @notice Unbonding delay in microseconds (additional wait after lockedUntil before withdrawal)
     function unbondingDelayMicros() external view returns (uint64);
+
+    /// @notice Whether permissionless pool creation via Staking.createPool is enabled
+    function allowPoolCreation() external view returns (bool);
 }
 

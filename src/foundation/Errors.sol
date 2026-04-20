@@ -154,6 +154,9 @@ library Errors {
     /// @notice Validator set changes are disabled
     error ValidatorSetChangesDisabled();
 
+    /// @notice Permissionless pool creation is currently disabled
+    error PoolCreationDisabled();
+
     /// @notice Maximum validator set size reached
     /// @param maxSize The maximum allowed validator set size
     error MaxValidatorSetSizeReached(uint256 maxSize);

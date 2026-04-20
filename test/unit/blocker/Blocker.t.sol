@@ -181,7 +181,8 @@ contract BlockerTest is Test {
             .initialize(
                 1 ether, // minimumStake
                 30 days * 1_000_000, // lockupDurationMicros
-                7 days * 1_000_000 // unbondingDelayMicros
+                7 days * 1_000_000, // unbondingDelayMicros
+                true // allowPoolCreation
             );
 
         // Setup mock validators

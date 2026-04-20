@@ -115,6 +115,9 @@ pub struct StakingConfigParams {
 
     #[serde(rename = "unbondingDelayMicros")]
     pub unbonding_delay_micros: u64,
+
+    #[serde(rename = "allowPoolCreation", default)]
+    pub allow_pool_creation: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -260,6 +263,7 @@ sol! {
         uint256 minimumStake;
         uint64 lockupDurationMicros;
         uint64 unbondingDelayMicros;
+        bool allowPoolCreation;
     }
 
     struct SolGovernanceConfigParams {
@@ -396,6 +400,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         minimumStake: parse_u256(&config.staking_config.minimum_stake),
         lockupDurationMicros: config.staking_config.lockup_duration_micros,
         unbondingDelayMicros: config.staking_config.unbonding_delay_micros,
+        allowPoolCreation: config.staking_config.allow_pool_creation,
     };
 
     // Convert GovernanceConfig

@@ -500,23 +500,32 @@ Create a new StakePool with all parameters specified explicitly.
 
 **Behavior:**
 
-1. Revert if `msg.value < minimumStake` (prevents spam)
-2. Increment `poolNonce`
-3. Compute deterministic address via CREATE2 (salt = `poolNonce`)
-4. Deploy new StakePool contract with all parameters and initial stake (`msg.value`)
-5. Pool constructor validates `lockedUntil >= now + minLockupDuration`
-6. Add to `_allPools` array
-7. Set `_isPool[pool] = true` (registers as valid pool)
-8. Emit `PoolCreated` event
-9. Return pool address
+1. Revert if a reconfiguration transition is in progress
+2. Revert with `PoolCreationDisabled` if `StakingConfig.allowPoolCreation()` is
+   `false` and the caller is not the GENESIS system address
+3. Revert if `msg.value < minimumStake` (prevents spam)
+4. Increment `poolNonce`
+5. Compute deterministic address via CREATE2 (salt = `poolNonce`)
+6. Deploy new StakePool contract with all parameters and initial stake (`msg.value`)
+7. Pool constructor validates `lockedUntil >= now + minLockupDuration`
+8. Add to `_allPools` array
+9. Set `_isPool[pool] = true` (registers as valid pool)
+10. Emit `PoolCreated` event
+11. Return pool address
 
 **Notes:**
 
-- Anyone can call this function (no restriction on caller)
-- Anyone can create multiple pools (no limit per address)
+- Access: anyone may call when `StakingConfig.allowPoolCreation` is `true`;
+  GENESIS can always call (bypass). When the flag is `false`, only GENESIS
+  (i.e., during genesis bootstrap) may create pools.
+- Anyone can create multiple pools (no limit per address) once the gate is open
 - All parameters must be explicitly provided (no defaults)
 - `lockedUntil` must be valid: `>= now + minLockupDuration`
 - Initial stake (`msg.value`) becomes the pool's activeStake immediately
+- The `allowPoolCreation` flag is flipped by governance via the dedicated
+  `StakingConfig.setAllowPoolCreationForNextEpoch(bool)` setter (independent
+  from the atomic `setForNextEpoch` pathway) and takes effect at the next epoch
+  boundary (`applyPendingConfig`).
 
 #### Pool Status Query Functions
 
@@ -945,7 +954,7 @@ Lockup parameters are configured in `StakingConfig`:
 
 | Contract  | Function                                        | Allowed Callers         |
 | --------- | ----------------------------------------------- | ----------------------- |
-| Staking   | createPool                                      | Anyone (with min stake) |
+| Staking   | createPool                                      | GENESIS always; anyone (with min stake) when `StakingConfig.allowPoolCreation = true` |
 | Staking   | renewPoolLockup                                 | VALIDATOR_MANAGER only  |
 | Staking   | view functions                                  | Anyone                  |
 | StakePool | addStake/unstake/withdrawAvailable/unstakeAndWithdraw/renewLockUntil/withdrawRewards | Staker only (blocked during reconfiguration for mutating funcs) |
@@ -977,6 +986,7 @@ The following errors from `Errors.sol` are used:
 | Error                                                              | When                                   |
 | ------------------------------------------------------------------ | -------------------------------------- |
 | `InsufficientStakeForPoolCreation(uint256 sent, uint256 required)` | msg.value < minimumStake on createPool |
+| `PoolCreationDisabled()`                                           | createPool called by non-GENESIS while `allowPoolCreation = false` |
 | `PoolIndexOutOfBounds(uint256 index, uint256 total)`               | Querying pool at invalid index         |
 | `InvalidPool(address pool)`                                        | Pool status query on non-factory pool  |
 
