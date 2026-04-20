@@ -21,6 +21,7 @@ import { Staking } from "../../src/staking/Staking.sol";
 import { ValidatorManagement } from "../../src/staking/ValidatorManagement.sol";
 import { Reconfiguration } from "../../src/blocker/Reconfiguration.sol";
 import { Blocker } from "../../src/blocker/Blocker.sol";
+import { Governance } from "../../src/governance/Governance.sol";
 import { NativeOracle } from "../../src/oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "../../src/oracle/jwk/JWKManager.sol";
 import { Timestamp } from "../../src/runtime/Timestamp.sol";
@@ -45,6 +46,7 @@ contract GenesisTest is Test {
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new ValidatorManagement()).code);
         vm.etch(SystemAddresses.RECONFIGURATION, address(new Reconfiguration()).code);
         vm.etch(SystemAddresses.BLOCK, address(new Blocker()).code);
+        vm.etch(SystemAddresses.GOVERNANCE, address(new Governance(address(1))).code);
         vm.etch(SystemAddresses.NATIVE_ORACLE, address(new NativeOracle()).code);
         vm.etch(SystemAddresses.JWK_MANAGER, address(new JWKManager()).code);
         vm.etch(SystemAddresses.TIMESTAMP, address(new Timestamp()).code);
@@ -82,6 +84,9 @@ contract GenesisTest is Test {
         params.governanceConfig.minVotingThreshold = 1000 ether;
         params.governanceConfig.requiredProposerStake = 100 ether;
         params.governanceConfig.votingDurationMicros = 2 days * 1_000_000;
+
+        // Governance owner (for executor management)
+        params.governanceOwner = makeAddr("governanceOwner");
 
         // Version Config
         params.majorVersion = 1;
@@ -169,5 +174,94 @@ contract GenesisTest is Test {
         // We can't easily guess the pool address because of CREATE2 or nonce
         // But we know it should have 200 ether voting power
         assertEq(ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getTotalVotingPower(), 200 ether);
+
+        // Verify Governance owner was set by Genesis
+        assertTrue(Governance(SystemAddresses.GOVERNANCE).isInitialized());
+        assertEq(Governance(SystemAddresses.GOVERNANCE).owner(), makeAddr("governanceOwner"));
+    }
+
+    function test_RevertWhen_GovernanceInitializeCalledTwice() public {
+        // First initialization via Genesis
+        _runGenesis(makeAddr("firstOwner"));
+
+        // Second call should revert — Genesis is now the only caller that can reach
+        // Governance.initialize, but the _initialized guard blocks re-entry.
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.AlreadyInitialized.selector);
+        Governance(SystemAddresses.GOVERNANCE).initialize(makeAddr("secondOwner"));
+    }
+
+    function test_RevertWhen_GovernanceInitializeCalledByNonGenesis() public {
+        address notGenesis = makeAddr("randomCaller");
+        vm.prank(notGenesis);
+        // SystemAccessControl uses NotAllowed(expected, actual)
+        vm.expectRevert();
+        Governance(SystemAddresses.GOVERNANCE).initialize(makeAddr("owner"));
+    }
+
+    function test_RevertWhen_GovernanceInitializeWithZeroOwner() public {
+        vm.prank(SystemAddresses.GENESIS);
+        vm.expectRevert(Errors.ZeroAddress.selector);
+        Governance(SystemAddresses.GOVERNANCE).initialize(address(0));
+    }
+
+    // Helper to run a minimal Genesis flow with a configurable governance owner.
+    function _runGenesis(
+        address governanceOwner
+    ) internal {
+        Genesis.GenesisInitParams memory params;
+        params.validatorConfig.minimumBond = 100 ether;
+        params.validatorConfig.maximumBond = 10000 ether;
+        params.validatorConfig.unbondingDelayMicros = 7 days * 1_000_000;
+        params.validatorConfig.allowValidatorSetChange = true;
+        params.validatorConfig.votingPowerIncreaseLimitPct = 20;
+        params.validatorConfig.maxValidatorSetSize = 100;
+        params.stakingConfig.minimumStake = 10 ether;
+        params.stakingConfig.lockupDurationMicros = 14 days * 1_000_000;
+        params.stakingConfig.unbondingDelayMicros = 7 days * 1_000_000;
+        params.epochIntervalMicros = 1 hours * 1_000_000;
+        params.governanceConfig.minVotingThreshold = 1000 ether;
+        params.governanceConfig.requiredProposerStake = 100 ether;
+        params.governanceConfig.votingDurationMicros = 2 days * 1_000_000;
+        params.governanceOwner = governanceOwner;
+        params.majorVersion = 1;
+        params.consensusConfig = hex"deadbeef";
+        params.executionConfig = hex"cafebabe";
+        params.randomnessConfig = RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).newOff();
+
+        Genesis.InitialValidator[] memory validators = new Genesis.InitialValidator[](1);
+        validators[0] = Genesis.InitialValidator({
+            operator: makeAddr("op"),
+            owner: makeAddr("ow"),
+            staker: makeAddr("st"),
+            stakeAmount: 200 ether,
+            moniker: "v",
+            consensusPubkey: hex"9112af1a4ef4038dfe24c5371e40b5bcfce16146bfc4ab819244ce57f5d002c4c3f06eca7273e733c0f78aada8c13deb",
+            consensusPop: hex"5678",
+            networkAddresses: bytes("/ip4/127.0.0.1/tcp/8000"),
+            fullnodeAddresses: bytes("/ip4/127.0.0.1/tcp/9000"),
+            votingPower: 200 ether
+        });
+        params.validators = validators;
+        params.initialLockedUntilMicros = 1798848000000000;
+
+        uint32[] memory sourceTypes = new uint32[](1);
+        sourceTypes[0] = 1;
+        address[] memory callbacks = new address[](1);
+        callbacks[0] = SystemAddresses.JWK_MANAGER;
+        params.oracleConfig = Genesis.OracleInitParams(
+            sourceTypes, callbacks, new Genesis.OracleTaskParams[](0), Genesis.BridgeConfig(false, address(0), 0)
+        );
+
+        bytes[] memory issuers = new bytes[](1);
+        issuers[0] = "https://accounts.google.com";
+        IJWKManager.RSA_JWK[][] memory jwks = new IJWKManager.RSA_JWK[][](1);
+        jwks[0] = new IJWKManager.RSA_JWK[](1);
+        jwks[0][0] = IJWKManager.RSA_JWK("kid1", "RSA", "RS256", "e", "n");
+        params.jwkConfig = Genesis.JWKInitParams(issuers, jwks);
+
+        vm.deal(SystemAddresses.GENESIS, 1000 ether);
+        vm.prank(SystemAddresses.SYSTEM_CALLER);
+        genesis.initialize(params);
     }
 }

@@ -22,6 +22,7 @@ import { IValidatorManagement, GenesisValidator } from "./staking/IValidatorMana
 import { Reconfiguration } from "./blocker/Reconfiguration.sol";
 import { Blocker } from "./blocker/Blocker.sol";
 import { ValidatorPerformanceTracker } from "./blocker/ValidatorPerformanceTracker.sol";
+import { Governance } from "./governance/Governance.sol";
 import { NativeOracle } from "./oracle/NativeOracle.sol";
 import { JWKManager, IJWKManager } from "./oracle/jwk/JWKManager.sol";
 import { OracleTaskConfig } from "./oracle/OracleTaskConfig.sol";
@@ -101,6 +102,8 @@ contract Genesis {
         ValidatorConfigParams validatorConfig;
         StakingConfigParams stakingConfig;
         GovernanceConfigParams governanceConfig;
+        /// @notice Owner address for the Governance contract (manages executors)
+        address governanceOwner;
         uint64 epochIntervalMicros;
         uint64 majorVersion;
         bytes consensusConfig;
@@ -151,22 +154,27 @@ contract Genesis {
         // 1. Initialize Configs
         _initializeConfigs(params);
 
-        // 2. Initialize Oracles
+        // 2. Initialize Governance (sets owner; cannot use constructor because
+        //    system-predeployed bytecode skips constructor execution)
+        Governance(SystemAddresses.GOVERNANCE).initialize(params.governanceOwner);
+
+        // 3. Initialize Oracles
         _initializeOracles(params.oracleConfig, params.jwkConfig);
 
-        // 3. Create Stake Pools & Prepare Validator Data
+        // 4. Create Stake Pools & Prepare Validator Data
         GenesisValidator[] memory genesisValidators =
             _createPoolsAndValidators(params.validators, params.initialLockedUntilMicros);
 
-        // 4. Initialize Validator Management
+        // 5. Initialize Validator Management
         ValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).initialize(genesisValidators);
 
-        // 5. Initialize Performance Tracker (before Reconfiguration, since first epoch needs tracking)
+        // 6. Initialize Performance Tracker (before Reconfiguration, since first epoch needs tracking)
         ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(params.validators.length);
-        // 6. Initialize Reconfiguration
+
+        // 7. Initialize Reconfiguration
         Reconfiguration(SystemAddresses.RECONFIGURATION).initialize();
 
-        // 7. Initialize Blocker
+        // 8. Initialize Blocker
         Blocker(SystemAddresses.BLOCK).initialize();
 
         _isInitialized = true;
