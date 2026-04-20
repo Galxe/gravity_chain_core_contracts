@@ -789,16 +789,17 @@ contract ReconfigurationTest is Test {
 
         // Queue a pending ValidatorConfig change (raise minimumBond)
         vm.prank(SystemAddresses.GOVERNANCE);
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).setForNextEpoch(
-            50 ether, // minimumBond: 10 → 50
-            1000 ether,
-            7 days * 1_000_000,
-            true,
-            20,
-            100,
-            false,
-            0
-        );
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(
+                50 ether, // minimumBond: 10 → 50
+                1000 ether,
+                7 days * 1_000_000,
+                true,
+                20,
+                100,
+                false,
+                0
+            );
         assertTrue(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
 
         // Start transition (DKG path since RandomnessConfig is V2)
@@ -824,16 +825,17 @@ contract ReconfigurationTest is Test {
 
         // Queue a pending ValidatorConfig change (lower maximumBond)
         vm.prank(SystemAddresses.GOVERNANCE);
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).setForNextEpoch(
-            10 ether,
-            100 ether, // maximumBond: 1000 → 100
-            7 days * 1_000_000,
-            true,
-            20,
-            100,
-            false,
-            0
-        );
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(
+                10 ether,
+                100 ether, // maximumBond: 1000 → 100
+                7 days * 1_000_000,
+                true,
+                20,
+                100,
+                false,
+                0
+            );
         assertTrue(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
 
         // Governance triggers reconfigure (DKG path since RandomnessConfig is V2)
@@ -859,9 +861,8 @@ contract ReconfigurationTest is Test {
 
         // Queue pending config
         vm.prank(SystemAddresses.GOVERNANCE);
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).setForNextEpoch(
-            50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0
-        );
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0);
 
         // Start transition (applies ValidatorConfig early)
         _advanceTime(TWO_HOURS + 1);
@@ -889,12 +890,12 @@ contract ReconfigurationTest is Test {
     function test_immediateReconfigure_appliesValidatorConfigNormally() public {
         // Re-initialize RandomnessConfig as Off (DKG disabled)
         vm.prank(SystemAddresses.GOVERNANCE);
-        RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).setForNextEpoch(
-            RandomnessConfig.RandomnessConfigData({
-                variant: RandomnessConfig.ConfigVariant.Off,
-                configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
-            })
-        );
+        RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG)
+            .setForNextEpoch(
+                RandomnessConfig.RandomnessConfigData({
+                    variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
+                })
+            );
         vm.prank(SystemAddresses.RECONFIGURATION);
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
 
@@ -902,9 +903,8 @@ contract ReconfigurationTest is Test {
 
         // Queue pending ValidatorConfig
         vm.prank(SystemAddresses.GOVERNANCE);
-        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).setForNextEpoch(
-            50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0
-        );
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0);
 
         // Trigger immediate reconfigure (DKG off)
         _advanceTime(TWO_HOURS + 1);
