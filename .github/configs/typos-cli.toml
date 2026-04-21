@@ -41,6 +41,10 @@ extend-ignore-re = []
 strat = "strat"
 froms = "froms"
 datas = "datas"
+# "FoT" = fee-on-transfer (DeFi convention). Typos splits it into "Fo"+"T"
+# and "fot" (from fotG, fotSender, etc.), so whitelist both word components.
+fo = "fo"
+fot = "fot"
 
 [type.go]
 extend-glob = []
