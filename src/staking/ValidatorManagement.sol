@@ -107,6 +107,16 @@ contract ValidatorManagement is IValidatorManagement {
     /// @dev keccak256(pubkey) => stakePool address (address(0) if unused)
     mapping(bytes32 => address) internal _pubkeyToValidator;
 
+    /// @notice Whitelist of stake pools allowed to register and join as validators
+    /// @dev Governance-managed. Bypassed when _permissionlessJoinEnabled is true.
+    ///      Populated at genesis with the genesis validator pools.
+    mapping(address => bool) internal _allowedPools;
+
+    /// @notice When true, the whitelist is bypassed and any pool may register/join
+    /// @dev Flipped by GOVERNANCE to transition from permissioned launch to
+    ///      permissionless operation. Defaults to false at genesis.
+    bool internal _permissionlessJoinEnabled;
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -181,8 +191,13 @@ contract ValidatorManagement is IValidatorManagement {
         // Add to active validators
         _activeValidators.push(v.stakePool);
 
+        // Seed the whitelist with every genesis pool so governance doesn't need
+        // a follow-up proposal just to let the genesis validators continue operating.
+        _allowedPools[v.stakePool] = true;
+
         emit ValidatorRegistered(v.stakePool, v.moniker);
         emit ValidatorActivated(v.stakePool, index, v.votingPower);
+        emit ValidatorPoolAllowed(v.stakePool, true);
 
         return v.votingPower;
     }
@@ -262,6 +277,9 @@ contract ValidatorManagement is IValidatorManagement {
         if (!IStaking(SystemAddresses.STAKING).isPool(stakePool)) {
             revert Errors.InvalidPool(stakePool);
         }
+
+        // Enforce the whitelist unless governance has flipped to permissionless.
+        _requirePoolAllowed(stakePool);
 
         // Verify caller is the stake pool's operator
         address operator = IStaking(SystemAddresses.STAKING).getPoolOperator(stakePool);
@@ -364,6 +382,10 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.ValidatorSetChangesDisabled();
         }
 
+        // Enforce the whitelist unless governance has flipped to permissionless.
+        // A pool may have been registered before being de-listed; block re-join in that case.
+        _requirePoolAllowed(stakePool);
+
         // Verify validator is INACTIVE
         if (validator.status != ValidatorStatus.INACTIVE) {
             revert Errors.InvalidStatus(uint8(ValidatorStatus.INACTIVE), uint8(validator.status));
@@ -460,6 +482,51 @@ contract ValidatorManagement is IValidatorManagement {
         _pendingInactive.push(stakePool);
 
         emit ValidatorForceLeaveRequested(stakePool);
+    }
+
+    // ========================================================================
+    // WHITELIST (GOVERNANCE only)
+    // ========================================================================
+
+    /// @inheritdoc IValidatorManagement
+    function setValidatorPoolAllowed(
+        address stakePool,
+        bool allowed
+    ) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        if (stakePool == address(0)) revert Errors.ZeroAddress();
+        _allowedPools[stakePool] = allowed;
+        emit ValidatorPoolAllowed(stakePool, allowed);
+    }
+
+    /// @inheritdoc IValidatorManagement
+    function setPermissionlessJoinEnabled(
+        bool enabled
+    ) external {
+        requireAllowed(SystemAddresses.GOVERNANCE);
+        _permissionlessJoinEnabled = enabled;
+        emit PermissionlessJoinEnabledUpdated(enabled);
+    }
+
+    /// @inheritdoc IValidatorManagement
+    function isValidatorPoolAllowed(
+        address stakePool
+    ) external view returns (bool) {
+        return _allowedPools[stakePool];
+    }
+
+    /// @inheritdoc IValidatorManagement
+    function isPermissionlessJoinEnabled() external view returns (bool) {
+        return _permissionlessJoinEnabled;
+    }
+
+    /// @notice Revert unless the pool is permitted to register/join as a validator
+    function _requirePoolAllowed(
+        address stakePool
+    ) internal view {
+        if (!_permissionlessJoinEnabled && !_allowedPools[stakePool]) {
+            revert Errors.PoolNotWhitelisted(stakePool);
+        }
     }
 
     // ========================================================================

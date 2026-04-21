@@ -1,29 +1,28 @@
 {
-  "_comment": "New genesis config for gravity_chain_core_contracts Genesis.initialize(GenesisInitParams)",
+  "_comment": "Staged-launch template: 7 validators, permissioned whitelist (auto-seeded from genesis pools), DKG V2 enabled, auto-evict enabled. All 'PLACEHOLDER' values must be finalized by the operator before genesis. Generated on 2026-04-20.",
 
   "validatorConfig": {
-    "_comment": "ValidatorConfig.initialize params",
-    "minimumBond": "1000000000000000000",
+    "_comment": "PLACEHOLDER: minimumBond deliberately NOT set permissively — governance can lower it post-launch if needed. Auto-evict ENABLED so Phase-1/Phase-2 eviction paths are exercised during the staged launch.",
+    "minimumBond": "10000000000000000000",
     "maximumBond": "1000000000000000000000000",
     "unbondingDelayMicros": 604800000000,
     "allowValidatorSetChange": true,
     "votingPowerIncreaseLimitPct": 20,
     "maxValidatorSetSize": "100",
-    "autoEvictEnabled": false,
-    "autoEvictThresholdPct": "0"
+    "autoEvictEnabled": true,
+    "autoEvictThresholdPct": "50"
   },
 
   "stakingConfig": {
-    "_comment": "StakingConfig.initialize params - for governance staking",
+    "_comment": "PLACEHOLDER: minimumStake and durations tunable via governance single-field setters (setMinimumStakeForNextEpoch / setLockupDurationForNextEpoch / setUnbondingDelayForNextEpoch).",
     "minimumStake": "1000000000000000000",
     "lockupDurationMicros": 86400000000,
-    "unbondingDelayMicros": 86400000000,
-    "minimumProposalStake": "10000000000000000000"
+    "unbondingDelayMicros": 86400000000
   },
 
   "governanceConfig": {
-    "_comment": "GovernanceConfig.initialize params",
-    "minVotingThreshold": "1000000000000000000",
+    "_comment": "PLACEHOLDER: requiredProposerStake should clear minimumStake comfortably; minVotingThreshold is percent-basis (50 = 50%).",
+    "minVotingThreshold": "50",
     "requiredProposerStake": "10000000000000000000",
     "votingDurationMicros": 604800000000
   },
@@ -40,12 +39,12 @@
   "executionConfig": "0x00",
 
   "randomnessConfig": {
-    "_comment": "RandomnessConfig - variant: 0=Off, 1=V2",
-    "variant": 0,
+    "_comment": "DKG V2 ENABLED for staged launch — exercise DKG path end-to-end. Thresholds are standard halves/two-thirds of 2^64.",
+    "variant": 1,
     "configV2": {
-      "secrecyThreshold": 0,
-      "reconstructionThreshold": 0,
-      "fastPathSecrecyThreshold": 0
+      "secrecyThreshold": 9223372036854775808,
+      "reconstructionThreshold": 12297829382473034410,
+      "fastPathSecrecyThreshold": 12297829382473034410
     }
   },
 
@@ -73,56 +72,97 @@
     ]
   },
 
-  "initialLockedUntilMicros": 1798848000000000,
+  "_initialLockedUntilMicrosComment": "PLACEHOLDER: approx 2027-04-20 (launch + 1 year). Regenerate as `launch_ts_seconds_utc * 1_000_000` before genesis.",
+  "initialLockedUntilMicros": 1808000000000000,
 
+  "_validatorsComment": "PLACEHOLDER: 7 validators for staged launch. Each stake starts LOW (100 ether) so the addStake / unstake paths can be exercised on-chain. Entries 1-4 are carried over from the pre-launch template; entries 5-7 need operator/consensusPubkey/network fields populated before genesis. ValidatorManagement.initialize() will auto-populate the whitelist from this list — no separate whitelist config is required.",
   "validators": [
     {
       "operator": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
       "owner": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
       "staker": "0x6e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f",
-      "stakeAmount": "20000000000000000000000",
+      "stakeAmount": "100000000000000000000",
       "moniker": "validator-1",
       "consensusPubkey": "0x851d41932d866f5fabed6673898e15473e6a0adcf5033d2c93816c6b115c85ad3451e0bac61d570d5ed9f23e1e7f77c4",
       "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "networkAddresses": "/ip4/127.0.0.1/tcp/2024/noise-ik/2d86b40a1d692c0749a0a0426e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f/handshake/0",
       "fullnodeAddresses": "/ip4/127.0.0.1/tcp/2024/noise-ik/2d86b40a1d692c0749a0a0426e2021ee24e2430da0f5bb9c2ae6c586bf3e0a0f/handshake/0",
-      "votingPower": "20000000000000000000000"
+      "votingPower": "100000000000000000000"
     },
     {
       "operator": "0xedde7f05ae91961d0804ec634d7535969b7d171f",
       "owner": "0xedde7f05ae91961d0804ec634d7535969b7d171f",
       "staker": "0xedde7f05ae91961d0804ec634d7535969b7d171f",
-      "stakeAmount": "20000000000000000000000",
+      "stakeAmount": "100000000000000000000",
       "moniker": "validator-2",
       "consensusPubkey": "0x99ff89f453d9a9bf273e3ae8b61b99a2b336edc7b6eb9b8e308249fd59f3b76211771d7e0daaa97fad11518c4ad8eabd",
       "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "networkAddresses": "/ip4/127.0.0.1/tcp/2025/noise-ik/caafc5b658f0590d7e31de91edde7f05ae91961d0804ec634d7535969b7d171f/handshake/0",
       "fullnodeAddresses": "/ip4/127.0.0.1/tcp/2025/noise-ik/caafc5b658f0590d7e31de91edde7f05ae91961d0804ec634d7535969b7d171f/handshake/0",
-      "votingPower": "20000000000000000000000"
+      "votingPower": "100000000000000000000"
     },
     {
       "operator": "0x02eb0186ea845ed75b01740726e581215de8625b",
       "owner": "0x02eb0186ea845ed75b01740726e581215de8625b",
       "staker": "0x02eb0186ea845ed75b01740726e581215de8625b",
-      "stakeAmount": "20000000000000000000000",
+      "stakeAmount": "100000000000000000000",
       "moniker": "validator-3",
       "consensusPubkey": "0xb7a931fa544c2d1d54dee27619edfb70cc801bc599dd7a3f56f641a588cee4600b63e35d0d35fe69f2e454462b0ce9b2",
       "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "networkAddresses": "/ip4/127.0.0.1/tcp/2026/noise-ik/99d1c7709b14777edbdbe0c602eb0186ea845ed75b01740726e581215de8625b/handshake/0",
       "fullnodeAddresses": "/ip4/127.0.0.1/tcp/2026/noise-ik/99d1c7709b14777edbdbe0c602eb0186ea845ed75b01740726e581215de8625b/handshake/0",
-      "votingPower": "20000000000000000000000"
+      "votingPower": "100000000000000000000"
     },
     {
       "operator": "0x3872e99f21165874B20Cb9C8c877f8A0A0c5b779",
       "owner": "0x3872e99f21165874B20Cb9C8c877f8A0A0c5b779",
       "staker": "0x3872e99f21165874B20Cb9C8c877f8A0A0c5b779",
-      "stakeAmount": "20000000000000000000000",
+      "stakeAmount": "100000000000000000000",
       "moniker": "validator-4",
       "consensusPubkey": "0x958a9e1e0aef70cc5d99f22403c5cf9de35f8d818553f499b6f29a975aa3b70a95fcb45281f04070e516ad7acd9c7c99",
       "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "networkAddresses": "/ip4/127.0.0.1/tcp/6180/noise-ik/7682dbbb2efe6a3e005b7fa13872e99f21165874b20cb9c8c877f8a0a0c5b779/handshake/0",
       "fullnodeAddresses": "/ip4/127.0.0.1/tcp/6180/noise-ik/7682dbbb2efe6a3e005b7fa13872e99f21165874b20cb9c8c877f8a0a0c5b779/handshake/0",
-      "votingPower": "20000000000000000000000"
+      "votingPower": "100000000000000000000"
+    },
+    {
+      "_comment": "PLACEHOLDER validator-5 — replace operator/owner/staker/consensusPubkey/consensusPop/network before genesis.",
+      "operator": "0x0000000000000000000000000000000000000005",
+      "owner": "0x0000000000000000000000000000000000000005",
+      "staker": "0x0000000000000000000000000000000000000005",
+      "stakeAmount": "100000000000000000000",
+      "moniker": "validator-5",
+      "consensusPubkey": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005",
+      "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "networkAddresses": "/ip4/127.0.0.1/tcp/6181/noise-ik/0000000000000000000000000000000000000000000000000000000000000005/handshake/0",
+      "fullnodeAddresses": "/ip4/127.0.0.1/tcp/6181/noise-ik/0000000000000000000000000000000000000000000000000000000000000005/handshake/0",
+      "votingPower": "100000000000000000000"
+    },
+    {
+      "_comment": "PLACEHOLDER validator-6 — replace operator/owner/staker/consensusPubkey/consensusPop/network before genesis.",
+      "operator": "0x0000000000000000000000000000000000000006",
+      "owner": "0x0000000000000000000000000000000000000006",
+      "staker": "0x0000000000000000000000000000000000000006",
+      "stakeAmount": "100000000000000000000",
+      "moniker": "validator-6",
+      "consensusPubkey": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006",
+      "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "networkAddresses": "/ip4/127.0.0.1/tcp/6182/noise-ik/0000000000000000000000000000000000000000000000000000000000000006/handshake/0",
+      "fullnodeAddresses": "/ip4/127.0.0.1/tcp/6182/noise-ik/0000000000000000000000000000000000000000000000000000000000000006/handshake/0",
+      "votingPower": "100000000000000000000"
+    },
+    {
+      "_comment": "PLACEHOLDER validator-7 — replace operator/owner/staker/consensusPubkey/consensusPop/network before genesis.",
+      "operator": "0x0000000000000000000000000000000000000007",
+      "owner": "0x0000000000000000000000000000000000000007",
+      "staker": "0x0000000000000000000000000000000000000007",
+      "stakeAmount": "100000000000000000000",
+      "moniker": "validator-7",
+      "consensusPubkey": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007",
+      "consensusPop": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "networkAddresses": "/ip4/127.0.0.1/tcp/6183/noise-ik/0000000000000000000000000000000000000000000000000000000000000007/handshake/0",
+      "fullnodeAddresses": "/ip4/127.0.0.1/tcp/6183/noise-ik/0000000000000000000000000000000000000000000000000000000000000007/handshake/0",
+      "votingPower": "100000000000000000000"
     }
   ]
 }

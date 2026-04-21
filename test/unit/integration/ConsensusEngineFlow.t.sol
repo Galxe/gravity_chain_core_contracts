@@ -179,6 +179,12 @@ contract ConsensusEngineFlowTest is Test {
         vm.prank(SystemAddresses.GENESIS);
         ValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).initialize(0);
 
+        // These integration tests pre-date the validator whitelist and exercise
+        // registration flows directly. Flip to permissionless so the gate is a
+        // no-op; whitelist behavior is covered in ValidatorWhitelist.t.sol.
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.setPermissionlessJoinEnabled(true);
+
         // Fund test accounts
         vm.deal(alice, 10000 ether);
         vm.deal(bob, 10000 ether);

@@ -331,6 +331,168 @@ contract StakingConfigTest is Test {
     }
 
     // ========================================================================
+    // SINGLE-FIELD GOVERNANCE SETTERS
+    // ========================================================================
+
+    function test_setMinimumStakeForNextEpoch_keepsOtherFields() public {
+        _initializeConfig();
+
+        uint256 newMinStake = 7 ether;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setMinimumStakeForNextEpoch(newMinStake);
+
+        (bool hasPending, StakingConfig.PendingConfig memory pending) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pending.minimumStake, newMinStake);
+        assertEq(pending.lockupDurationMicros, LOCKUP_DURATION);
+        assertEq(pending.unbondingDelayMicros, UNBONDING_DELAY);
+    }
+
+    function test_setLockupDurationForNextEpoch_keepsOtherFields() public {
+        _initializeConfig();
+
+        uint64 newLockup = 90 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setLockupDurationForNextEpoch(newLockup);
+
+        (bool hasPending, StakingConfig.PendingConfig memory pending) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pending.minimumStake, MIN_STAKE);
+        assertEq(pending.lockupDurationMicros, newLockup);
+        assertEq(pending.unbondingDelayMicros, UNBONDING_DELAY);
+    }
+
+    function test_setUnbondingDelayForNextEpoch_keepsOtherFields() public {
+        _initializeConfig();
+
+        uint64 newUnbonding = 21 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setUnbondingDelayForNextEpoch(newUnbonding);
+
+        (bool hasPending, StakingConfig.PendingConfig memory pending) = config.getPendingConfig();
+        assertTrue(hasPending);
+        assertEq(pending.minimumStake, MIN_STAKE);
+        assertEq(pending.lockupDurationMicros, LOCKUP_DURATION);
+        assertEq(pending.unbondingDelayMicros, newUnbonding);
+    }
+
+    /// @notice If a pending config already exists, single-field setters must
+    ///         preserve the PENDING values of the other fields, not the
+    ///         currently-active ones.
+    function test_singleFieldSetter_overlaysOnExistingPending() public {
+        _initializeConfig();
+
+        uint256 bigMinStake = 100 ether;
+        uint64 bigLockup = 180 days * 1_000_000;
+        uint64 bigUnbonding = 30 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setForNextEpoch(bigMinStake, bigLockup, bigUnbonding);
+
+        // Overwrite just the lockup via the single-field setter.
+        uint64 newLockup = 45 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setLockupDurationForNextEpoch(newLockup);
+
+        (, StakingConfig.PendingConfig memory pending) = config.getPendingConfig();
+        assertEq(pending.minimumStake, bigMinStake, "minStake should survive from earlier pending");
+        assertEq(pending.lockupDurationMicros, newLockup);
+        assertEq(pending.unbondingDelayMicros, bigUnbonding, "unbonding should survive from earlier pending");
+    }
+
+    function test_singleFieldSetter_appliesAtEpoch() public {
+        _initializeConfig();
+
+        uint64 newUnbonding = 3 days * 1_000_000;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        config.setUnbondingDelayForNextEpoch(newUnbonding);
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        config.applyPendingConfig();
+
+        assertEq(config.minimumStake(), MIN_STAKE);
+        assertEq(config.lockupDurationMicros(), LOCKUP_DURATION);
+        assertEq(config.unbondingDelayMicros(), newUnbonding);
+        assertFalse(config.hasPendingConfig());
+    }
+
+    function test_RevertWhen_setMinimumStakeForNextEpoch_NotGovernance() public {
+        _initializeConfig();
+
+        address attacker = address(0xbad);
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, attacker, SystemAddresses.GOVERNANCE));
+        config.setMinimumStakeForNextEpoch(5 ether);
+    }
+
+    function test_RevertWhen_setLockupDurationForNextEpoch_NotGovernance() public {
+        _initializeConfig();
+
+        address attacker = address(0xbad);
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, attacker, SystemAddresses.GOVERNANCE));
+        config.setLockupDurationForNextEpoch(LOCKUP_DURATION);
+    }
+
+    function test_RevertWhen_setUnbondingDelayForNextEpoch_NotGovernance() public {
+        _initializeConfig();
+
+        address attacker = address(0xbad);
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, attacker, SystemAddresses.GOVERNANCE));
+        config.setUnbondingDelayForNextEpoch(UNBONDING_DELAY);
+    }
+
+    function test_RevertWhen_setLockupDurationForNextEpoch_Zero() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidLockupDuration.selector);
+        config.setLockupDurationForNextEpoch(0);
+    }
+
+    function test_RevertWhen_setUnbondingDelayForNextEpoch_Zero() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidUnbondingDelay.selector);
+        config.setUnbondingDelayForNextEpoch(0);
+    }
+
+    function test_RevertWhen_setLockupDurationForNextEpoch_Excessive() public {
+        _initializeConfig();
+
+        uint64 maxLockup = config.MAX_LOCKUP_DURATION();
+        uint64 excessive = maxLockup + 1;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessive, maxLockup));
+        config.setLockupDurationForNextEpoch(excessive);
+    }
+
+    function test_RevertWhen_setUnbondingDelayForNextEpoch_Excessive() public {
+        _initializeConfig();
+
+        uint64 maxUnbonding = config.MAX_UNBONDING_DELAY();
+        uint64 excessive = maxUnbonding + 1;
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ExcessiveDuration.selector, excessive, maxUnbonding));
+        config.setUnbondingDelayForNextEpoch(excessive);
+    }
+
+    function test_RevertWhen_setMinimumStakeForNextEpoch_Zero() public {
+        _initializeConfig();
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.InvalidMinimumStake.selector);
+        config.setMinimumStakeForNextEpoch(0);
+    }
+
+    function test_RevertWhen_setMinimumStakeForNextEpoch_NotInitialized() public {
+        vm.prank(SystemAddresses.GOVERNANCE);
+        vm.expectRevert(Errors.StakingConfigNotInitialized.selector);
+        config.setMinimumStakeForNextEpoch(5 ether);
+    }
+
+    // ========================================================================
     // HELPERS
     // ========================================================================
 
