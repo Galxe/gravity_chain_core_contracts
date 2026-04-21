@@ -98,7 +98,10 @@ contract CrossChainBridgeE2E is Test {
     }
 
     /// @dev Bridge `amount` to `recipient` from Alice, paying the exact fee.
-    function _bridge(uint256 amount, address recipient) internal returns (uint128 portalNonce, bytes memory payload) {
+    function _bridge(
+        uint256 amount,
+        address recipient
+    ) internal returns (uint128 portalNonce, bytes memory payload) {
         uint256 fee = sender.calculateBridgeFee(amount, recipient);
         vm.startPrank(alice);
         gToken.approve(address(sender), amount);
@@ -109,7 +112,11 @@ contract CrossChainBridgeE2E is Test {
     }
 
     /// @dev Deliver a captured payload to the receiver as if it were the oracle.
-    function _deliver(uint128 oracleNonce, uint256 sourceId, bytes memory payload) internal {
+    function _deliver(
+        uint128 oracleNonce,
+        uint256 sourceId,
+        bytes memory payload
+    ) internal {
         vm.prank(SystemAddresses.NATIVE_ORACLE);
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, sourceId, oracleNonce, payload);
     }
@@ -385,7 +392,10 @@ contract CrossChainBridgeE2E is Test {
 
     /// @notice Fuzz the full round-trip: any (amount, recipient) that Alice can
     ///         afford must lock on Ethereum and mint exactly that much on Gravity.
-    function testFuzz_E2E_RoundTrip(uint256 amount, address recipient) public {
+    function testFuzz_E2E_RoundTrip(
+        uint256 amount,
+        address recipient
+    ) public {
         amount = bound(amount, 1, INITIAL_BALANCE);
         vm.assume(recipient != address(0));
 

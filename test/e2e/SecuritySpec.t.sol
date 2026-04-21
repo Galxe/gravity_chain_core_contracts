@@ -39,7 +39,11 @@ contract FeeOnTransferToken is ERC20, ERC20Permit {
         _mint(to, amount);
     }
 
-    function _update(address from, address to, uint256 value) internal override {
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal override {
         // Skip fee for mints (from == address(0)) so initial balances are whole.
         if (from == address(0) || to == address(0) || feeBps == 0) {
             super._update(from, to, value);
@@ -72,9 +76,12 @@ contract ReentrantFeeRecipient {
             // value as fee) or a clean revert — the test handles either.
             uint256 feeReq = portal.calculateFee(0); // empty body
             if (address(this).balance >= feeReq && feeReq > 0) {
-                try portal.send{ value: feeReq }(hex"") returns (uint128) {
-                    // reentrant send accepted
-                } catch {
+                try portal.send{ value: feeReq }(hex"") returns (
+                    uint128
+                ) {
+                // reentrant send accepted
+                }
+                    catch {
                     // reentrant send rejected; also acceptable
                 }
             }
@@ -130,7 +137,10 @@ contract SecuritySpecE2E is Test {
 
     // -------- helpers --------
 
-    function _bridge(uint256 amount, address recipient) internal returns (uint128 portalNonce, bytes memory payload) {
+    function _bridge(
+        uint256 amount,
+        address recipient
+    ) internal returns (uint128 portalNonce, bytes memory payload) {
         uint256 fee = sender.calculateBridgeFee(amount, recipient);
         vm.startPrank(alice);
         gToken.approve(address(sender), amount);
@@ -154,7 +164,11 @@ contract SecuritySpecE2E is Test {
         revert("MessageSent not found");
     }
 
-    function _deliver(uint128 oracleNonce, uint256 sourceId, bytes memory payload) internal {
+    function _deliver(
+        uint128 oracleNonce,
+        uint256 sourceId,
+        bytes memory payload
+    ) internal {
         vm.prank(SystemAddresses.NATIVE_ORACLE);
         receiver.onOracleEvent(SOURCE_TYPE_BLOCKCHAIN, sourceId, oracleNonce, payload);
     }
@@ -217,7 +231,9 @@ contract SecuritySpecE2E is Test {
 
         // large body (4 KB)
         bytes memory big = new bytes(4096);
-        for (uint256 i = 0; i < big.length; i++) big[i] = bytes1(uint8(i & 0xff));
+        for (uint256 i = 0; i < big.length; i++) {
+            big[i] = bytes1(uint8(i & 0xff));
+        }
         bytes memory p2 = PortalMessage.encode(sndr, n, big);
         (address s2, uint128 nn2, bytes memory b2) = PortalMessage.decode(p2);
         assertEq_helper(s2, sndr);
@@ -225,7 +241,10 @@ contract SecuritySpecE2E is Test {
         require(keccak256(b2) == keccak256(big), "body mismatch big");
     }
 
-    function assertEq_helper(address a, address b) internal pure {
+    function assertEq_helper(
+        address a,
+        address b
+    ) internal pure {
         require(a == b, "addr mismatch");
     }
 
@@ -550,7 +569,9 @@ contract SecuritySpecE2E is Test {
     /// S-14 Large body fee formula end-to-end: fee = baseFee + (36 + bodyLen) * feePerByte.
     function test_S14_LargeBody_FeeFormulaPinned() public {
         bytes memory body = new bytes(10_240); // 10 KB
-        for (uint256 i = 0; i < body.length; i++) body[i] = bytes1(uint8(i & 0xff));
+        for (uint256 i = 0; i < body.length; i++) {
+            body[i] = bytes1(uint8(i & 0xff));
+        }
 
         uint256 expected = BASE_FEE + (PortalMessage.MIN_PAYLOAD_LENGTH + body.length) * FEE_PER_BYTE;
         assertEq(portal.calculateFee(body.length), expected, "fee formula pinned");
