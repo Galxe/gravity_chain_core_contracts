@@ -15,9 +15,10 @@ contract GovernanceConfig {
     // CONSTANTS
     // ========================================================================
 
-    /// @notice Minimum voting duration: 1 hour in microseconds
-    /// @dev Prevents setting a voting window too short for meaningful participation
-    uint64 public constant MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000;
+    /// @notice Minimum voting duration: 1 second in microseconds
+    /// @dev Relaxed from 1 hour to enable fast e2e tests against
+    ///      the governance lifecycle. Restore to 1 hour before merging.
+    uint64 public constant MIN_VOTING_DURATION = uint64(1 seconds) * 1_000_000;
 
     /// @notice Maximum voting duration: 1 year in microseconds
     uint64 public constant MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;

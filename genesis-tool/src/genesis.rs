@@ -42,6 +42,10 @@ pub struct GenesisConfig {
     #[serde(rename = "governanceConfig")]
     pub governance_config: GovernanceConfigParams,
 
+    /// Owner address for the Governance contract (manages executors)
+    #[serde(rename = "governanceOwner")]
+    pub governance_owner: String,
+
     #[serde(rename = "epochIntervalMicros")]
     pub epoch_interval_micros: u64,
 
@@ -329,6 +333,7 @@ sol! {
         SolValidatorConfigParams validatorConfig;
         SolStakingConfigParams stakingConfig;
         SolGovernanceConfigParams governanceConfig;
+        address governanceOwner;
         uint64 epochIntervalMicros;
         uint64 majorVersion;
         bytes consensusConfig;
@@ -524,6 +529,7 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
         validatorConfig: validator_config,
         stakingConfig: staking_config,
         governanceConfig: governance_config,
+        governanceOwner: parse_address(&config.governance_owner),
         epochIntervalMicros: config.epoch_interval_micros,
         majorVersion: config.major_version,
         consensusConfig: parse_hex_bytes(&config.consensus_config).into(),
