@@ -526,6 +526,13 @@ contract Governance is IGovernance, Ownable2Step {
         // Execute all calls atomically
         uint256 len = targets.length;
         for (uint256 i = 0; i < len; ++i) {
+            // Defense-in-depth: forbid a proposal from calling Governance on itself.
+            // Without this, a passing proposal could invoke transferOwnership / addExecutor /
+            // removeExecutor (which are onlyOwner) whenever Governance is its own owner,
+            // escalating to full control of proposal execution.
+            if (targets[i] == address(this)) {
+                revert Errors.ProposalTargetsGovernance(i);
+            }
             (bool success, bytes memory returnData) = targets[i].call(datas[i]);
             if (!success) {
                 revert Errors.ExecutionFailed(proposalId, returnData);

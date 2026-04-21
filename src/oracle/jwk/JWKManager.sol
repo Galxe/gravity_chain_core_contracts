@@ -78,6 +78,27 @@ contract JWKManager is IJWKManager, IOracleCallback {
 
         for (uint256 i; i < length;) {
             bytes memory issuer = issuers[i];
+            if (issuer.length == 0) {
+                revert Errors.InvalidJWK(issuer);
+            }
+
+            // Structural validation: downstream signature verification assumes non-empty kid/e/n.
+            // A malformed genesis entry would silently persist and poison auth lookups forever.
+            RSA_JWK[] calldata issuerJwks = jwks[i];
+            uint256 jwkLen = issuerJwks.length;
+            for (uint256 j; j < jwkLen;) {
+                RSA_JWK calldata jwk = issuerJwks[j];
+                if (
+                    bytes(jwk.kid).length == 0 || bytes(jwk.kty).length == 0 || bytes(jwk.alg).length == 0
+                        || bytes(jwk.e).length == 0 || bytes(jwk.n).length == 0
+                ) {
+                    revert Errors.InvalidJWK(issuer);
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+
             bytes32 issuerHash = keccak256(issuer);
 
             // Initial version is 1 for genesis validators
@@ -89,7 +110,7 @@ contract JWKManager is IJWKManager, IOracleCallback {
             // Upsert into observed JWKs
             _upsertObservedProvider(issuerHash, issuer, version, jwks[i]);
 
-            emit ObservedJWKsUpdated(issuer, version, jwks[i].length);
+            emit ObservedJWKsUpdated(issuer, version, jwkLen);
 
             unchecked {
                 ++i;
