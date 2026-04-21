@@ -117,6 +117,19 @@ contract ValidatorManagement is IValidatorManagement {
     ///      permissionless operation. Defaults to false at genesis.
     bool internal _permissionlessJoinEnabled;
 
+    /// @notice Consensus-pubkey commitments from commit-reveal registration (audit #580)
+    /// @dev committer => keccak256(abi.encode(pubkey, stakePool, chainid)) => block.number recorded.
+    ///      A zero value means "no commit". Values are consumed (set back to zero) by
+    ///      registerValidator / rotateConsensusKey when they match.
+    ///
+    ///      The commit-reveal flow exists because the BLS PoP precompile
+    ///      (gravity-reth bls_precompile.rs) only signs the pubkey itself — there is no
+    ///      binding between the PoP and the registering operator/pool. Without commit-reveal,
+    ///      a mempool front-runner that sees a victim's in-flight registerValidator tx can
+    ///      replay the (pubkey, pop) pair into their own pool and claim
+    ///      `_pubkeyToValidator[keccak(pubkey)]` first, DoSing the victim's registration.
+    mapping(address => mapping(bytes32 => uint256)) internal _pubkeyCommits;
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -246,6 +259,17 @@ contract ValidatorManagement is IValidatorManagement {
     // ========================================================================
 
     /// @inheritdoc IValidatorManagement
+    function commitConsensusPubkey(
+        bytes32 commitment
+    ) external {
+        if (_pubkeyCommits[msg.sender][commitment] != 0) {
+            revert Errors.ConsensusPubkeyCommitAlreadyExists();
+        }
+        _pubkeyCommits[msg.sender][commitment] = block.number;
+        emit ConsensusPubkeyCommitted(msg.sender, commitment, block.number);
+    }
+
+    /// @inheritdoc IValidatorManagement
     function registerValidator(
         address stakePool,
         string calldata moniker,
@@ -262,10 +286,33 @@ contract ValidatorManagement is IValidatorManagement {
         // Validate inputs and get required data
         _validateRegistration(stakePool, moniker);
 
+        // Audit #580: consume the commit-reveal commitment that binds this msg.sender
+        // to (consensusPubkey, stakePool) BEFORE doing any state writes.
+        _consumeConsensusPubkeyCommit(stakePool, consensusPubkey);
+
         // Create validator record
         _createValidatorRecord(stakePool, moniker, consensusPubkey, consensusPop, networkAddresses, fullnodeAddresses);
 
         emit ValidatorRegistered(stakePool, moniker);
+    }
+
+    /// @notice Consume a matching consensus-pubkey commitment for msg.sender
+    /// @dev Reverts if there is no commitment, or if the commitment was recorded in the
+    ///      current block (same-block commit+reveal would let a front-runner still win —
+    ///      the commit must be in a strictly earlier block than the reveal).
+    function _consumeConsensusPubkeyCommit(
+        address stakePool,
+        bytes calldata consensusPubkey
+    ) internal {
+        bytes32 commitment = keccak256(abi.encode(consensusPubkey, stakePool, block.chainid));
+        uint256 committedAt = _pubkeyCommits[msg.sender][commitment];
+        if (committedAt == 0) {
+            revert Errors.ConsensusPubkeyCommitNotFound();
+        }
+        if (block.number <= committedAt) {
+            revert Errors.ConsensusPubkeyCommitTooRecent();
+        }
+        delete _pubkeyCommits[msg.sender][commitment];
     }
 
     /// @notice Validate registration inputs
@@ -548,6 +595,11 @@ contract ValidatorManagement is IValidatorManagement {
     ) external validatorExists(stakePool) onlyOperator(stakePool) whenNotReconfiguring {
         // Validate consensus pubkey with proof of possession
         _validateConsensusPubkey(newPubkey, newPop);
+
+        // Audit #580: rotation uses the same commit-reveal binding as registration;
+        // without this, an attacker could squat a victim's freshly-generated rotation key
+        // via mempool front-run exactly as in the registration scenario.
+        _consumeConsensusPubkeyCommit(stakePool, newPubkey);
 
         ValidatorRecord storage validator = _validators[stakePool];
 

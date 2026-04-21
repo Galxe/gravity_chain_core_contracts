@@ -139,6 +139,20 @@ contract ValidatorManagementTest is Test {
         pool = staking.createPool{ value: stakeAmount }(owner, owner, owner, owner, lockedUntil);
     }
 
+    /// @notice Submit a consensus-pubkey commit for `caller` binding `pubkey` to `pool`,
+    ///         then advance one block so the subsequent reveal passes the
+    ///         `block.number > committedAt` check (audit #580).
+    function _commitPubkey(
+        address caller,
+        address pool,
+        bytes memory pubkey
+    ) internal {
+        bytes32 commitment = keccak256(abi.encode(pubkey, pool, block.chainid));
+        vm.prank(caller);
+        validatorManager.commitConsensusPubkey(commitment);
+        vm.roll(block.number + 1);
+    }
+
     /// @notice Create a stake pool and register as validator
     /// @dev Generates unique consensusPubkey to avoid DuplicateConsensusPubkey
     function _createAndRegisterValidator(
@@ -149,6 +163,7 @@ contract ValidatorManagementTest is Test {
         pool = _createStakePool(owner, stakeAmount);
         // Generate unique 48-byte pubkey based on pool address (BLS12-381 G1 compressed size)
         bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
+        _commitPubkey(owner, pool, uniquePubkey);
         vm.prank(owner); // owner is also operator by default
         validatorManager.registerValidator(
             pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -182,6 +197,7 @@ contract ValidatorManagementTest is Test {
     function test_registerValidator_success() public {
         address pool = _createStakePool(alice, MIN_BOND);
 
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
         vm.prank(alice);
         validatorManager.registerValidator(
             pool, "alice-validator", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -199,6 +215,7 @@ contract ValidatorManagementTest is Test {
     function test_registerValidator_emitsEvent() public {
         address pool = _createStakePool(alice, MIN_BOND);
 
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
         emit IValidatorManagement.ValidatorRegistered(pool, "alice-validator");
@@ -440,6 +457,7 @@ contract ValidatorManagementTest is Test {
 
         // Once reconfiguration completes, registration succeeds again
         mockReconfiguration.setTransitionInProgress(false);
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
         vm.prank(alice);
         validatorManager.registerValidator(
             pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -748,6 +766,7 @@ contract ValidatorManagementTest is Test {
             hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
         bytes memory newPop = hex"cafebabe";
 
+        _commitPubkey(alice, pool, newPubkey);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
 
@@ -776,6 +795,7 @@ contract ValidatorManagementTest is Test {
         bytes memory newPubkey =
             hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
 
+        _commitPubkey(alice, pool, newPubkey);
         vm.prank(alice);
         vm.expectEmit(true, false, false, true);
         emit IValidatorManagement.ConsensusKeyRotated(pool, newPubkey);
@@ -792,13 +812,17 @@ contract ValidatorManagementTest is Test {
         address alicePool = _createStakePool(alice, MIN_BOND);
         bytes memory alicePubkey =
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, alicePubkey);
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
-        // Bob tries to register with the same pubkey - should fail
+        // Bob tries to register with the same pubkey - should fail with DuplicateConsensusPubkey.
+        // Bob must first pass the commit-reveal precondition (audit #580) before reaching the
+        // duplicate-pubkey check.
         address bobPool = _createStakePool(bob, MIN_BOND);
+        _commitPubkey(bob, bobPool, alicePubkey);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, alicePubkey));
         validatorManager.registerValidator(
@@ -812,6 +836,7 @@ contract ValidatorManagementTest is Test {
         address alicePool = _createStakePool(alice, MIN_BOND);
         bytes memory alicePubkey =
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, alicePubkey);
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -820,12 +845,15 @@ contract ValidatorManagementTest is Test {
         address bobPool = _createStakePool(bob, MIN_BOND);
         bytes memory bobPubkey =
             hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(bob, bobPool, bobPubkey);
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
         );
 
-        // Alice tries to rotate to Bob's pubkey - should fail
+        // Alice tries to rotate to Bob's pubkey - should fail with DuplicateConsensusPubkey.
+        // Alice must first pass commit-reveal (audit #580) to reach the duplicate check.
+        _commitPubkey(alice, alicePool, bobPubkey);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, bobPubkey));
         validatorManager.rotateConsensusKey(alicePool, bobPubkey, hex"abcd1234");
@@ -837,6 +865,7 @@ contract ValidatorManagementTest is Test {
         address alicePool = _createStakePool(alice, MIN_BOND);
         bytes memory aliceOldPubkey =
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, aliceOldPubkey);
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -845,12 +874,14 @@ contract ValidatorManagementTest is Test {
         // Alice rotates to a new key (pending)
         bytes memory aliceNewPubkey =
             hex"a1ecafe00000000200000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, aliceNewPubkey);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
         // Old pubkey is still reserved (active key) until epoch boundary.
         // Bob should NOT be able to use Alice's old key before epoch processes.
         address bobPool = _createStakePool(bob, MIN_BOND);
+        _commitPubkey(bob, bobPool, aliceOldPubkey);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, aliceOldPubkey));
         validatorManager.registerValidator(
@@ -863,6 +894,8 @@ contract ValidatorManagementTest is Test {
         _processEpoch();
 
         // Now old pubkey should be freed. Bob can use it.
+        // Bob's earlier failed register reverted the whole tx (including commit deletion),
+        // so his commit is still live — no need to re-commit.
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -881,6 +914,7 @@ contract ValidatorManagementTest is Test {
         address alicePool = _createStakePool(alice, MIN_BOND);
         bytes memory alicePubkey =
             hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, alicePubkey);
         vm.prank(alice);
         validatorManager.registerValidator(
             alicePool, "alice", alicePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -889,6 +923,7 @@ contract ValidatorManagementTest is Test {
         address bobPool = _createStakePool(bob, MIN_BOND);
         bytes memory bobPubkey =
             hex"b0b0b0b0b01234aa00000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(bob, bobPool, bobPubkey);
         vm.prank(bob);
         validatorManager.registerValidator(
             bobPool, "bob", bobPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -897,6 +932,7 @@ contract ValidatorManagementTest is Test {
         // Alice rotates to a completely new key (not Bob's)
         bytes memory aliceNewPubkey =
             hex"a1ecafe00000000300000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        _commitPubkey(alice, alicePool, aliceNewPubkey);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(alicePool, aliceNewPubkey, hex"abcd1234");
 
@@ -945,6 +981,157 @@ contract ValidatorManagementTest is Test {
     }
 
     // ========================================================================
+    // AUDIT #580: CONSENSUS PUBKEY COMMIT-REVEAL
+    // ========================================================================
+    //
+    // The BLS PoP precompile (gravity-reth bls_precompile.rs) only signs the pubkey
+    // itself, with no binding to the registering operator/pool. Without commit-reveal,
+    // a mempool front-runner that observes a victim's (pubkey, pop) could register
+    // the pubkey under their own pool first and claim _pubkeyToValidator, DoSing
+    // the victim. Commit-reveal forces the registrant to pre-commit to the
+    // (pubkey, stakePool, chainid) tuple in a strictly earlier block, so the pubkey
+    // is not publicly observable when the commit is made.
+    // ========================================================================
+
+    function test_audit580_registerValidator_revertsWithoutCommit() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitNotFound.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
+    function test_audit580_registerValidator_revertsSameBlockReveal() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+        bytes32 commitment = keccak256(abi.encode(CONSENSUS_PUBKEY, pool, block.chainid));
+
+        vm.prank(alice);
+        validatorManager.commitConsensusPubkey(commitment);
+        // Intentionally no vm.roll — commit and reveal in the same block must fail.
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitTooRecent.selector);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
+    function test_audit580_commit_revertsOnDuplicateFromSameSender() public {
+        bytes32 commitment = keccak256(abi.encode(CONSENSUS_PUBKEY, alice, block.chainid));
+
+        vm.prank(alice);
+        validatorManager.commitConsensusPubkey(commitment);
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitAlreadyExists.selector);
+        validatorManager.commitConsensusPubkey(commitment);
+    }
+
+    function test_audit580_commit_emitsEvent() public {
+        bytes32 commitment = keccak256(abi.encode(CONSENSUS_PUBKEY, alice, block.chainid));
+
+        vm.expectEmit(true, true, false, true);
+        emit IValidatorManagement.ConsensusPubkeyCommitted(alice, commitment, block.number);
+        vm.prank(alice);
+        validatorManager.commitConsensusPubkey(commitment);
+    }
+
+    /// @notice An attacker's commit binds the commitment to the attacker's msg.sender,
+    ///         so it cannot be consumed by the victim's legitimate register call (or vice versa).
+    function test_audit580_commit_isKeyedBySender() public {
+        address victimPool = _createStakePool(alice, MIN_BOND);
+        bytes32 victimCommitment = keccak256(abi.encode(CONSENSUS_PUBKEY, victimPool, block.chainid));
+
+        // Attacker pre-commits the SAME hash under their own sender.
+        vm.prank(bob);
+        validatorManager.commitConsensusPubkey(victimCommitment);
+        vm.roll(block.number + 1);
+
+        // Victim has not committed, so their register still fails.
+        vm.prank(alice);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitNotFound.selector);
+        validatorManager.registerValidator(
+            victimPool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
+    /// @notice End-to-end front-run scenario: victim commits in block N, attacker observes
+    ///         the reveal tx containing the pubkey in block N+1 and tries to race.
+    ///         The attacker can at best commit in block N+1, but then their register must
+    ///         wait until block N+2, by which time victim has already claimed the pubkey.
+    function test_audit580_frontRun_squattingIsBlocked() public {
+        address victimPool = _createStakePool(alice, MIN_BOND);
+        address attackerPool = _createStakePool(bob, MIN_BOND);
+
+        bytes memory pk = CONSENSUS_PUBKEY;
+
+        // Block N: victim commits.
+        _commitPubkey(alice, victimPool, pk);
+        // _commitPubkey advances one block internally, so we are now in block N+1.
+
+        // Attacker sees pk in victim's pending reveal tx and races to commit + register.
+        bytes32 attackerCommitment = keccak256(abi.encode(pk, attackerPool, block.chainid));
+        vm.prank(bob);
+        validatorManager.commitConsensusPubkey(attackerCommitment);
+
+        // Attacker's same-block register must fail (CommitTooRecent).
+        vm.prank(bob);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitTooRecent.selector);
+        validatorManager.registerValidator(
+            attackerPool, "attacker", pk, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Victim's register succeeds in the same block because their commit was in the PREVIOUS block.
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            victimPool, "alice", pk, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        assertTrue(validatorManager.isValidator(victimPool), "victim registration should win the race");
+
+        // When the attacker's commit matures in the next block, the pubkey is already owned,
+        // so their register now reverts with DuplicateConsensusPubkey instead of succeeding.
+        vm.roll(block.number + 1);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, pk));
+        validatorManager.registerValidator(
+            attackerPool, "attacker", pk, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+    }
+
+    function test_audit580_rotateConsensusKey_revertsWithoutCommit() public {
+        address pool = _createAndRegisterValidator(alice, MIN_BOND, "alice");
+        bytes memory newPubkey =
+            hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
+
+        vm.prank(alice);
+        vm.expectRevert(Errors.ConsensusPubkeyCommitNotFound.selector);
+        validatorManager.rotateConsensusKey(pool, newPubkey, hex"aa01");
+    }
+
+    /// @notice A successful register consumes the commit, so a second attempt with the same
+    ///         (pubkey, stakePool) requires a fresh commit.
+    function test_audit580_commit_consumedOnSuccessfulReveal() public {
+        address pool = _createStakePool(alice, MIN_BOND);
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice registered, but the commit has been cleared. A hypothetical retry (e.g. after
+        // a later un-register flow were added) would need a brand-new commit. We exercise the
+        // "commit cleared" property directly by trying to re-commit the same hash — this must
+        // succeed because the slot was zeroed on consume.
+        bytes32 commitment = keccak256(abi.encode(CONSENSUS_PUBKEY, pool, block.chainid));
+        vm.prank(alice);
+        validatorManager.commitConsensusPubkey(commitment);
+        // If the commit had NOT been cleared on consume, this re-commit would have reverted
+        // with ConsensusPubkeyCommitAlreadyExists.
+    }
+
+    // ========================================================================
     // VIEW FUNCTION TESTS
     // ========================================================================
 
@@ -978,6 +1165,7 @@ contract ValidatorManagementTest is Test {
         validatorManager.getValidatorStatus(pool);
 
         // Register - INACTIVE
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
         vm.prank(alice);
         validatorManager.registerValidator(
             pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -1016,6 +1204,7 @@ contract ValidatorManagementTest is Test {
         bondAmount = bound(bondAmount, MIN_BOND, MAX_BOND);
 
         address pool = _createStakePool(alice, bondAmount);
+        _commitPubkey(alice, pool, CONSENSUS_PUBKEY);
         vm.prank(alice);
         validatorManager.registerValidator(
             pool, "alice", CONSENSUS_PUBKEY, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
@@ -2478,6 +2667,7 @@ contract ValidatorManagementTest is Test {
         bytes memory newPubkey =
             hex"a666d31d6e3c5e8aab7e0f2e926f0b4307bbad66166a5598c8dde1152f2e16e964ad3e42f5e7c73e2e35c6a69b108f4e";
         bytes memory newPop = hex"cafebabe";
+        _commitPubkey(alice, pool, newPubkey);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, newPubkey, newPop);
 
@@ -2506,16 +2696,19 @@ contract ValidatorManagementTest is Test {
             hex"b777e42e7f4d6f9bbc8f1f3f037f1c5418ccbe77277b66a9d9eef22630f27fa75be4f530f8d84f3f46d7b7ac219050ff";
 
         // First rotation
+        _commitPubkey(alice, pool, key1);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, key1, hex"aa01");
 
         // Second rotation should work (releases key1 reservation)
+        _commitPubkey(alice, pool, key2);
         vm.prank(alice);
         validatorManager.rotateConsensusKey(pool, key2, hex"bb02");
 
         // key1 should now be available for others
         address bobPool = _createAndRegisterValidator(bob, MIN_BOND, "bob");
         // Bob should be able to rotate to key1 (it was released by Alice's second rotation)
+        _commitPubkey(bob, bobPool, key1);
         vm.prank(bob);
         validatorManager.rotateConsensusKey(bobPool, key1, hex"cc03");
 

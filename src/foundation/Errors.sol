@@ -196,6 +196,20 @@ library Errors {
     /// @notice Consensus proof-of-possession is empty
     error InvalidConsensusPopLength();
 
+    /// @notice Consensus pubkey commitment has already been recorded under this sender
+    /// @dev See audit #580: commit-reveal binds a registrant to a pubkey before the pubkey
+    ///      is publicly observable, so a mempool front-runner cannot replay a victim's
+    ///      (pubkey, pop) into their own pool.
+    error ConsensusPubkeyCommitAlreadyExists();
+
+    /// @notice No matching consensus pubkey commitment found for caller
+    error ConsensusPubkeyCommitNotFound();
+
+    /// @notice Consensus pubkey commitment was recorded in the current block; must wait at least one block
+    /// @dev Prevents same-block commit+reveal, which would let a front-runner that sees a
+    ///      reveal tx in the mempool submit (commit, register) in the same block and still win.
+    error ConsensusPubkeyCommitTooRecent();
+
     // ========================================================================
     // RECONFIGURATION ERRORS
     // ========================================================================

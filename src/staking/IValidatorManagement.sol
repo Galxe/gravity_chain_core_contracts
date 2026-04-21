@@ -116,6 +116,12 @@ interface IValidatorManagement {
     /// @param enabled True if permissionless join is now active (whitelist bypassed)
     event PermissionlessJoinEnabledUpdated(bool enabled);
 
+    /// @notice Emitted when a caller commits to a future consensus pubkey registration/rotation
+    /// @param committer Address that submitted the commitment (must later be msg.sender of register/rotate)
+    /// @param commitment keccak256(abi.encode(pubkey, stakePool, chainid))
+    /// @param blockNumber Block number at which the commitment was recorded
+    event ConsensusPubkeyCommitted(address indexed committer, bytes32 indexed commitment, uint256 blockNumber);
+
     // ========================================================================
     // INITIALIZATION
     // ========================================================================
@@ -136,10 +142,29 @@ interface IValidatorManagement {
     // REGISTRATION
     // ========================================================================
 
+    /// @notice Commit to a future consensus-pubkey registration or rotation
+    /// @dev Audit #580 mitigation. The BLS PoP precompile only proves "someone has sk",
+    ///      not "this sender has sk" — so a front-runner that observes a victim's
+    ///      (pubkey, pop) in the mempool can replay the pair into their own pool and
+    ///      DoS the victim's registration. The commit-reveal flow forces registration
+    ///      to be preceded by an opaque `keccak256(pubkey, stakePool, chainid)` commit
+    ///      from the same `msg.sender`, so the registrant is bound to the pubkey
+    ///      before the pubkey is publicly observable.
+    ///
+    ///      The commit is keyed by msg.sender; it is consumed (deleted) on the matching
+    ///      `registerValidator` / `rotateConsensusKey` call. A subsequent call that
+    ///      re-uses the same (pubkey, stakePool) needs a fresh commit.
+    /// @param commitment keccak256(abi.encode(pubkey, stakePool, chainid))
+    function commitConsensusPubkey(
+        bytes32 commitment
+    ) external;
+
     /// @notice Register a new validator with a stake pool
     /// @dev Only callable by the stake pool's operator.
     ///      Requires stake pool to have voting power >= minimumBond.
     ///      The stakePool address becomes the validator identity.
+    ///      Caller must have previously submitted a matching `commitConsensusPubkey`
+    ///      in a strictly earlier block (see audit #580).
     /// @param stakePool Address of the stake pool (must be created by Staking factory)
     /// @param moniker Display name for the validator (max 31 bytes)
     /// @param consensusPubkey BLS public key for consensus
@@ -218,7 +243,11 @@ interface IValidatorManagement {
 
     /// @notice Rotate the validator's consensus key
     /// @dev Only callable by the validator's operator.
-    ///      New key takes effect immediately (no epoch delay).
+    ///      Rotation uses the same commit-reveal flow as registration (audit #580):
+    ///      caller must have previously submitted a matching `commitConsensusPubkey`
+    ///      for (newPubkey, stakePool) in a strictly earlier block.
+    ///      The new key is reserved immediately but only takes effect at the next
+    ///      epoch boundary (see rotateConsensusKey implementation).
     /// @param stakePool Address of the validator's stake pool
     /// @param newPubkey New BLS public key
     /// @param newPop New proof of possession
