@@ -93,8 +93,11 @@ contract Blocker {
         // Track proposal performance statistics (Aptos: stake::update_performance_statistics)
         // Performance scores must be updated before the epoch transition check,
         // as the transaction that triggers the transition is the last block in the previous epoch.
-        IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER)
-            .updateStatistics(proposerIndex, failedProposerIndices);
+        try IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER)
+            .updateStatistics(proposerIndex, failedProposerIndices) { }
+        catch (bytes memory reason) {
+            emit ComponentUpdateFailed(SystemAddresses.PERFORMANCE_TRACKER, reason);
+        }
 
         // 1. Resolve proposer address from index
         //    NIL blocks have proposerIndex == NIL_PROPOSER_INDEX (type(uint64).max)
@@ -108,8 +111,11 @@ contract Blocker {
 
         // 3. Check and potentially start epoch transition
         //    Reconfiguration handles all transition logic internally
-        //    Returns true if DKG was started, but we don't need to act on this
-        IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition();
+        //    Wrapped in try-catch to prevent epoch transition failures from blocking block production (Issue #59)
+        try IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition() { }
+        catch (bytes memory reason) {
+            emit ComponentUpdateFailed(SystemAddresses.RECONFIGURATION, reason);
+        }
 
         // 4. Get current epoch for event emission
         uint64 epoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch();
