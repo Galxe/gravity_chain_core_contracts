@@ -777,5 +777,143 @@ contract ReconfigurationTest is Test {
         // Verify: targets array has 2 elements (indices 0 and 1 implicitly)
         // The DKG module will use these for the next epoch's key distribution
     }
+
+    // ========================================================================
+    // DKG CONFIG DIVERGENCE FIX TESTS (gravity-audit#112)
+    // ========================================================================
+
+    /// @notice Verify that checkAndStartTransition applies pending ValidatorConfig
+    ///         before starting DKG, so the target set snapshot uses the new config.
+    function test_checkAndStartTransition_appliesValidatorConfigBeforeDkg() public {
+        _initializeReconfiguration();
+
+        // Queue a pending ValidatorConfig change (raise minimumBond)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(
+                50 ether, // minimumBond: 10 → 50
+                1000 ether,
+                7 days * 1_000_000,
+                true,
+                20,
+                100,
+                false,
+                0
+            );
+        assertTrue(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
+
+        // Start transition (DKG path since RandomnessConfig is V2)
+        _advanceTime(TWO_HOURS + 1);
+        _startTransition();
+
+        // After checkAndStartTransition, pending ValidatorConfig should already be applied
+        assertFalse(
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig(),
+            "ValidatorConfig pending should be cleared before DKG starts"
+        );
+        assertEq(
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond(),
+            50 ether,
+            "minimumBond should reflect the new value before DKG snapshot"
+        );
+    }
+
+    /// @notice Verify that governanceReconfigure also applies pending ValidatorConfig
+    ///         before starting DKG.
+    function test_governanceReconfigure_appliesValidatorConfigBeforeDkg() public {
+        _initializeReconfiguration();
+
+        // Queue a pending ValidatorConfig change (lower maximumBond)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(
+                10 ether,
+                100 ether, // maximumBond: 1000 → 100
+                7 days * 1_000_000,
+                true,
+                20,
+                100,
+                false,
+                0
+            );
+        assertTrue(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
+
+        // Governance triggers reconfigure (DKG path since RandomnessConfig is V2)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        Reconfiguration(SystemAddresses.RECONFIGURATION).governanceReconfigure();
+
+        // After governanceReconfigure, pending ValidatorConfig should already be applied
+        assertFalse(
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig(),
+            "ValidatorConfig pending should be cleared before DKG starts"
+        );
+        assertEq(
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond(),
+            100 ether,
+            "maximumBond should reflect the new value before DKG snapshot"
+        );
+    }
+
+    /// @notice Verify that the ValidatorConfig.applyPendingConfig() call in
+    ///         _applyReconfiguration() is a safe no-op when already applied.
+    function test_finishTransition_validatorConfigApplyIsNoopAfterEarlyApply() public {
+        _initializeReconfiguration();
+
+        // Queue pending config
+        vm.prank(SystemAddresses.GOVERNANCE);
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0);
+
+        // Start transition (applies ValidatorConfig early)
+        _advanceTime(TWO_HOURS + 1);
+        _startTransition();
+
+        // Verify config is already applied
+        assertEq(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond(), 50 ether);
+        assertFalse(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
+
+        // Finish transition — _applyReconfiguration calls applyPendingConfig again (no-op)
+        _finishTransition(SAMPLE_TRANSCRIPT);
+
+        // Config should still be the new value (not reverted or double-applied)
+        assertEq(
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond(),
+            50 ether,
+            "Config value should survive the no-op re-apply in finishTransition"
+        );
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
+    }
+
+    /// @notice When DKG is off (immediate reconfigure), ValidatorConfig is NOT applied early.
+    ///         It's applied normally in _applyReconfiguration(). This is correct because
+    ///         there's no DKG snapshot to diverge from.
+    function test_immediateReconfigure_appliesValidatorConfigNormally() public {
+        // Re-initialize RandomnessConfig as Off (DKG disabled)
+        vm.prank(SystemAddresses.GOVERNANCE);
+        RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG)
+            .setForNextEpoch(
+                RandomnessConfig.RandomnessConfigData({
+                    variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
+                })
+            );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
+
+        _initializeReconfiguration();
+
+        // Queue pending ValidatorConfig
+        vm.prank(SystemAddresses.GOVERNANCE);
+        ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG)
+            .setForNextEpoch(50 ether, 1000 ether, 7 days * 1_000_000, true, 20, 100, false, 0);
+
+        // Trigger immediate reconfigure (DKG off)
+        _advanceTime(TWO_HOURS + 1);
+        _startTransition();
+
+        // Config is applied in _applyReconfiguration (immediate path)
+        assertEq(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond(), 50 ether);
+        assertFalse(ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).hasPendingConfig());
+        assertEq(Reconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(), 2);
+    }
 }
 

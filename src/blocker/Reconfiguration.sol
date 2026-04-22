@@ -107,6 +107,13 @@ contract Reconfiguration is IReconfiguration {
             // Simple reconfiguration: DKG disabled, do immediate epoch transition
             _doImmediateReconfigure();
         } else {
+            // Apply ValidatorConfig before DKG starts so that the target validator set
+            // snapshot uses the same config values that onNewEpoch() will read later.
+            // Without this, pending changes to minimumBond/maximumBond/votingPowerIncreaseLimitPct
+            // cause the DKG target set to diverge from the actual epoch set.
+            // See: docs/dkg-config-divergence-analysis.md, gravity-audit#112
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
+
             // Async reconfiguration with DKG: start DKG session
             _startDkgSession(config);
         }
@@ -160,6 +167,11 @@ contract Reconfiguration is IReconfiguration {
             // DKG disabled: perform immediate reconfigure
             _doImmediateReconfigure();
         } else {
+            // Apply ValidatorConfig before DKG starts so that the target validator set
+            // snapshot uses the same config values that onNewEpoch() will read later.
+            // See: docs/dkg-config-divergence-analysis.md, gravity-audit#112
+            ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
+
             // DKG enabled: start DKG session
             _startDkgSession(config);
         }
@@ -267,6 +279,7 @@ contract Reconfiguration is IReconfiguration {
         IRandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
         ConsensusConfig(SystemAddresses.CONSENSUS_CONFIG).applyPendingConfig();
         ExecutionConfig(SystemAddresses.EXECUTION_CONFIG).applyPendingConfig();
+        // NOTE: ValidatorConfig may already be applied (by _startDkgSession path); this is a safe no-op.
         ValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).applyPendingConfig();
         VersionConfig(SystemAddresses.VERSION_CONFIG).applyPendingConfig();
         GovernanceConfig(SystemAddresses.GOVERNANCE_CONFIG).applyPendingConfig();
