@@ -246,7 +246,7 @@ contract Reconfiguration is IReconfiguration {
         ValidatorConsensusInfo[] memory dealers =
             IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getCurValidatorConsensusInfos();
         ValidatorConsensusInfo[] memory targets =
-            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getNextValidatorConsensusInfos();
+            IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidators();
 
         // Clear any stale DKG session
         IDKG(SystemAddresses.DKG).tryClearIncompleteSession();
