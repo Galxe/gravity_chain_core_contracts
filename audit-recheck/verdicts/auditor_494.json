@@ -1,0 +1,127 @@
+{
+  "issue_number": 494,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "SYSTEM_CALLER calls NativeOracle.record() at src/oracle/NativeOracle.sol:74",
+      "current_code_ref": "src/oracle/NativeOracle.sol:74-101",
+      "verified": "yes",
+      "current_state_summary": "record() is SYSTEM_CALLER-gated (line 82), updates nonce unconditionally (line 85) then invokes callback with caller-specified callbackGasLimit (line 90).",
+      "gating_conditions": "requireAllowed(SystemAddresses.SYSTEM_CALLER); nonce must equal currentNonce+1 (enforced by _updateNonce at line 265).",
+      "differs_from_original": "Line numbers unchanged. Identical flow.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "NativeOracle._invokeCallback() calls JWKManager.onOracleEvent{ gas: gasLimit }()",
+      "current_code_ref": "src/oracle/NativeOracle.sol:296-326",
+      "verified": "yes",
+      "current_state_summary": "_invokeCallback resolves callback (line 303), wraps the call in try/catch with {gas: gasLimit} at line 314. On revert/OOG, catches, emits CallbackFailed (line 323), returns true (line 324) so NativeOracle still records the payload but JWKManager state changes are rolled back.",
+      "gating_conditions": "gasLimit > 0 (otherwise CallbackSkipped at line 306-307); callback address != 0.",
+      "differs_from_original": "Only minor line drift (~line 314 vs original ~292). Semantics identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "JWKManager.onOracleEvent() calls _regeneratePatchedJWKs() at JWKManager.sol:150",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:117-152",
+      "verified": "yes",
+      "current_state_summary": "onOracleEvent validates version (line 135), updates _issuerVersions (line 140), upserts observed (line 143), then unconditionally calls _regeneratePatchedJWKs() at line 148. Returns false to skip NativeOracle storage (line 151).",
+      "gating_conditions": "requireAllowed(SystemAddresses.NATIVE_ORACLE); version strictly greater than current (_issuerVersions[issuerHash]).",
+      "differs_from_original": "Call to _regeneratePatchedJWKs moved from line 150 to 148. Same function, same effect.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "_regeneratePatchedJWKs calls _clearPatchedState then copies all _observedIssuers back via _upsertPatchedProvider -> _insertSortedIssuer",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:334-359",
+      "verified": "yes",
+      "current_state_summary": "Clears patched state (line 336), then iterates every entry in _observedIssuers (line 339) calling _upsertPatchedProvider (line 344) which, when !provider.exists (always true right after clear), calls _insertSortedIssuer (line 386). After that, applies all _patches (line 351-356).",
+      "gating_conditions": "None — unconditional in onOracleEvent and setPatches.",
+      "differs_from_original": "Function is at line 334 (originally cited 336). Behaviour identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "_insertSortedIssuer performs O(n) right-shift per insertion — total O(n^2) storage writes",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:428-459",
+      "verified": "yes",
+      "current_state_summary": "Search loop (436-444) is O(k). Then `issuers.push()` empty slot (447) and right-shift loop `issuers[i] = issuers[i-1]` from i=len down to insertIdx+1 (450-455). Each shift writes a `bytes` storage slot (dynamic-length copy across mapping-backed storage). Since _regeneratePatchedJWKs inserts n issuers one-by-one into an initially empty _patchedIssuers, total storage writes are 0+1+2+...+(n-1) = O(n^2), PLUS the bytes payload copy cost per shift.",
+      "gating_conditions": "Triggered every time _regeneratePatchedJWKs runs.",
+      "differs_from_original": "Line numbers shifted slightly (428-459 vs cited 452-461) but algorithm unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "_observedIssuers only grows (no pruning): _upsertObservedProvider only appends when !provider.exists, never removes",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:302-327",
+      "verified": "yes",
+      "current_state_summary": "The only writer to _observedIssuers is `_observedIssuers.push(issuer)` at line 312, gated on !provider.exists. grep confirms: no `delete _observedIssuers`, no `.pop()`, no removal path for observed storage anywhere in the contract (lines 29, 255, 259, 312, 339-340 are the only references). setPatches (line 159), _clearPatchedState (line 362), _removePatchedIssuer (line 462), RemoveAll/RemoveIssuer patch types (line 497-500) all operate ONLY on _patchedIssuers, never on _observedIssuers.",
+      "gating_conditions": "None — there is no removal mechanism at all.",
+      "differs_from_original": "Identical. No governance lever to prune observed providers.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 7,
+      "original": "On OOG within callbackGasLimit, NativeOracle's try-catch catches it, emits CallbackFailed, returns true — nonce consumed but JWKManager state NOT updated",
+      "current_code_ref": "src/oracle/NativeOracle.sol:85,314-325",
+      "verified": "yes",
+      "current_state_summary": "_updateNonce (line 85) runs BEFORE _invokeCallback, so nonce is consumed even when the callback reverts. The try/catch at line 314-325 catches low-level reverts including OOG inside the sub-call (Solidity's 63/64 rule leaves the parent with enough gas to handle catch). When caught: emits CallbackFailed, returns true, NativeOracle stores the raw payload but JWKManager's state mutations (including _issuerVersions[issuerHash] = version at JWKManager.sol:140) are rolled back.",
+      "gating_conditions": "Requires the JWKManager callback to OOG. Once n (_observedIssuers.length) is large enough, every call OOGs.",
+      "differs_from_original": "Identical. The try/catch + eager nonce update combination is still present.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 8,
+      "original": "All subsequent JWK oracle callbacks for any issuer also OOG and fail — JWK rotation permanently broken. Neither SYSTEM_CALLER nor governance can unblock without upgrade (setPatches also calls _regeneratePatchedJWKs)",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:159-179",
+      "verified": "yes",
+      "current_state_summary": "setPatches (governance entry) unconditionally calls _regeneratePatchedJWKs() at line 178. Since there is no function to prune _observedIssuers and both the SYSTEM_CALLER path (onOracleEvent->_regeneratePatchedJWKs) and governance path (setPatches->_regeneratePatchedJWKs) must traverse the O(n^2) rebuild, once the gas-threshold is crossed every JWK management path is bricked.",
+      "gating_conditions": "Only way out is contract upgrade (if proxy) or redeploy.",
+      "differs_from_original": "Identical. No escape hatch added.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Every step of the reported data flow was verified against the current main@a623eab source. The _regeneratePatchedJWKs() function (JWKManager.sol:334-359) rebuilds _patchedIssuers from scratch on EVERY onOracleEvent and setPatches call. Each of the n rebuild iterations invokes _insertSortedIssuer (line 428-459) which performs a storage-to-storage right-shift of up to len elements — so the total cost is Θ(n^2) SSTORE operations on bytes-typed storage slots (very expensive). _observedIssuers is append-only (line 312 is the sole writer; no delete/pop anywhere). NativeOracle._invokeCallback wraps the JWK callback in try/catch at line 314 with a caller-specified gas cap; if the callback OOGs, the exception is caught, CallbackFailed is emitted, the oracle nonce has already been consumed at line 85, and JWKManager state mutations are reverted. Governance's sole mutation path (setPatches) also calls _regeneratePatchedJWKs (line 178), so governance cannot unstick the contract either. No pruning API, no issuer cap, no alternate light-weight update path exists. The DoS is therefore latent but inevitable once issuer count grows past the effective gas ceiling.",
+  "key_evidence": [
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "334-359",
+      "excerpt": "function _regeneratePatchedJWKs() internal { _clearPatchedState(); for (uint256 i; i < _observedIssuers.length;) { ... _upsertPatchedProvider(issuerHash, observed.issuer, observed.version, observed.jwks); ...} for (uint256 i; i < _patches.length;) { _applyPatch(_patches[i]); ...} }",
+      "why_matters": "This function is invoked on every oracle callback and every governance setPatches. It rebuilds the entire patched array from scratch, making cost proportional to current cumulative issuer count regardless of which single issuer the current update targets."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "428-459",
+      "excerpt": "function _insertSortedIssuer(bytes[] storage issuers, bytes memory issuer) internal { ... issuers.push(); for (uint256 i = len; i > insertIdx;) { issuers[i] = issuers[i - 1]; ... } issuers[insertIdx] = issuer; }",
+      "why_matters": "This is the O(n) right-shift. Combined with the enclosing loop in _regeneratePatchedJWKs that calls it n times starting from an empty array, total complexity is O(n^2). Writing bytes-typed storage slots is among the most expensive SSTORE patterns in the EVM."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "302-327",
+      "excerpt": "if (!provider.exists) { _observedIssuers.push(issuer); provider.exists = true; } ... delete provider.jwks; for (...) provider.jwks.push(jwks[i]);",
+      "why_matters": "The only writer to _observedIssuers is a monotonic push — there is no code path anywhere in the contract that removes an entry. Confirms the unbounded growth premise."
+    },
+    {
+      "file": "src/oracle/NativeOracle.sol",
+      "lines": "82-101,314-325",
+      "excerpt": "_updateNonce(sourceType, sourceId, nonce); ... shouldStore = _invokeCallback(...); ... try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(...) returns (bool callbackShouldStore) { ... } catch (bytes memory reason) { emit CallbackFailed(...); return true; }",
+      "why_matters": "Nonce is consumed before the callback runs, and the try/catch silently swallows OOG. This means a failed callback cannot be retried for the same nonce, and the JWKManager version bump (line 140) is reverted, so on the next attempt the payload will be the same-or-lower version and will still blow up on the still-too-big observed set."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "159-179",
+      "excerpt": "function setPatches(Patch[] calldata patches) external override { requireAllowed(SystemAddresses.GOVERNANCE); ... _regeneratePatchedJWKs(); }",
+      "why_matters": "Governance's only mutation surface also triggers _regeneratePatchedJWKs, so once the bomb goes off there is no governance action that can defuse it without a proxy upgrade."
+    }
+  ],
+  "counterargument": "One could argue SYSTEM_CALLER (consensus) dictates callbackGasLimit per record and can pass a very large value — up to the block gas limit minus overhead — so in practice the ceiling is not ~2M but ~30M+. That pushes the critical n higher (probably into the hundreds), and the rolling number of real OIDC providers (Google, Apple, Meta, MS, LINE, a handful more) is realistically O(10). However: (a) OIDC rotation itself does not prune issuers even when a provider is retired, so lifecycle debt accumulates; (b) each provider frequently has 3-5 JWKs and the Θ(n^2) term is over issuers, but _upsertPatchedProvider also does a linear copy of the JWK array (line 395-400) — the effective constant is larger; (c) eventually block gas caps matter, but more importantly the per-record callbackGasLimit must be set conservatively by the consensus layer, and raising it ad-hoc is itself a governance/protocol-upgrade event. Additionally, one might argue `_clearPatchedState` (line 362-373) does `delete _patchedIssuers` which should reset the array length to zero cheaply — true — but the O(n^2) cost is in the subsequent re-insertions, not in the clear step. The attack therefore remains architecturally valid; the only mitigation today is to keep issuer count small by operational discipline, which is brittle.",
+  "related_existing_tests": [
+    "test/unit/oracle/JWKManager.t.sol::test_OnOracleEvent_MultipleProviders (only 2 providers — does not stress n)",
+    "test/unit/oracle/JWKManager.t.sol uses CALLBACK_GAS_LIMIT = 2_000_000 which already requires 2M gas for trivial cases, foreshadowing the concern"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

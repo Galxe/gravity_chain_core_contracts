@@ -1,0 +1,114 @@
+{
+  "issue_number": 558,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Staker calls StakePool.renewLockUntil(d) — modifiers onlyStaker + whenNotReconfiguring (no upper-bound restriction)",
+      "current_code_ref": "src/staking/StakePool.sol:457-463",
+      "verified": "no",
+      "current_state_summary": "renewLockUntil now begins with an explicit upper-bound guard: `if (durationMicros > MAX_LOCKUP_DURATION) revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION);`. MAX_LOCKUP_DURATION is defined at src/staking/StakePool.sol:35 as `uint64(4 * 365 days) * 1_000_000` (≈ 4 years in microseconds).",
+      "gating_conditions": "durationMicros must be ≤ 4 years of microseconds; otherwise reverts before any state mutation.",
+      "differs_from_original": "The TODO('overlock protection check') cited in the report is gone. The code flagged by the issue has been replaced with the upper cap check. Line numbers have also shifted (original 307/313 → current 457/466).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "newLockedUntil = lockedUntil + d; overflow-revert only fires on wrap or d=0; attacker picks d = uint64.max - lockedUntil to reach uint64.max",
+      "current_code_ref": "src/staking/StakePool.sol:466-469",
+      "verified": "partial",
+      "current_state_summary": "Overflow check still exists at lines 466-469 (same logic). However the attacker can never reach this line with a value capable of pushing lockedUntil to uint64.max because step 1 already rejects any durationMicros > ~4 years. Max reachable newLockedUntil ≈ current lockedUntil + 4 years.",
+      "gating_conditions": "durationMicros ∈ (0, MAX_LOCKUP_DURATION]; and lockedUntil + durationMicros must not wrap.",
+      "differs_from_original": "Constraint C3 (upper cap) is now enforced; attacker's chosen d to reach uint64.max is rejected.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Lower-bound check passes trivially because uint64.max >> now + minLockup",
+      "current_code_ref": "src/staking/StakePool.sol:471-476",
+      "verified": "yes",
+      "current_state_summary": "Lower-bound validation unchanged, but it is now a sanity floor between minLockup and MAX_LOCKUP_DURATION (≈4y), not an unbounded ceiling.",
+      "gating_conditions": "newLockedUntil ≥ now + minLockup",
+      "differs_from_original": "Behavior unchanged; the vulnerability was the missing ceiling, not the floor.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "lockedUntil = newLockedUntil ≈ year 586524; no UPPER cap exists — TODO acknowledges gap",
+      "current_code_ref": "src/staking/StakePool.sol:478-481",
+      "verified": "no",
+      "current_state_summary": "Assignment still happens but newLockedUntil is bounded by prior + 4y. The TODO has been removed, replaced by MAX_LOCKUP_DURATION enforcement.",
+      "gating_conditions": "All previous checks passed.",
+      "differs_from_original": "Poisoned-key scenario (uint64.max) is unreachable.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "_unstake → _addToPendingBucket with poisoned key (uint64.max)",
+      "current_code_ref": "src/staking/StakePool.sol:457-482",
+      "verified": "no",
+      "current_state_summary": "Because lockedUntil can no longer be set to uint64.max (or even decades in the future) via renewLockUntil, pending-bucket keys created later inherit at most `now + 4 years`, which will expire and become claimable.",
+      "gating_conditions": "Requires a poisoned lockedUntil which is no longer attainable.",
+      "differs_from_original": "Attack precondition removed at source.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "_getClaimableAmount never matches because bucket key = uint64.max",
+      "current_code_ref": "src/staking/StakePool.sol:35,457-482",
+      "verified": "no",
+      "current_state_summary": "Bucket keys are bounded by now + MAX_LOCKUP_DURATION (≈4y); pending amounts become claimable within a bounded and reasonable horizon (plus unbondingDelay).",
+      "gating_conditions": "N/A — prior step unreachable.",
+      "differs_from_original": "Permanent-lock effect neutralized.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 7,
+      "original": "All staked value permanently locked via poisoned lockedUntil",
+      "current_code_ref": "src/staking/StakePool.sol:35,461-463",
+      "verified": "no",
+      "current_state_summary": "Worst-case additional lock from a single malicious call is bounded by 4 years — and each call must pass the same cap. Repeated calls still cannot exceed `lockedUntil + 4y` per call (and further calls still require passing the lower-bound check and do not bypass the per-call cap). The cap expressed as a delta (not absolute) does mean a persistent attacker with ongoing staker authority could keep postponing in increments, but the issue's thesis of instantly moving to uint64.max and permanently locking funds is refuted.",
+      "gating_conditions": "Staker must persistently retain authority and call repeatedly to extend; each call capped at +4y.",
+      "differs_from_original": "Permanent/centuries-long lock impossible via a single or few calls.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 4, 5, 6, 7],
+  "reasoning_chain": "The issue's core claim is a missing upper cap on renewLockUntil that lets the staker jump lockedUntil to uint64.max in one call, permanently locking funds. In the current code at StakePool.sol:461-463 there is now an explicit `if (durationMicros > MAX_LOCKUP_DURATION) revert Errors.ExcessiveLockupDuration(...)` guard, with MAX_LOCKUP_DURATION = ~4 years of microseconds defined at line 35. The TODO the issue quotes has been removed. Tests test_RevertWhen_renewLockUntil_overflow (Staking.t.sol:872-879) confirm that `type(uint64).max` reverts. The poisoned-key exploit chain (steps 5-7) relies on lockedUntil reaching an absurd future value, which is now structurally impossible in a single call. Therefore the vulnerability as described is fixed.",
+  "key_evidence": [
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "35",
+      "excerpt": "uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000;",
+      "why_matters": "Defines the ceiling that the issue claimed was missing; ~4 years in microseconds."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "457-463",
+      "excerpt": "function renewLockUntil(uint64 durationMicros) external onlyStaker whenNotReconfiguring { if (durationMicros > MAX_LOCKUP_DURATION) { revert Errors.ExcessiveLockupDuration(durationMicros, MAX_LOCKUP_DURATION); }",
+      "why_matters": "The exact guard added to close the reported gap; executed before any arithmetic or state write, making the TODO obsolete."
+    },
+    {
+      "file": "src/foundation/Errors.sol",
+      "lines": "95",
+      "excerpt": "error ExcessiveLockupDuration(uint64 provided, uint64 maximum);",
+      "why_matters": "Dedicated error type confirms the cap is a first-class, intentional invariant."
+    },
+    {
+      "file": "test/unit/staking/Staking.t.sol",
+      "lines": "872-879",
+      "excerpt": "function test_RevertWhen_renewLockUntil_overflow() public { ... vm.expectRevert(); IStakePool(pool).renewLockUntil(type(uint64).max); }",
+      "why_matters": "Regression test confirms the exact exploit input from the issue is rejected."
+    }
+  ],
+  "counterargument": "One could argue the fix is incomplete because the cap applies to `durationMicros` (the delta) rather than to the absolute `newLockedUntil`. A persistently authorized malicious staker could therefore call renewLockUntil repeatedly — each call extending by up to 4 years — to gradually push lockedUntil far into the future, which would similarly lock pending buckets. However, the issue specifically describes a one-shot jump to uint64.max and calls out the TODO as the root cause; that scenario is eliminated. Incremental lock-extension grief is a distinct, weaker threat (requires continuous staker authority and still caps each extension at ≤4y, within the same order of magnitude as the protocol's legitimate lockup). Additionally, pending buckets created by earlier _unstake calls have their keys fixed at the lockedUntil value at time-of-write and are not retroactively changed by later renewLockUntil; so amounts already placed in pending cannot be re-poisoned by subsequent renews. The described medium-severity bug as written is fixed.",
+  "related_existing_tests": [
+    "test/unit/staking/Staking.t.sol:872 test_RevertWhen_renewLockUntil_overflow",
+    "test/unit/staking/Staking.t.sol:859 test_RevertWhen_renewLockUntil_resultTooShort",
+    "test/unit/staking/Staking.t.sol:800 test_renewLockUntil_extendsLockup",
+    "test/unit/staking/Staking.t.sol:846 test_renewLockUntil_allowsSmallExtensionWhenFarInFuture",
+    "test/unit/runtime/StakingConfig.t.sol:317 test_RevertWhen_Initialize_ExcessiveLockupDuration"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

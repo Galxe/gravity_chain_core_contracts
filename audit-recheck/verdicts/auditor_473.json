@@ -1,0 +1,117 @@
+{
+  "issue_number": 473,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Natural epoch via Blocker.onBlockStart() → checkAndStartTransition() → _doImmediateReconfigure() → _applyReconfiguration()",
+      "current_code_ref": "src/blocker/Blocker.sol:85-118, src/blocker/Reconfiguration.sol:84-115",
+      "verified": "yes",
+      "current_state_summary": "Blocker.onBlockStart() at Blocker.sol:112 still calls Reconfiguration.checkAndStartTransition(); when _canTransition() returns true and DKG is Off, _doImmediateReconfigure() runs and invokes _applyReconfiguration().",
+      "gating_conditions": "DKG variant == Off (RandomnessConfig); _canTransition() time elapsed.",
+      "differs_from_original": "None of substance at this step.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_applyReconfiguration() step 10: PERFORMANCE_TRACKER.onNewEpoch(newValidatorCount) clears _validators entries to zeros",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:287-288, src/blocker/ValidatorPerformanceTracker.sol:96-117",
+      "verified": "yes",
+      "current_state_summary": "Line 288 still calls PERFORMANCE_TRACKER.onNewEpoch(newValidatorCount); implementation at ValidatorPerformanceTracker.sol:101-116 pops all entries and re-pushes {0,0} for the new active set, so the tracker is fully zeroed right after a natural epoch transition.",
+      "gating_conditions": "Reconfiguration is the only caller (requireAllowed at line 99 of tracker).",
+      "differs_from_original": "Line numbers shifted slightly (288 vs issue-cited 288 – matches).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "_applyReconfiguration() step 13: _transitionState = TransitionState.Idle",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:296",
+      "verified": "yes",
+      "current_state_summary": "State is reset to Idle at line 296 after the performance tracker zeroing and epoch increment.",
+      "gating_conditions": "None.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Governance immediately calls governanceReconfigure() — no _canTransition() time check present, only DkgInProgress guard",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:141-166",
+      "verified": "yes",
+      "current_state_summary": "governanceReconfigure() at lines 141-166 still has NO _canTransition()/time-interval check. It only rejects if _transitionState == DkgInProgress (line 146-148). After a natural immediate reconfigure, state is Idle, so the governance-forced path proceeds.",
+      "gating_conditions": "Caller must be GOVERNANCE (line 142); contract initialized; DKG must not be in-progress.",
+      "differs_from_original": "None — the by-design lack of a time check is confirmed.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "_doImmediateReconfigure() → _applyReconfiguration() runs again; step 8 calls evictUnderperformingValidators()",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:150-151 (and 98-99 for natural path), src/staking/ValidatorManagement.sol:610-725",
+      "verified": "partial",
+      "current_state_summary": "The eviction call site was moved by commit 56c6eeb: evictUnderperformingValidators() is now invoked at Reconfiguration.sol:151 (inside governanceReconfigure itself, BEFORE _doImmediateReconfigure), not inside _applyReconfiguration. Functionally this does not help: at the moment governance runs, the performance tracker was just zeroed by the preceding natural epoch transition (step 2), so the eviction still reads all-zero performances.",
+      "gating_conditions": "ValidatorConfig.allowValidatorSetChange must be true (line 617-619) and autoEvictEnabled must be true (line 665-668); closingEpoch > 1 (line 623-626).",
+      "differs_from_original": "Call site moved out of _applyReconfiguration into governanceReconfigure, but it still executes with the freshly zeroed tracker.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "evictUnderperformingValidators() reads getAllPerformances() — all zeros; every ACTIVE validator marked PENDING_INACTIVE, liveness protection halts at remainingActive<=1",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:670-724",
+      "verified": "yes",
+      "current_state_summary": "Phase 2 reads perfs via getAllPerformances() at line 673-674. For each ACTIVE validator, total = successful + failed = 0 triggers shouldEvict=true at line 698-700; validators are pushed to _pendingInactive and status set to PENDING_INACTIVE. The remainingActive<=1 check (line 713-715) leaves exactly one ACTIVE validator surviving.",
+      "gating_conditions": "autoEvictEnabled==true; allowValidatorSetChange==true; closingEpoch>1; perfs.length == activeLen (length-mismatch guard at 679-682 — after a natural epoch reset this length matches).",
+      "differs_from_original": "None — logic is as described, and the length-match guard does not save us because the tracker was reset to the same activeValidatorCount at step 2.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 7,
+      "original": "onNewEpoch() processes PENDING_INACTIVE → INACTIVE; active validator set collapses to 1",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:280 then src/staking/ValidatorManagement.sol onNewEpoch (called at line 280), _applyDeactivations at lines 730-738",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration() at line 280 invokes ValidatorManagement.onNewEpoch() which drains _pendingInactive via _applyDeactivations (status → INACTIVE, validatorIndex cleared). Final active set = 1.",
+      "gating_conditions": "None once PENDING_INACTIVE has been assigned.",
+      "differs_from_original": "None of substance.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "The fix commit 56c6eeb moved evictUnderperformingValidators() out of _applyReconfiguration() into the two entry points (checkAndStartTransition() line 99 and governanceReconfigure() line 151). This reordering addressed a DKG-sync concern but did NOT close the described attack. The root cause is unchanged: (1) governanceReconfigure() has no time/interval gate (Reconfiguration.sol:141-166); (2) a natural epoch transition immediately before governance zeros the performance tracker (Reconfiguration.sol:288 → ValidatorPerformanceTracker.sol:101-116); (3) the next eviction call reads this zeroed tracker (ValidatorManagement.sol:673-674, 695-700) and evicts every ACTIVE validator down to 1 via the remainingActive<=1 floor (ValidatorManagement.sol:713-715). The only added guard that could disrupt the chain is the closingEpoch<=1 early return (ValidatorManagement.sol:623-626), which is irrelevant on any mainnet state past epoch 2. The attack preconditions (governance signer, autoEvictEnabled, allowValidatorSetChange, DKG Off or DKG finish coordinated) are identical to those stated in the issue.",
+  "key_evidence": [
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "141-166",
+      "excerpt": "function governanceReconfigure() external override { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); if (_transitionState == TransitionState.DkgInProgress) { revert Errors.ReconfigurationInProgress(); } IValidatorManagement(...).evictUnderperformingValidators(); ... if (config.variant == RandomnessConfig.ConfigVariant.Off) { _doImmediateReconfigure(); } else { _startDkgSession(config); } }",
+      "why_matters": "Confirms governanceReconfigure() still lacks any _canTransition()/time gate and that it proactively calls evictUnderperformingValidators(), which is the eviction that will observe the just-reset tracker."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "282-288",
+      "excerpt": "// 3. Reset performance tracker for the new epoch ... uint256 newValidatorCount = IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).getActiveValidatorCount(); IValidatorPerformanceTracker(SystemAddresses.PERFORMANCE_TRACKER).onNewEpoch(newValidatorCount);",
+      "why_matters": "The natural-epoch path unconditionally zeroes the tracker, producing the window in which a governance call sees all-zero performance data."
+    },
+    {
+      "file": "src/blocker/ValidatorPerformanceTracker.sol",
+      "lines": "96-117",
+      "excerpt": "function onNewEpoch(uint256 activeValidatorCount) external override { requireAllowed(SystemAddresses.RECONFIGURATION); ... for (...) { _validators.pop(); } for (...) { _validators.push(IndividualPerformance({ successfulProposals: 0, failedProposals: 0 })); } }",
+      "why_matters": "Destructive reset: every validator slot ends up {0,0} — the precise condition that makes the subsequent eviction pass flag everyone."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "694-724",
+      "excerpt": "uint256 total = uint256(perfs[i].successfulProposals) + uint256(perfs[i].failedProposals); ... if (total == 0) { shouldEvict = true; } else if (perfs[i].successfulProposals == 0) { shouldEvict = true; } ... if (shouldEvict) { if (remainingActive <= 1) { continue; } validator.status = ValidatorStatus.PENDING_INACTIVE; _pendingInactive.push(pool); remainingActive--; emit ValidatorAutoEvicted(pool, perfs[i].successfulProposals); }",
+      "why_matters": "total==0 for every validator after the reset, so all but one are flagged PENDING_INACTIVE. The remainingActive<=1 guard only preserves a single validator — exactly the described collapse-to-1 outcome."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "621-626",
+      "excerpt": "// Skip eviction for epoch 1 — the first epoch after genesis has insufficient performance data (validators are still bootstrapping), so eviction starts from epoch 2. uint64 closingEpoch = IReconfiguration(SystemAddresses.RECONFIGURATION).currentEpoch(); if (closingEpoch <= 1) { return; }",
+      "why_matters": "The only new guard added by commit 56c6eeb that intersects this flow. It only skips epoch 1, so the attack is fully live from epoch 2 onward."
+    }
+  ],
+  "counterargument": "One could argue the attack is now defanged because commit 56c6eeb moved evictUnderperformingValidators() OUT of _applyReconfiguration() into the callers, so the 'second eviction using zeroed data' does not happen inside the same _applyReconfiguration() referenced by the issue. This argument fails on two counts: (a) governanceReconfigure() itself now explicitly calls evictUnderperformingValidators() at line 151, one statement before invoking _doImmediateReconfigure, so the eviction is still executed on the forced governance path; (b) the zeroed-state precondition is created by the PRIOR natural epoch's _applyReconfiguration() at line 288, not by the governance call itself — the two transitions are independent. A second counterargument is that the new closingEpoch<=1 short-circuit blocks the attack, but it only skips epoch 1 (a genesis bootstrap window), leaving every subsequent epoch fully exploitable. A third counterargument is that allowValidatorSetChange can be flipped off to block eviction, but that is a manual incident-response measure, not an inherent code-level defense against the described governance-signer attacker.",
+  "related_existing_tests": [
+    "test/unit/blocker/Reconfiguration.t.sol",
+    "test/unit/staking/ValidatorManagement.t.sol"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

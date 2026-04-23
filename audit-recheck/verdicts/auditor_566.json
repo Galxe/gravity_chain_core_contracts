@@ -1,0 +1,100 @@
+{
+  "issue_number": 566,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "GOVERNANCE calls OnDemandOracleTaskConfig.setTaskType(sourceType, sourceId, config) registering the tuple as supported (config.length > 0).",
+      "current_code_ref": "src/oracle/ondemand/OnDemandOracleTaskConfig.sol:27-41",
+      "verified": "yes",
+      "current_state_summary": "setTaskType still gated by GOVERNANCE; rejects empty config; writes OnDemandTaskType with config bytes. isSupported returns true whenever config.length > 0 (L68-73).",
+      "gating_conditions": "requireAllowed(GOVERNANCE); config.length > 0.",
+      "differs_from_original": "No material change.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_expirationDurations[sourceType] remains default 0 because setExpiration is never called.",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:67, 250-260",
+      "verified": "yes",
+      "current_state_summary": "Storage mapping _expirationDurations is uninitialized by default. setExpiration is a separate GOVERNANCE-only call (L250-260), independent of setTaskType. So a misconfiguration window where duration==0 for a registered sourceType is still reachable.",
+      "gating_conditions": "None — default zero value for uint64 mapping slot.",
+      "differs_from_original": "Unchanged; the two configs remain decoupled.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "User calls request(sourceType, sourceId, data); duration = 0; expiresAt = block.timestamp + 0 = block.timestamp; the request is stored with expiresAt == block.timestamp.",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:99-145",
+      "verified": "no",
+      "current_state_summary": "request() now contains an explicit guard at L116-118: `uint64 duration = _expirationDurations[sourceType]; if (duration == 0) revert ExpirationNotConfigured(sourceType);`. When sourceType is registered via setTaskType but setExpiration has not been called, request() reverts with ExpirationNotConfigured before any request slot is ever allocated. No _requests[requestId] entry is created, no ETH is held, no RequestSubmitted event is emitted.",
+      "gating_conditions": "duration != 0 required; otherwise execution reverts before request storage write at L125.",
+      "differs_from_original": "Fundamental change — the original flow assumed duration==0 silently produced expiresAt==block.timestamp; the current code explicitly forbids duration==0. The revert at L118 happens BEFORE L119 computes expiresAt.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Attacker calls refund(requestId) in same/next block; L211 guard `block.timestamp < req.expiresAt` is false (both equal); refund proceeds.",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:192-230",
+      "verified": "partial",
+      "current_state_summary": "refund() logic is unchanged: no access control, expiration check at L211 is `block.timestamp < req.expiresAt`. BUT no request with expiresAt==block.timestamp can exist because Step 3 reverts. For any existing request, expiresAt = block.timestamp_at_request + duration where duration > 0, so at request time block.timestamp < expiresAt strictly.",
+      "gating_conditions": "req.requester != 0; !req.fulfilled; !req.refunded; block.timestamp >= req.expiresAt (strict inequality via the negation).",
+      "differs_from_original": "The guard is identical, but the precondition (expiresAt==block.timestamp requests) is unreachable.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Validators' markFulfilled reverts with AlreadyRefunded because refund already flipped req.refunded.",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:152-185",
+      "verified": "partial",
+      "current_state_summary": "markFulfilled still reverts on AlreadyRefunded (L168-170). But since Step 4 cannot be triggered for a fresh request under the attack scenario, this denial state is unreachable from the described path.",
+      "gating_conditions": "Only SYSTEM_CALLER can mark fulfilled; reverts if req.refunded or req.fulfilled.",
+      "differs_from_original": "Logic unchanged; precondition unreachable.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "Every request for the misconfigured sourceType is race-refundable, DoSing oracle service silently until setExpiration is called.",
+      "current_code_ref": "src/oracle/ondemand/OracleRequestQueue.sol:116-118",
+      "verified": "no",
+      "current_state_summary": "The DoS via silent refund no longer materializes: users cannot submit requests at all when duration==0. The request function reverts loudly with ExpirationNotConfigured, alerting integrators and governance. Instead of silent data-unavailability and fee handling loops, callers get an explicit typed error at the entry point.",
+      "gating_conditions": "N/A — the misconfiguration failure is now fail-closed at the request entry.",
+      "differs_from_original": "The 'silent' qualifier no longer applies. What remains is only the pre-existing integration-UX concern that governance must configure expiration; but no griefing surface exists.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [3, 4, 5, 6],
+  "reasoning_chain": "The vulnerability relied on request() succeeding with duration==0 so expiresAt==block.timestamp, making refund()'s `block.timestamp < req.expiresAt` guard vacuous and allowing race-refunding. Current code at src/oracle/ondemand/OracleRequestQueue.sol:116-118 adds `if (duration == 0) revert ExpirationNotConfigured(sourceType);` which aborts request() before any state is written. Without a persisted request whose expiresAt equals the creation timestamp, the attacker has no requestId to race-refund and validators have no silently-poisoned requests. The refund() logic itself is unchanged, but its exploitable precondition (expiresAt==requestedAt) is now unreachable. A regression test test_Request_RevertWhenExpirationNotConfigured at test/unit/oracle/OracleRequestQueue.t.sol:183-197 explicitly enforces this invariant. Therefore the bug as reported — silent immediate-refund DoS — does not exist in current code.",
+  "key_evidence": [
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "116-119",
+      "excerpt": "uint64 duration = _expirationDurations[sourceType];\n// Ensure expiration duration has been configured\nif (duration == 0) revert ExpirationNotConfigured(sourceType);\nuint64 expiresAt = uint64(block.timestamp) + duration;",
+      "why_matters": "Explicit fail-closed guard preventing the core precondition of the reported attack (expiresAt == block.timestamp for duration==0 source types). Request is rejected before any storage write."
+    },
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "50-51",
+      "excerpt": "/// @notice Expiration duration not configured for source type\nerror ExpirationNotConfigured(uint32 sourceType);",
+      "why_matters": "A dedicated typed error emitted on the misconfiguration path ensures failure is observable to integrators and monitoring, replacing the silent-DoS surface."
+    },
+    {
+      "file": "src/oracle/ondemand/OracleRequestQueue.sol",
+      "lines": "192-213",
+      "excerpt": "function refund(uint256 requestId) external {\n    OracleRequest storage req = _requests[requestId];\n    if (req.requester == address(0)) { revert RequestNotFound(requestId); }\n    ...\n    if (block.timestamp < req.expiresAt) {\n        revert NotExpired(requestId, req.expiresAt, uint64(block.timestamp));\n    }",
+      "why_matters": "refund() remains permissionless and uses strict `<`, but since no request can exist with expiresAt==block.timestamp_at_request, the race window collapses to zero."
+    },
+    {
+      "file": "test/unit/oracle/OracleRequestQueue.t.sol",
+      "lines": "183-197",
+      "excerpt": "function test_Request_RevertWhenExpirationNotConfigured() public {\n    uint32 customSourceType = 100;\n    ...\n    taskConfig.setTaskType(customSourceType, customSourceId, abi.encode(\"custom config\"));\n    // Do NOT configure expiration for this source type\n    vm.expectRevert(abi.encodeWithSelector(OracleRequestQueue.ExpirationNotConfigured.selector, customSourceType));\n    requestQueue.request{ value: 0 }(customSourceType, customSourceId, requestData);\n}",
+      "why_matters": "Regression test cementing exactly the attack scenario (setTaskType without setExpiration) as reverting. Any future regression re-opening the bug would fail this test."
+    }
+  ],
+  "counterargument": "One could argue the bug is merely relocated, not fixed: governance still has two decoupled calls (setTaskType and setExpiration), so a misconfiguration window exists. A defender might object that now every request reverts during that window, which is itself a denial-of-service — users cannot use the oracle for sourceType X until setExpiration runs. However, the reported issue specifically described a griefable, silent, fee-handling DoS in which ETH flowed in and out with refund() being frontrunnable by MEV bots, leaving validators permanently blocked per request. In the current code, no request state is ever created, no fee is ever deposited, and there is no race. The outcome is simply 'request reverts with a typed error' — functionally equivalent to any other unconfigured-source unavailability (e.g. UnsupportedSourceType) and not a security vulnerability. Additionally, since request() reverts before transferring ETH, there is no attacker gain surface, no fulfilled/refunded state leakage, and no permanent per-request denial. The only residual exposure is the usual governance operational hygiene — a class of concern that is outside the scope of the reported exploit and not specific to this contract.",
+  "related_existing_tests": [
+    "test/unit/oracle/OracleRequestQueue.t.sol:183-197 test_Request_RevertWhenExpirationNotConfigured"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

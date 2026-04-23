@@ -1,0 +1,104 @@
+{
+  "issue_number": 431,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Attacker controls GOVERNANCE role and calls GovernanceConfig.setForNextEpoch(0, 0, 1) at GovernanceConfig.sol:119 — _validateConfig only checks votingDurationMicros > 0; minVotingThreshold=0 and requiredProposerStake=0 pass",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:130-149",
+      "verified": "no",
+      "current_state_summary": "setForNextEpoch still requires GOVERNANCE and forwards to _validateConfig(_minVotingThreshold, _requiredProposerStake, _votingDurationMicros) (3-arg, not 1-arg) — any of the trivial values (0,0,1) revert before the pending config is written.",
+      "gating_conditions": "requireAllowed(GOVERNANCE); _requireInitialized(); _validateConfig(minVotingThreshold, requiredProposerStake, votingDurationMicros)",
+      "differs_from_original": "Issue assumes _validateConfig signature is _validateConfig(uint64 _votingDurationMicros) with only votingDurationMicros==0 check. Current signature is _validateConfig(uint128, uint256, uint64) with 6 lower/upper bound checks.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "_validateConfig only validates votingDurationMicros > 0, so (0, 0, 1) passes.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:188-213",
+      "verified": "no",
+      "current_state_summary": "_validateConfig now enforces: _minVotingThreshold != 0 (revert InvalidVotingThreshold); != type(uint128).max; _requiredProposerStake != 0 (revert InvalidProposerStake); != type(uint256).max; _votingDurationMicros >= MIN_VOTING_DURATION (1 hour = 3_600_000_000 micros); <= MAX_VOTING_DURATION (365 days).",
+      "gating_conditions": "minVotingThreshold > 0 AND < type(uint128).max; requiredProposerStake > 0 AND < type(uint256).max; 3_600_000_000 <= votingDurationMicros <= 31_536_000_000_000_000",
+      "differs_from_original": "The entire premise of the finding — that _validateConfig only checks votingDurationMicros==0 — is false. All three trivial-value attacks (0, 0, 1) are independently rejected.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "applyPendingConfig() writes (0, 0, 1) to live state at epoch boundary.",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:158-178",
+      "verified": "no",
+      "current_state_summary": "applyPendingConfig still copies _pendingConfig into live storage, but no such malicious pending config can ever exist because setForNextEpoch reverts on (0, 0, 1) at line 139 before assignment at lines 141-146.",
+      "gating_conditions": "requireAllowed(RECONFIGURATION); hasPendingConfig == true (only set via setForNextEpoch, which validates inputs)",
+      "differs_from_original": "Step is unreachable with the malicious values; the pending-config pattern itself is unchanged but pre-validated.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "createProposal passes because requiredStake=0 and votingPower never < 0.",
+      "current_code_ref": "src/governance/Governance.sol:276-337",
+      "verified": "no",
+      "current_state_summary": "createProposal still contains `if (votingPower < requiredStake) revert`, but requiredProposerStake is guaranteed > 0 by _validateConfig; thus the check is effective (requires nonzero votingPower for any valid config).",
+      "gating_conditions": "votingPower (from stake pool at expirationTime) >= requiredProposerStake > 0",
+      "differs_from_original": "Precondition (requiredStake=0) cannot occur.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Attacker votes in same block because expirationTime = now + 1µs; 1 wei yes-vote wins with minVotingThreshold=0.",
+      "current_code_ref": "src/governance/Governance.sol:200-223, 142-175",
+      "verified": "no",
+      "current_state_summary": "votingDurationMicros is now >= 3_600_000_000 (1 hour), so expirationTime is at least one hour in the future — voting cannot resolve in the same block. Additionally, canResolve() at lines 217-220 enforces `now_ > lastVoteTime` (atomicity guard) preventing same-block vote+resolve flash-loan attacks. minVotingThreshold is guaranteed > 0, so the `yesVotes + noVotes >= minVoteThreshold` quorum check is non-trivial.",
+      "gating_conditions": "now_ >= p.expirationTime (>= 1 hour after creation); now_ > lastVoteTime; yesVotes > noVotes && yesVotes + noVotes >= minVoteThreshold (>=1)",
+      "differs_from_original": "1-microsecond voting window is impossible; same-block vote+resolve blocked by atomicity guard; zero-quorum impossible.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "Executor calls execute() with arbitrary datas — governance captured.",
+      "current_code_ref": "src/governance/Governance.sol:276-337 (unreachable via trivial config)",
+      "verified": "no",
+      "current_state_summary": "Execute path is unreachable because the prerequisite (a SUCCEEDED proposal created under trivial thresholds) cannot exist.",
+      "gating_conditions": "Proposal must reach SUCCEEDED state, which requires real quorum and waiting out a real voting window.",
+      "differs_from_original": "Attack chain terminated at step 1.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 5],
+  "reasoning_chain": "The finding's root cause is the claim that _validateConfig has only a single check `_votingDurationMicros == 0`. In the current code at src/runtime/GovernanceConfig.sol:188-213, _validateConfig is a 3-parameter function enforcing lower bounds on all three config values: minVotingThreshold must be in (0, type(uint128).max); requiredProposerStake must be in (0, type(uint256).max); votingDurationMicros must be in [MIN_VOTING_DURATION=1 hour in micros, MAX_VOTING_DURATION=365 days in micros]. The attack input (0, 0, 1) is rejected at the very first revert (InvalidVotingThreshold) and would also fail the other five checks. Additionally, Governance.sol:217-220 adds a flash-loan atomicity guard in canResolve() (`now_ > lastVoteTime`) that independently blocks same-block vote+resolve even if a short window existed. The vulnerability as described is fully mitigated.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "188-213",
+      "excerpt": "function _validateConfig(uint128 _minVotingThreshold, uint256 _requiredProposerStake, uint64 _votingDurationMicros) internal pure { if (_minVotingThreshold == 0) revert Errors.InvalidVotingThreshold(); if (_minVotingThreshold == type(uint128).max) revert Errors.ExcessiveMinVotingThreshold(); if (_requiredProposerStake == 0) revert Errors.InvalidProposerStake(); if (_requiredProposerStake == type(uint256).max) revert Errors.ExcessiveRequiredProposerStake(); if (_votingDurationMicros < MIN_VOTING_DURATION) revert Errors.VotingDurationTooShort(...); if (_votingDurationMicros > MAX_VOTING_DURATION) revert Errors.VotingDurationTooLong(...); }",
+      "why_matters": "Directly refutes the premise of the finding. Every parameter in the malicious input (0, 0, 1) hits an independent revert."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "20-23",
+      "excerpt": "uint64 public constant MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000; uint64 public constant MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;",
+      "why_matters": "Lower bound of 1 hour (3.6e9 micros) makes the '1 microsecond voting window' attack impossible."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "130-149",
+      "excerpt": "function setForNextEpoch(uint128 _minVotingThreshold, uint256 _requiredProposerStake, uint64 _votingDurationMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(_minVotingThreshold, _requiredProposerStake, _votingDurationMicros); _pendingConfig = PendingConfig({...}); hasPendingConfig = true; ... }",
+      "why_matters": "Confirms that validation runs before any pending config is written. No bypass path."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "200-223",
+      "excerpt": "function canResolve(...) { ... uint64 lastVote = lastVoteTime[proposalId]; if (lastVote > 0 && now_ <= lastVote) { return false; } return true; }",
+      "why_matters": "Defense-in-depth: even if duration were somehow 1 micro, atomic same-block vote+resolve is blocked by lastVoteTime atomicity guard."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "158, 171",
+      "excerpt": "if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) return ProposalState.SUCCEEDED;",
+      "why_matters": "Quorum check uses minVoteThreshold; guarantees >=1 because _validateConfig forbids minVotingThreshold==0."
+    }
+  ],
+  "counterargument": "One could argue that despite the bounds, the minimum values (minVotingThreshold=1, requiredProposerStake=1, votingDurationMicros=3_600_000_000) are still economically trivial: a GOVERNANCE role holder could set requiredProposerStake=1 wei and minVotingThreshold=1 vote, then wait 1 hour and pass any proposal with essentially no collateral. This would still enable a cheap takeover IF the attacker already controls GOVERNANCE. However, (a) the issue's specific exploit (same-block 1-µs window, zero quorum) is impossible; (b) the root precondition is 'attacker controls GOVERNANCE' which means governance is already captured — lowering thresholds adds no new capability beyond what GOVERNANCE already has (GOVERNANCE can call any privileged system function directly via setForNextEpoch and other config contracts); (c) the 1-hour minimum voting window gives off-chain defenders time to observe and potentially counter-propose/emergency-pause. The finding as written claims a specific high-severity exploit chain (1-wei, same-block, zero-quorum takeover) which is categorically blocked.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "fixed"
+}

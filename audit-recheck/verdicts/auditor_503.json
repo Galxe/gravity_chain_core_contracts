@@ -1,0 +1,96 @@
+{
+  "issue_number": 503,
+  "verdict": "PARTIAL",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "GOVERNANCE calls EpochConfig.setForNextEpoch(1); only zero check, interval=1 accepted.",
+      "current_code_ref": "src/runtime/EpochConfig.sol:99-113",
+      "verified": "yes",
+      "current_state_summary": "setForNextEpoch validates only `_epochIntervalMicros == 0` (L105-107). There is no lower bound (e.g. minimum sane interval in microseconds) and no upper bound. Passing 1 microsecond is accepted and written to `_pendingEpochIntervalMicros` with `hasPendingConfig = true` (L109-110).",
+      "gating_conditions": "Caller must be SystemAddresses.GOVERNANCE (L102) and contract must be initialized (L103). Attack presumes a governance proposal executing this call.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "At next epoch boundary, Reconfiguration._applyReconfiguration() calls EpochConfig.applyPendingConfig(); epochIntervalMicros becomes 1.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-274",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration() invokes `EpochConfig(SystemAddresses.EPOCH_CONFIG).applyPendingConfig()` at L274. applyPendingConfig (EpochConfig.sol:122-138) copies `_pendingEpochIntervalMicros` into `epochIntervalMicros` unconditionally when `hasPendingConfig` is true. No bound is enforced on apply either.",
+      "gating_conditions": "Reconfiguration must be reached via checkAndStartTransition() / governanceReconfigure() / finishTransition(). With current interval > 0, this simply fires at the normal boundary once.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "_canTransition() evaluates currentTime >= lastReconfigurationTime + 1 — true every block.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:215-219",
+      "verified": "yes",
+      "current_state_summary": "_canTransition reads `epochInterval = EpochConfig(...).epochIntervalMicros()` and returns `currentTime >= lastReconfigurationTime + epochInterval`. With interval=1, any block whose timestamp is at least 1 microsecond after lastReconfigurationTime satisfies the predicate. Block timestamps are in microseconds and are monotonically non-decreasing via ITimestampWriter.updateGlobalTime; for normal (non-NIL) blocks time must strictly advance (see Blocker.sol:107 comment), so the predicate is effectively true every normal block.",
+      "gating_conditions": "lastReconfigurationTime is updated to nowMicroseconds() on each _applyReconfiguration (L293). Predicate holds whenever currentTime > lastReconfigurationTime, which is every normal block.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Blocker calls checkAndStartTransition() each block; _doImmediateReconfigure -> _applyReconfiguration fires every block: 7 cross-contract applyPendingConfig, evictUnderperformingValidators, onNewEpoch, PerformanceTracker.onNewEpoch, currentEpoch++.",
+      "current_code_ref": "src/blocker/Blocker.sol:85-119; src/blocker/Reconfiguration.sol:83-115, 254-308",
+      "verified": "yes",
+      "current_state_summary": "Blocker.onBlockStart (L85) calls Reconfiguration.checkAndStartTransition (L112). checkAndStartTransition evicts underperforming validators (L99), then if RandomnessConfig variant == Off runs _doImmediateReconfigure -> _applyReconfiguration (L254-260), which applies 8 pending configs (L267-274, listing RandomnessConfig, ConsensusConfig, ExecutionConfig, ValidatorConfig, VersionConfig, GovernanceConfig, StakingConfig, EpochConfig — actually 8, one more than issue text says), calls ValidatorManagement.onNewEpoch (L280), PerformanceTracker.onNewEpoch (L288), and increments currentEpoch (L291-293). When DKG is enabled (variant != Off) the path is _startDkgSession and must await finishTransition, which could dampen the per-block cadence in that mode.",
+      "gating_conditions": "DoS cadence is per-block only when RandomnessConfig.variant == Off. When DKG is enabled, between transition starts the contract sits in TransitionState.DkgInProgress and checkAndStartTransition early-returns (L89-91); the churn rate is then gated by consensus/governance calling finishTransition.",
+      "differs_from_original": "Issue says 7 cross-contract applyPendingConfig calls; current code does 8 (adds EpochConfig.applyPendingConfig at L274). Also issue text omits that under DKG-enabled mode the cadence is throttled by DkgInProgress state.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "Alternate vector: setForNextEpoch(type(uint64).max) causes lastReconfigurationTime + type(uint64).max to overflow uint64 to ~currentTime-1 -> condition always true.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:2, 215-219",
+      "verified": "no",
+      "current_state_summary": "pragma solidity ^0.8.30 (L2) uses checked arithmetic by default, and no `unchecked { ... }` block surrounds the addition at L218. Solidity performs the addition at the declared `uint64` type width; `lastReconfigurationTime + type(uint64).max` when lastReconfigurationTime > 0 therefore REVERTS with Panic(0x11) rather than wrapping. The attacker cannot produce a wrap-around 'always-true' condition this way — instead _canTransition would revert, which would revert checkAndStartTransition and thus revert every block prologue, producing a different (but still severe) outcome: total chain halt rather than per-block churn. So this specific vector as described does not hold; a harsher-but-different failure mode replaces it.",
+      "gating_conditions": "None — overflow path is dead in checked arithmetic.",
+      "differs_from_original": "Issue claims silent uint64 overflow; Solidity 0.8.30 checked arithmetic prevents the wrap.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [5],
+  "reasoning_chain": "Primary vector (interval=1 micros) is confirmed present: setForNextEpoch only rejects zero (EpochConfig.sol:105-107), applyPendingConfig copies the value without bounds (EpochConfig.sol:122-138), and _canTransition uses a bare `currentTime >= lastReconfigurationTime + epochInterval` check (Reconfiguration.sol:218) so any interval of 1us makes the predicate true on every normal block. Blocker.onBlockStart invokes checkAndStartTransition on every block (Blocker.sol:112), and under RandomnessConfig variant == Off the full _applyReconfiguration path (8 applyPendingConfig calls + eviction + onNewEpoch + currentEpoch++) fires per block — a real permanent-DoS/epoch-churn bug until governance proposes a corrective interval. Secondary vector (type(uint64).max overflow) does NOT hold: checked arithmetic under Solidity ^0.8.30 without any `unchecked` block in Reconfiguration.sol will REVERT on the uint64 overflow, not wrap. The overflow would actually halt the chain (every onBlockStart reverts), not produce continuous epochs — still dangerous but not the described flow. Severity of the main bug is real but somewhat mitigated by the heavy trust assumption: only GOVERNANCE (0x...625F3000) can call setForNextEpoch, and such proposals go through GovernanceConfig.votingDurationMicros review. No lower-bound/upper-bound defense-in-depth exists in the runtime, so a buggy proposal (or compromised governance) is not caught.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/EpochConfig.sol",
+      "lines": "99-113",
+      "excerpt": "function setForNextEpoch(uint64 _epochIntervalMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); if (_epochIntervalMicros == 0) { revert Errors.InvalidEpochInterval(); } _pendingEpochIntervalMicros = _epochIntervalMicros; hasPendingConfig = true; ... }",
+      "why_matters": "Only checks !=0. No minimum sane interval (e.g. block time) and no maximum upper bound. Accepts 1 and type(uint64).max."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "215-219",
+      "excerpt": "function _canTransition() internal view returns (bool) { uint64 currentTime = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint64 epochInterval = EpochConfig(SystemAddresses.EPOCH_CONFIG).epochIntervalMicros(); return currentTime >= lastReconfigurationTime + epochInterval; }",
+      "why_matters": "With interval=1, predicate holds every block. Under Solidity 0.8.30 checked math (pragma at L2, no `unchecked`), `lastReconfigurationTime + type(uint64).max` REVERTS, breaking the issue's stated overflow path."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-308",
+      "excerpt": "_applyReconfiguration: RandomnessConfig/ConsensusConfig/ExecutionConfig/ValidatorConfig/VersionConfig/GovernanceConfig/StakingConfig/EpochConfig.applyPendingConfig(); VALIDATOR_MANAGER.onNewEpoch(); PERFORMANCE_TRACKER.onNewEpoch(count); currentEpoch = currentEpoch + 1; lastReconfigurationTime = nowMicroseconds();",
+      "why_matters": "Confirms per-block churn: 8 config applies + validator eviction + performance reset + epoch bump every block when interval=1 and variant==Off."
+    },
+    {
+      "file": "src/blocker/Blocker.sol",
+      "lines": "85-119",
+      "excerpt": "function onBlockStart(...) external { ... IReconfiguration(SystemAddresses.RECONFIGURATION).checkAndStartTransition(); ... }",
+      "why_matters": "Confirms the block-prologue hook that makes the DoS cadence per-block."
+    },
+    {
+      "file": "src/runtime/EpochConfig.sol",
+      "lines": "122-138",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) { return; } uint64 oldValue = epochIntervalMicros; epochIntervalMicros = _pendingEpochIntervalMicros; hasPendingConfig = false; _pendingEpochIntervalMicros = 0; ... }",
+      "why_matters": "No bounds re-check at apply time — pending value of 1 is committed as-is to the live interval."
+    }
+  ],
+  "counterargument": "GOVERNANCE is a privileged system address; only governance-voted proposals can reach setForNextEpoch. The issue is therefore less of an unauthenticated exploit and more of a 'governance foot-gun / defense-in-depth gap': a careless or malicious proposal is not caught by any on-chain sanity check. Additionally the type(uint64).max subcase as described does NOT work under Solidity 0.8.30 — checked arithmetic makes `lastReconfigurationTime + type(uint64).max` revert, which would produce an entirely different failure mode (every onBlockStart reverts) rather than the claimed per-block epoch churn. So one of the two claimed vectors is factually wrong, while the primary interval=1 vector is accurate. Also note: under DKG-enabled randomness (variant != Off), checkAndStartTransition sets TransitionState.DkgInProgress and early-returns on subsequent blocks (Reconfiguration.sol:89-91), so the per-block-churn claim strictly holds only under variant == Off; otherwise the cadence is throttled by finishTransition invocation.",
+  "related_existing_tests": [
+    "test/unit/runtime/EpochConfig.t.sol::test_RevertWhen_SetForNextEpoch_Zero (only validates zero rejection — no test asserts any lower/upper bound)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

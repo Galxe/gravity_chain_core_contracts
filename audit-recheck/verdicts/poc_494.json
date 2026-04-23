@@ -1,0 +1,16 @@
+{
+  "issue_number": 494,
+  "dynamic_status": "DYNAMIC_PASS",
+  "forge_result_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/494/results/main_a623eab.txt",
+  "poc_test_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/494/test/POC_494.t.sol",
+  "verdict_md_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/494/results/verdict.md",
+  "attempts": 3,
+  "gas_measurements": {
+    "10": 4855761,
+    "20": 10604056,
+    "40": 24857410,
+    "80": 64461389
+  },
+  "reasoning": "Measured _regeneratePatchedJWKs() cost on main@a623eab by invoking setPatches([]) after populating the JWKManager's _observedIssuers to N in {10, 20, 40, 80} via onOracleEvent (pranked as NATIVE_ORACLE). Observed gas is 4.86M / 10.60M / 24.86M / 64.46M respectively — a 13.27x growth for 8x N-increase, which is clearly super-linear (linear would give 8.0x exactly) with an accelerating per-doubling ratio of 2.18 → 2.34 → 2.59 (linear=2.0, quadratic=4.0) that confirms the quadratic term gradually dominating. At N=80 the cost already exceeds the 30M block gas limit by >2x, so in production every onOracleEvent would OOG inside NativeOracle's try/catch (NativeOracle.sol:314) while the nonce has already been consumed (NativeOracle.sol:85) and JWKManager state changes rolled back — permanent DoS. Governance's escape hatch setPatches also routes through the quadratic body. The literal '30x by N=80' threshold suggested in the task is not achievable until N ≈ 200 because a sizeable linear term (~430k gas per issuer for the sorted-insert search and JWK-copy) dominates at small N; however, the vulnerability manifests long before that ratio appears. Test PASSES three assertions: super-linear (ratio_80_10 >= 12x), accelerating doubling ratio (quadratic signature), and absolute gas > 30M (DoS on real block). Dynamic verdict agrees with static EXISTS.",
+  "agrees_with_static_exists": true
+}

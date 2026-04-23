@@ -1,0 +1,11 @@
+{
+  "issue_number": 567,
+  "also_covers": [559],
+  "dynamic_status": "DYNAMIC_PASS",
+  "forge_result_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/567/results/main_a623eab.txt",
+  "poc_test_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/567/test/POC_567.t.sol",
+  "verdict_md_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/567/results/verdict.md",
+  "attempts": 1,
+  "reasoning": "PoC mimics the production BSC-style predeploy using vm.etch at SystemAddresses.GOVERNANCE without copying slot 0/1 — the exact omission the static auditor flagged. On main (a623eab), forge test PASSES with all four assertion clusters holding: (1) Governance.owner()==address(0) while a normally-constructed twin has owner()==intendedOwner (sanity check proves bytecode is fine, flaw is purely the missing storage seed); (2) addExecutor reverts for both an arbitrary caller and the *intended* owner (slot 0 was never seeded so even the 'right' address has no authority); (3) all three recovery paths (transferOwnership, acceptOwnership, renounceOwnership) revert; (4) execute(...) reverts on the onlyExecutor gate because _executors is permanently empty. This directly confirms the static EXISTS verdict's impact claim (on-chain governance execution permanently bricked). The only residual concern is the counterargument the static report itself raises: an out-of-repo gravity-reth node could in principle apply a hardcoded slot-0 state override at chain start; this PoC cannot disprove that since the node source is not in this repo, but the static auditor's reasoning (no config field, no hook, and the unit-test harness's explicit vm.store workaround all suggest the node does not do this) remains persuasive. Dynamic confidence: HIGH on the Solidity/genesis-tool layer.",
+  "agrees_with_static_exists": true
+}

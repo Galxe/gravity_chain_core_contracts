@@ -1,0 +1,13 @@
+{
+  "issue_number": 339,
+  "also_covers": [462, 473, 357],
+  "dynamic_status": "DYNAMIC_PASS",
+  "poc_scope": "full_cascade",
+  "forge_result_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/339/results/main_a623eab.txt",
+  "poc_test_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/339/test/POC_339.t.sol",
+  "verdict_md_path": "/home/kenji/galxe/Coacker/.audit-recheck/poc/339/results/verdict.md",
+  "attempts": 1,
+  "reasoning": "PoC builds the full system-contract environment at canonical SystemAddresses (Timestamp, all configs, DKG, Reconfiguration, PerformanceTracker, ValidatorManagement) plus a MockStaking (real pools unnecessary because the eviction path only reads getPoolVotingPower and a try/catch'd renewPoolLockup). 4 validators are bootstrapped directly to ACTIVE via ValidatorManagement.initialize(GenesisValidator[]) — the genesis path skips the BLS PoP precompile. With autoEvictEnabled=true and DKG variant=Off pre-set at genesis, two pranked calls from SystemAddresses.GOVERNANCE to Reconfiguration.governanceReconfigure() reproduce the exploit faithfully: call #1 is harmless (closingEpoch<=1 skip-guard) but resets PerformanceTracker to all-zero and bumps epoch to 2; call #2 then triggers evictUnderperformingValidators reading (0,0) for every validator, hits the unconditional total==0 branch, and onNewEpoch demotes every validator except the last to INACTIVE in the same tx. Forge PASS on first attempt, gas=540585; getActiveValidatorCount() collapses from 4 to 1, totalVotingPower drops from 400 ether to 100 ether, all on commit a623eab.",
+  "agrees_with_static_exists": true,
+  "which_cluster_issues_confirmed": [339, 462, 473, 357]
+}

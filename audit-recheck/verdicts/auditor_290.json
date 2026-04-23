@@ -1,0 +1,88 @@
+{
+  "issue_number": 290,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "_startDkgSession() computes targets via getNextValidatorConsensusInfos() at DKG start (T1) and sets _transitionState = DkgInProgress.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:230-250",
+      "verified": "yes",
+      "current_state_summary": "_startDkgSession() still reads ValidatorManagement.getNextValidatorConsensusInfos() at line 237, calls DKG.start() at line 243, then sets _transitionState = TransitionState.DkgInProgress at line 246. After this point, isTransitionInProgress() returns true.",
+      "gating_conditions": "Requires config.variant != Off. State transitions to DkgInProgress BEFORE returning from checkAndStartTransition().",
+      "differs_from_original": "Matches issue description.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Between T1 and T2, V's delegators unstake, reducing V's voting power below minimumBond (pending-active → revertInactive at finishTransition).",
+      "current_code_ref": "src/staking/StakePool.sol:117-122, 430-454; src/staking/ValidatorManagement.sol:222-225, 241, 359, 396, 434, 481, 518",
+      "verified": "yes",
+      "current_state_summary": "Every mutating staking operation that could change voting power is guarded by the whenNotReconfiguring modifier: StakePool.addStake (line 405), unstake (430-434), withdrawAvailable (437-441), unstakeAndWithdraw (445-454), renewLockUntil (457-459); ValidatorManagement.joinValidatorSet (241), rotateConsensusKey (359), leaveValidatorSet (396), registerValidator (434), rotateOperator (481), changeFeeRecipient/commission (518). The modifier at StakePool.sol:117-122 reverts with Errors.ReconfigurationInProgress() whenever IReconfiguration.isTransitionInProgress() returns true — which, per step 1, is exactly the T1→T2 window.",
+      "gating_conditions": "Active throughout DkgInProgress window.",
+      "differs_from_original": "The issue hypothesizes staking ops can freely execute during DKG; in current code they all revert.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "finishTransition() → _applyReconfiguration() → onNewEpoch() → _computeNextEpochValidatorSet() recomputes validator set from live state at T2, producing a set that diverges from the DKG target set.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-308; src/staking/ValidatorManagement.sol:537-589, 951-1058",
+      "verified": "partial",
+      "current_state_summary": "The recomputation itself is real — onNewEpoch() at line 542 calls _computeNextEpochValidatorSet(), which reads live _getValidatorVotingPower(pool) (line 990 / 934-941) from the current timestamp. getNextValidatorConsensusInfos() (line 1253) uses the same internal helper. So in principle the two calls can see different voting-power values if anything changed. But because step 2 is blocked, the only remaining source of drift is passive time progression: if a pending-active validator's pending-bucket lockedUntil falls between T1 and T2, _getEffectiveStakeAt (StakePool.sol:675-708) would exclude that bucket and voting power could drop below minimumBond. The issue explicitly frames the attack as staker-driven unstake/withdrawals, not timestamp-triggered lockup expiry, and a passive lockup expiry requires a bucket to expire exactly inside the DKG window — which cannot be actively triggered by an attacker because all actions that create/shorten buckets are gated.",
+      "gating_conditions": "Recompute is unconditional; divergence requires a state change between T1 and T2.",
+      "differs_from_original": "Recompute still exists, but the preconditions for it to produce a different result are blocked by the reconfiguration lock on all mutating paths.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 4,
+      "original": "DKG transcript includes key shares for V (at T1), but V is now in toRevertInactive (T2); active-set/DKG-set mismatch proceeds silently.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:118-138",
+      "verified": "no",
+      "current_state_summary": "Conclusion depends on step 3 actually producing divergence. Given the whenNotReconfiguring locks on every staker- and operator-facing mutator, the only remaining divergence vector is a passive lockup expiry on an unactivated (pending-active) validator — which is not the attack described in the issue.",
+      "gating_conditions": "N/A — upstream step blocked.",
+      "differs_from_original": "The exploit outcome does not materialize in the attack described.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2],
+  "reasoning_chain": "The issue's exploit scenario requires staking actions (unstake / withdrawal / delegator exit) to occur during the DKG window so that a pending-active validator's voting power falls below minimumBond between _startDkgSession (T1) and _applyReconfiguration (T2). In the current code, _startDkgSession sets _transitionState = TransitionState.DkgInProgress at src/blocker/Reconfiguration.sol:246, and every voting-power-mutating entry point — StakePool.unstake/withdrawAvailable/unstakeAndWithdraw/addStake/renewLockUntil and ValidatorManagement.{joinValidatorSet,leaveValidatorSet,registerValidator,rotate*,changeFeeRecipient} — carries the whenNotReconfiguring modifier (StakePool.sol:117-122, ValidatorManagement.sol:222-225) which reverts with Errors.ReconfigurationInProgress whenever IReconfiguration.isTransitionInProgress() is true. So the exact T1→T2 window described in the issue is precisely the window in which the attacker's step-2 action reverts. The recomputation in onNewEpoch() still happens, but there is no actor-driven state change left to make it diverge. The residual concern of a pending-active bucket's lockup passively expiring mid-DKG is not the scenario the issue describes (and for an already-active validator, lockups are auto-renewed every epoch at line 569).",
+  "key_evidence": [
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "117-122",
+      "excerpt": "modifier whenNotReconfiguring() { if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) { revert Errors.ReconfigurationInProgress(); } _; }",
+      "why_matters": "This is the guard the issue's mitigation #1 recommends; it is already implemented and applied to every mutating StakePool entry point."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "430-454",
+      "excerpt": "function unstake(uint256 amount) external onlyStaker whenNotReconfiguring { _unstake(amount); }  function withdrawAvailable(...) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 amount) { ... }  function unstakeAndWithdraw(...) external onlyStaker whenNotReconfiguring nonReentrant returns (uint256 withdrawn) { ... }",
+      "why_matters": "All three operations the issue needs for step 2 (unstake, withdrawAvailable, unstakeAndWithdraw) are gated by whenNotReconfiguring; each reverts during DkgInProgress."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "244-250",
+      "excerpt": "IDKG(SystemAddresses.DKG).start(currentEpoch, config, dealers, targets);  // Update state  _transitionState = TransitionState.DkgInProgress;  _transitionStartedAtEpoch = currentEpoch;  emit EpochTransitionStarted(currentEpoch);",
+      "why_matters": "State flips to DkgInProgress in the same transaction as DKG.start(), so isTransitionInProgress() returns true for the entire T1→T2 window that gates whenNotReconfiguring."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "222-225",
+      "excerpt": "modifier whenNotReconfiguring() { if (IReconfiguration(SystemAddresses.RECONFIGURATION).isTransitionInProgress()) { revert Errors.ReconfigurationInProgress(); } _; }",
+      "why_matters": "Mirror guard on ValidatorManagement — joinValidatorSet, leaveValidatorSet, registerValidator, rotate*, changeFeeRecipient all carry it, so neither validator-set membership nor fee/consensus-key changes can shift voting power during DKG."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "568-569",
+      "excerpt": "// 7. Auto-renew lockups for active validators (Aptos-style)  _renewActiveValidatorLockups();",
+      "why_matters": "Active validators' lockups are auto-renewed every epoch, so an active validator cannot passively lose voting power via lockup expiry during the DKG window either."
+    }
+  ],
+  "counterargument": "The strongest case for EXISTS: _computeNextEpochValidatorSet is still invoked twice (once at T1 for DKG targets, again at T2 in onNewEpoch) and _getValidatorVotingPower is timestamp-dependent (StakePool._getEffectiveStakeAt uses now_). For a pending-active (not yet activated) validator, auto-lockup renewal does NOT fire (it runs only over _activeValidators at line 816-830), so if such a validator's pending-bucket lockedUntil falls between T1 and T2, its effective voting power at T2 can fall below minimumBond and it ends up in toRevertInactive, creating exactly the DKG/active-set mismatch the issue warns about. This does not require any actor action during the DKG window — only time. Additionally, an attacker can time joinValidatorSet so that their pending bucket's lockup is due to expire just after DKG begins, deliberately engineering this divergence before the reconfiguration lock takes effect. Under that reading, the issue is a genuine residual TOCTOU that the whenNotReconfiguring guards do not fully close. I treat this as the weaker scenario because the issue explicitly frames the attack as delegator unstake/withdraw during DKG (step 2), not as timestamp-driven bucket expiry on pending validators, and because the DKG window is typically short (minutes), bounding exposure.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol::test_stakingOperations_whenNotReconfiguring",
+    "test/unit/staking/ValidatorManagement.t.sol::line 1655-1704 (unstake/withdrawAvailable/unstakeAndWithdraw/renewLockUntil revert with ReconfigurationInProgress)",
+    "test/unit/integration/ConsensusEngineFlow.t.sol::line 334-369 (integration-level ReconfigurationInProgress assertions)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

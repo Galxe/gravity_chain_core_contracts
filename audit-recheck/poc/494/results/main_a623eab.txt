@@ -1,0 +1,18 @@
+Compiling 1 files with Solc 0.8.30
+Solc 0.8.30 finished in 2.71s
+Compiler run successful!
+
+Ran 1 test for test/POC_494.t.sol:POC_494
+[PASS] test_quadraticBlowupOfRegeneratePatchedJWKs() (gas: 1892322521)
+Logs:
+  gas_N_10: 4855761
+  gas_N_20: 10604056
+  gas_N_40: 24857410
+  gas_N_80: 64461389
+  ratio_80_over_10_x100: 1327
+  ratio_40_over_10_x100: 511
+  ratio_20_over_10_x100: 218
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 4.82s (4.82s CPU time)
+
+Ran 1 test suite in 4.82s (4.82s CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)

@@ -1,0 +1,98 @@
+{
+  "issue_number": 572,
+  "verdict": "PARTIAL",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Pool owner creates proposal via trusted voter V1 (Governance.createProposal passes _requireVoter when msg.sender==V1)",
+      "current_code_ref": "src/governance/Governance.sol:294-302",
+      "verified": "yes",
+      "current_state_summary": "createProposal still calls _requireValidPool then _requireVoter(stakePool); _requireVoter reads the live voter from _staking().getPoolVoter(pool) at src/governance/Governance.sol:109-116.",
+      "gating_conditions": "msg.sender must equal the pool's current voter; pool voting power at expirationTime >= requiredProposerStake.",
+      "differs_from_original": "no — matches the issue's step 1 precisely.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "V1 casts partial yes votes via vote(...) → _voteInternal → usedVotingPower[pool][P] += X, p.yesVotes += X",
+      "current_code_ref": "src/governance/Governance.sol:409-426",
+      "verified": "yes",
+      "current_state_summary": "vote() calls _requireVoter(stakePool) at line 409, then _voteInternal increments usedVotingPower[stakePool][proposalId] at line 426. The mapping at line 45 is mapping(address => mapping(uint64 => uint128)) — keyed by pool+proposal, NOT by voter identity.",
+      "gating_conditions": "caller == current voter; now_ < expirationTime; remaining pool power > 0.",
+      "differs_from_original": "no — the per-pool (not per-voter) keying cited in the issue is still present.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Pool owner calls StakePool.setVoter(V2) — onlyOwner, immediate, no delay, no proposal-active freeze",
+      "current_code_ref": "src/staking/StakePool.sol:336-358",
+      "verified": "no",
+      "current_state_summary": "The immediate setVoter(address) function cited in the issue does NOT exist in the current code. Voter rotation is now a 2-step + timelock flow: proposeVoter(newVoter) (onlyOwner, sets pendingVoter, schedules effectiveAt = block.timestamp + voterChangeDelay, where voterChangeDelay >= MIN_ROLE_CHANGE_DELAY = 1 days, src/staking/StakePool.sol:41, 339-347, 394) then acceptVoter() which requires msg.sender == pendingVoter and block.timestamp >= voterChangeAt (src/staking/StakePool.sol:350-358, _validateAccept at 552-561). Owner cannot complete the rotation — the new voter V2 must opt-in after >=1 day.",
+      "gating_conditions": "onlyOwner to propose; >= 1 day delay (voterChangeDelay, min enforced at StakePool.sol:374/384/394); V2 itself must call acceptVoter. Owner can cancel via cancelVoterChange (src/staking/StakePool.sol:361-366).",
+      "differs_from_original": "Immediate onlyOwner setVoter replaced with propose/accept + >=1 day timelock + newVoter acceptance. This fundamentally breaks the 'atomic mid-proposal hand-off' premise of the issue.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 4,
+      "original": "V2 calls vote(pool, P, ...); _requireVoter reads LIVE getPoolVoter → returns V2 → check passes",
+      "current_code_ref": "src/governance/Governance.sol:109-116, src/staking/Staking.sol:146-150",
+      "verified": "yes",
+      "current_state_summary": "_requireVoter still reads live voter via _staking().getPoolVoter(pool) which returns IStakePool(pool).getVoter() — i.e., the current live voter field. No snapshot, no per-proposal voter binding.",
+      "gating_conditions": "Only applies AFTER V2 successfully executes proposeVoter + waits >=1 day + calls acceptVoter. Requires voting period in Governance to still be open when voter change completes (votingDurationMicros range: 1 hour to 365 days per GovernanceConfig.sol:20-23).",
+      "differs_from_original": "The LIVE-read behavior is unchanged, but the precondition (atomic rotation) is not achievable anymore. Attack requires voting window > 1 day AND cooperation of V2.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "V2 consumes remaining per-pool budget because usedVotingPower is keyed by pool, not voter",
+      "current_code_ref": "src/governance/Governance.sol:45, 178-197, 426",
+      "verified": "yes",
+      "current_state_summary": "usedVotingPower[stakePool][proposalId] keying unchanged; getRemainingVotingPower computes poolPower - usedVotingPower[pool][proposalId]. The partial-consumption inheritance the issue describes is structurally still present.",
+      "gating_conditions": "same as step 4.",
+      "differs_from_original": "no — data structure and accounting identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Proposal tally reflects votes from two disjoint voter identities; Governance emits no signal of the swap",
+      "current_code_ref": "src/staking/StakePool.sol:346, 357",
+      "verified": "partial",
+      "current_state_summary": "VoterChanged is still emitted only from StakePool (line 357), not from Governance. However, a RoleChangeProposed event is now emitted at proposal time (line 346) giving off-chain indexers >=1 day advance notice of any pending voter swap.",
+      "gating_conditions": "n/a",
+      "differs_from_original": "Governance-side silence unchanged, but the propose/accept flow now emits RoleChangeProposed ahead of time, substantially improving off-chain visibility.",
+      "breaks_attack": "partial"
+    }
+  ],
+  "attack_blocked_at_steps": [3],
+  "reasoning_chain": "The core attack shape (per-pool usedVotingPower keying, live voter lookup in _requireVoter, no Governance-side rotation event) is structurally unchanged. However, the attack's enabling primitive — the immediate onlyOwner setVoter — has been replaced by a 2-step + timelock role-change flow with MIN_ROLE_CHANGE_DELAY = 1 day and mandatory acceptVoter() call by the new voter. This means: (a) owner cannot unilaterally swap the voter; V2 must opt in after the delay; (b) a 1-day advance RoleChangeProposed event is emitted, giving observers and the current voter time to resolve/react (V1 could cast remaining votes before V2 accepts); (c) the attack only remains feasible when votingDurationMicros > voterChangeDelay (>= 1 day), which GovernanceConfig allows (up to 365 days). The issue as written — immediate, silent, atomic rotation — does NOT exist. The underlying design concern (per-pool not per-voter vote accounting) still exists, so this qualifies as a partial/mitigation rather than complete fix.",
+  "key_evidence": [
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "339-358",
+      "excerpt": "function proposeVoter(address newVoter) external onlyOwner { ... effectiveAt = _validateProposal(newVoter, pendingVoter, voterChangeDelay, Role.Voter); pendingVoter = newVoter; voterChangeAt = effectiveAt; emit RoleChangeProposed(...); } function acceptVoter() external { _validateAccept(pendingVoter, voterChangeAt); address oldVoter = voter; voter = pendingVoter; ... emit VoterChanged(...); }",
+      "why_matters": "Replaces the vulnerable immediate setVoter cited by the issue with propose + timelock + acceptance-by-new-voter."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "41, 552-561",
+      "excerpt": "uint64 public constant MIN_ROLE_CHANGE_DELAY = 1 days; ... function _validateAccept(address pendingAddr, uint64 changeAt) internal view { if (pendingAddr == address(0)) revert Errors.NoPendingRoleChange(); if (msg.sender != pendingAddr) revert Errors.NotPendingRole(msg.sender, pendingAddr); if (block.timestamp < changeAt) revert Errors.RoleChangeTooEarly(...); }",
+      "why_matters": "Enforces >=1 day delay AND that only the candidate new voter (not the owner) can finalize, removing the owner's unilateral control."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "45, 109-116, 426",
+      "excerpt": "mapping(address => mapping(uint64 => uint128)) public usedVotingPower; ... address voter = _staking().getPoolVoter(stakePool); if (msg.sender != voter) revert Errors.NotDelegatedVoter(...); ... usedVotingPower[stakePool][proposalId] += votingPower;",
+      "why_matters": "Confirms the per-pool (not per-voter) vote accounting and live-voter lookup described in the issue are structurally unchanged."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "20-23, 207-211",
+      "excerpt": "uint64 public constant MIN_VOTING_DURATION = uint64(1 hours) * 1_000_000; uint64 public constant MAX_VOTING_DURATION = uint64(365 days) * 1_000_000;",
+      "why_matters": "Shows voting period can be from 1 hour (shorter than role-change delay, so rotation cannot complete mid-vote) up to 365 days (long windows still allow a delayed swap)."
+    }
+  ],
+  "counterargument": "One could argue the vulnerability still exists because: (i) the per-pool usedVotingPower keying is unchanged; (ii) Governance still reads the live voter with no per-proposal binding or snapshot; (iii) if votingDurationMicros is configured > 1 day, the pool owner can still rotate mid-proposal by calling proposeVoter at T0 and acceptVoter at T0+1d, with V2's cooperation. Thus the 'vote-rights become tradable mid-window' scenario is only mitigated (forced to be non-atomic, with 1-day warning) rather than eliminated. However, the issue's exploit-scenario hinges on the owner executing the swap unilaterally and without on-chain advance notice — both conditions now fail. RoleChangeProposed at StakePool.sol:346 emits the pending change at propose time, V1 retains voter rights for the entire delay window and can fully consume the pool's budget before V2 accepts, and V2 must actively opt in. The exploit morphs from 'silent hostile hijack' into 'pre-announced collusion after delay', substantially reducing severity. Because the underlying accounting (per-pool not per-voter) remains, labeling this fully fixed would be incorrect.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "fixed"
+}

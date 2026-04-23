@@ -1,0 +1,107 @@
+{
+  "issue_number": 568,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance.sol:28 declares `uint64 public nextProposalId = 1` — the `= 1` is compiled into constructor bytecode, NOT into runtime bytecode",
+      "current_code_ref": "src/governance/Governance.sol:39",
+      "verified": "yes",
+      "current_state_summary": "`uint64 public nextProposalId = 1;` is still declared with an inline initializer; Solidity inline initializers are written by the constructor, which is never executed under BSC-style genesis.",
+      "gating_conditions": "Applies only when deployed via genesis-tool BSC path (deployedBytecode + zero storage), not under normal `new Governance(owner)` deployment where the constructor runs.",
+      "differs_from_original": "Same line of code; a SENTINEL CONVENTION NatSpec block was added at lines 35-38 documenting the invariant, but the storage-write semantics are unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "genesis-tool/src/execute.rs:47 injects only runtime bytecode with storage: Default::default() — slot 1 lower-20-byte _pendingOwner area + upper-8-byte nextProposalId both stay 0",
+      "current_code_ref": "genesis-tool/src/execute.rs:47-54, 195-209",
+      "verified": "yes",
+      "current_state_summary": "`deploy_bsc_style` inserts each contract at `target_address` with only `code: Some(Bytecode::new_raw(...))` — no storage overrides. Later at lines 200-208, `genesis_state.insert(...)` uses `storage: Default::default()`. `scripts/helpers/extract_bytecode.py:90` confirms only `deployedBytecode` (runtime) is emitted to the .hex file.",
+      "gating_conditions": "True whenever the genesis-tool BSC-style path is used. Genesis.sol:initialize never touches SystemAddresses.GOVERNANCE storage (grep shows only GOVERNANCE_CONFIG is initialized), and no post-genesis step writes slot 1.",
+      "differs_from_original": "Mechanics unchanged. The genesis-tool still deploys Governance with zeroed storage.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Governance.sol:291 createProposal executes `proposalId = nextProposalId++` — returns 0, then increments to 1",
+      "current_code_ref": "src/governance/Governance.sol:316-320",
+      "verified": "no",
+      "current_state_summary": "A defence-in-depth guard was added *immediately before* the increment: `if (nextProposalId == 0) revert Errors.InvalidProposalId();` (line 317). Only after this check does the code execute `proposalId = nextProposalId++;` at line 320.",
+      "gating_conditions": "The guard fires unconditionally whenever `nextProposalId` is 0 at the moment of the call — exactly the scenario produced by BSC-style genesis in steps 1-2.",
+      "differs_from_original": "This is a NEW mitigation introduced in commit f9290d2 (`fix: Round 2 audit fixes`) that did not exist when the report was filed. It explicitly preserves the `id == 0 ⇒ not-found` sentinel invariant.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Governance.sol:293 stores `_proposals[0] = Proposal({ id: 0, proposer, ..., isResolved: false, ... })`",
+      "current_code_ref": "src/governance/Governance.sol:322-336",
+      "verified": "no",
+      "current_state_summary": "This branch is unreachable because the revert at line 317 happens before any assignment or event emission. `_proposals[0]` is never written and `ProposalCreated(0, ...)` is never emitted.",
+      "gating_conditions": "Unreachable post-fix whenever `nextProposalId == 0`.",
+      "differs_from_original": "Execution path reported in the issue is dead code under the pre-condition that produces the bug.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "All mutating read paths (lines 114, 125, 162, 181, 206, 361, 420, 467) gate on `if (_proposals[proposalId].id == 0) revert Errors.ProposalNotFound(proposalId)`",
+      "current_code_ref": "src/governance/Governance.sol:135-137, 146-148, 183-185, 204, 229-231, 390-392, 449-451, 496-498",
+      "verified": "yes",
+      "current_state_summary": "The sentinel `p.id == 0 ⇒ ProposalNotFound` check is still present on every lookup/mutation path. Line numbers shifted due to added code but the invariant is intact.",
+      "gating_conditions": "Always active — they simply can no longer collide with a real proposal because step 3 prevents id=0 from ever being assigned.",
+      "differs_from_original": "Same semantics; actual line numbers changed.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Result: the first proposal is creatable (and emits ProposalCreated(0, ...)) but cannot be voted on, resolved, or executed — it is a dangling on-chain record",
+      "current_code_ref": "src/governance/Governance.sol:316-320",
+      "verified": "no",
+      "current_state_summary": "First `createProposal` now reverts with `InvalidProposalId()` — no dangling record, no misleading event, no wasted stake-update because the revert happens before all state writes/events in the function (the revert is placed after the view-only checks but before the `_proposals[...] = Proposal({...})` write at 322-334).",
+      "gating_conditions": "Governance is bricked (no proposals possible) until `nextProposalId` is forcibly set to a non-zero value via upgrade/storage migration — but that is a bricking concern, not the data-corruption concern described in this issue.",
+      "differs_from_original": "The observable outcome described in the report (`ProposalCreated(0, ...)` plus unrecoverable proposal) cannot occur.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [3, 4, 6],
+  "reasoning_chain": "The issue's root precondition (Solidity inline initializer `= 1` is lost under BSC-style genesis because only `deployedBytecode` is written to bytecode hex and storage is explicitly `Default::default()`) is still present in current code (Governance.sol:39, execute.rs:47, execute.rs:207, extract_bytecode.py:90). However, the specific exploit path — creating a dangling `_proposals[0]` with `ProposalCreated(0, ...)` — is prevented by a defence-in-depth check at Governance.sol:317 (`if (nextProposalId == 0) revert Errors.InvalidProposalId();`) that was added in commit f9290d2 (`fix: Round 2 audit fixes`). The check fires before any state write or event emission in createProposal, so the reported failure mode (orphan proposal, misleading ProposalCreated event, wasted proposer stake consumption as described) cannot occur. The only residual effect is that governance is inert until slot 1 is patched externally — which is a denial-of-service / bricking concern, distinct from the silent-data-corruption concern the issue describes.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "316-320",
+      "excerpt": "// Defence-in-depth — nextProposalId must never be 0 (sentinel value)\nif (nextProposalId == 0) revert Errors.InvalidProposalId();\n\n// Create proposal\nproposalId = nextProposalId++;",
+      "why_matters": "This guard, added after the report in commit f9290d2, explicitly prevents assignment of proposalId=0 and therefore blocks every downstream consequence the issue describes (dangling record, ProposalCreated(0,...), unreachable vote/resolve/execute)."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "34-39",
+      "excerpt": "/// @notice Next proposal ID to be assigned\n/// @dev SENTINEL CONVENTION: Proposal ID 0 is reserved as a sentinel value meaning \"not found\".\n///      nextProposalId starts at 1 and only increments, so ID 0 is never assigned.\n///      All lookup functions (getProposal, getProposalState, vote, etc.) check `p.id == 0`\n///      to detect non-existent proposals. This invariant MUST be preserved across upgrades.\nuint64 public nextProposalId = 1;",
+      "why_matters": "The SENTINEL CONVENTION is now explicitly documented as a cross-upgrade invariant, making the defensive check an intentional architectural decision rather than an accident."
+    },
+    {
+      "file": "genesis-tool/src/execute.rs",
+      "lines": "200-209",
+      "excerpt": "genesis_state.insert(\n    contract_address,\n    PlainAccount {\n        info: AccountInfo {\n            code: Some(Bytecode::new_raw(Bytes::from(runtime_bytecode))),\n            ..AccountInfo::default()\n        },\n        storage: Default::default(),\n    },\n);",
+      "why_matters": "Confirms the root cause (zero-initialized storage for all system contracts including Governance) is still present — but is no longer exploitable in the way the report describes because of the Governance.sol:317 guard."
+    },
+    {
+      "file": "scripts/helpers/extract_bytecode.py",
+      "lines": "90",
+      "excerpt": "bytecode = artifact_data.get(\"deployedBytecode\", {}).get(\"object\", \"\")",
+      "why_matters": "Confirms only runtime bytecode (without constructor) is written to the .hex file, so Solidity inline initializers are indeed stripped."
+    },
+    {
+      "file": "test/unit/governance/Governance.t.sol",
+      "lines": "109-121",
+      "excerpt": "Governance tempGov = new Governance(owner);\nvm.etch(SystemAddresses.GOVERNANCE, address(tempGov).code);\n...\n// Slot 1: _pendingOwner (address at offset 0) + nextProposalId (uint64 at offset 20)\nbytes32 slot1Value = vm.load(address(tempGov), bytes32(uint256(0)));\nbytes32 slot1Value = vm.load(address(tempGov), bytes32(uint256(1)));\nvm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(0)), slot0Value);\nvm.store(SystemAddresses.GOVERNANCE, bytes32(uint256(1)), slot1Value);",
+      "why_matters": "Test setup acknowledges the issue by explicitly copying slot 1 from a constructor-run deployment — confirming devs know `vm.etch` (analogous to BSC-style genesis) loses slot 1."
+    }
+  ],
+  "counterargument": "One could argue the fix is incomplete because governance is still silently non-functional at genesis (any createProposal call reverts with InvalidProposalId until a migration sets slot 1). However, this outcome is **qualitatively different** from the issue as filed: the report describes a successful ProposalCreated(0,...) emission followed by permanent state corruption that misleads off-chain indexers and wastes proposer stake. Post-fix, the transaction reverts outright — no event is emitted, no stake is consumed for proposer-side bookkeeping (staking state is unaffected because the revert rolls it back), no off-chain indexer sees a phantom proposal. The `id=0 sentinel collision` attack vector is closed. The residual `nextProposalId==0 ⇒ governance inert` behavior is a separate liveness concern that a different issue would need to track; this specific issue's data-flow (step 4 onward) is unreachable.",
+  "related_existing_tests": [
+    "test/unit/governance/Governance.t.sol:109-121 (setUp copies slot 1 manually to emulate constructor-run storage)",
+    "test/unit/governance/Governance.t.sol:201-225 (test_CreateProposal asserts first proposalId == 1, implicitly requires nextProposalId initialized to 1)"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

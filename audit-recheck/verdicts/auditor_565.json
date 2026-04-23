@@ -1,0 +1,78 @@
+{
+  "issue_number": 565,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "StakingConfig.sol:89-149 does NOT call _requireInitialized() at setters, unlike peer runtime configs",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "no",
+      "current_state_summary": "StakingConfig has been refactored to the pending-config pattern. There is a single GOVERNANCE entry point `setForNextEpoch(_minimumStake,_lockupDurationMicros,_unbondingDelayMicros)` at lines 130-147, which calls `requireAllowed(GOVERNANCE)` (L135) and then `_requireInitialized()` at L136 before `_validateConfig` and writing `_pendingConfig`.",
+      "gating_conditions": "Caller must be GOVERNANCE and contract must already be initialized (_initialized == true).",
+      "differs_from_original": "The four individual setters named in the issue (setMinimumStake, setLockupDurationMicros, setUnbondingDelayMicros, setMinimumProposalStake) no longer exist in the file; grep across src/ returns zero matches. A single batched `setForNextEpoch` now exists and DOES call `_requireInitialized()`.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "A GOVERNANCE-authorised caller invoking setLockupDurationMicros before Genesis completes would silently write the new value and emit ConfigUpdated with oldValue=0",
+      "current_code_ref": "src/runtime/StakingConfig.sol:135-136",
+      "verified": "no",
+      "current_state_summary": "Any GOVERNANCE invocation of `setForNextEpoch` prior to `initialize()` reverts with `Errors.StakingConfigNotInitialized()` because `_requireInitialized()` (L198-200) checks `_initialized` which is only set true inside `initialize()` at L98.",
+      "gating_conditions": "`_initialized` flag must be true; otherwise revert.",
+      "differs_from_original": "Pre-init GOVERNANCE writes are now hard-reverted, matching peer configs (ValidatorConfig:162, EpochConfig:88, ConsensusConfig:81, ExecutionConfig:79, GovernanceConfig:111, VersionConfig:85, RandomnessConfig:112).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Genesis.initialize calling StakingConfig.initialize later overwrites the previously GOVERNANCE-set values, silently losing the write",
+      "current_code_ref": "src/runtime/StakingConfig.sol:86-101",
+      "verified": "no",
+      "current_state_summary": "initialize() is GENESIS-only (requireAllowed at L91), reverts on re-entry via `AlreadyInitialized` check at L92, and now no pre-init GOVERNANCE write path exists to be overwritten, because setForNextEpoch reverts pre-init.",
+      "gating_conditions": "GENESIS-only, one-shot.",
+      "differs_from_original": "The ordering race described (pre-Genesis GOVERNANCE write then later overwrite) cannot arise: the GOVERNANCE path is gated on _initialized.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "Guard-consistency gap on 4 setters: setMinimumStake, setLockupDurationMicros, setUnbondingDelayMicros, setMinimumProposalStake",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "no",
+      "current_state_summary": "Those 4 named setters are gone (grep across src/ returns 0 matches). The replacement single setter `setForNextEpoch` is guard-consistent with all peer configs: first requireAllowed(GOVERNANCE), then _requireInitialized(), then _validateConfig. `minimumProposalStake` has been deprecated (see `__deprecated_minimumProposalStake` storage gap at L50-53).",
+      "gating_conditions": "n/a — removed.",
+      "differs_from_original": "The divergence cited is eliminated; StakingConfig now matches the pending-config pattern and guard shape of its peers.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 2, 3, 4],
+  "reasoning_chain": "The issue alleges that four individual GOVERNANCE setters in StakingConfig.sol skip `_requireInitialized()`, enabling silent pre-Genesis writes that diverge from peer runtime configs. In current code at commit a623eab, those individual setters do not exist: `grep -r 'setLockupDurationMicros|setMinimumStake|setUnbondingDelayMicros|setMinimumProposalStake' src/` returns zero matches. StakingConfig was refactored (commits 49dce4a, d3df269 — 'refactor: apply pending config pattern to StakingConfig (GCC-004)') to use the same pending-config pattern as its peers: a single `setForNextEpoch(...)` that calls `requireAllowed(GOVERNANCE)` then `_requireInitialized()` (L135-136), and `applyPendingConfig()` that also calls `_requireInitialized()` (L158). `minimumProposalStake` was removed entirely, leaving only a storage gap (L50-53). The attack path at every step is broken: any pre-init GOVERNANCE call reverts with `StakingConfigNotInitialized`. Guard shape is now consistent with ValidatorConfig, EpochConfig, ConsensusConfig, ExecutionConfig, GovernanceConfig, VersionConfig, RandomnessConfig.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(...); _pendingConfig = PendingConfig({...}); hasPendingConfig = true; emit PendingStakingConfigSet(); }",
+      "why_matters": "This is the sole GOVERNANCE-callable setter now; it explicitly invokes _requireInitialized() at L136, closing the exact gap alleged."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "156-171",
+      "excerpt": "function applyPendingConfig() external { requireAllowed(SystemAddresses.RECONFIGURATION); _requireInitialized(); if (!hasPendingConfig) return; minimumStake = _pendingConfig.minimumStake; lockupDurationMicros = _pendingConfig.lockupDurationMicros; unbondingDelayMicros = _pendingConfig.unbondingDelayMicros; ... }",
+      "why_matters": "Epoch-boundary application also requires initialization (L158), fully matching peer applyPendingConfig semantics."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "198-200",
+      "excerpt": "function _requireInitialized() internal view { if (!_initialized) revert Errors.StakingConfigNotInitialized(); }",
+      "why_matters": "Dedicated guard that reverts pre-Genesis governance writes — identical pattern to peers."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "50-53",
+      "excerpt": "/// @notice DEPRECATED: kept as storage gap... uint256 private __deprecated_minimumProposalStake;",
+      "why_matters": "setMinimumProposalStake removal is intentional — the field was deprecated, so the fourth setter cited in the issue has no replacement and cannot be exploited."
+    }
+  ],
+  "counterargument": "One could argue that the removal of individual setters is a side-effect refactor and the underlying guard-consistency claim was originally valid at an earlier commit, making the finding 'fixed' rather than 'never existed'. However, the issue asks whether the vulnerability currently exists; it does not. Additionally, one might claim that some other code path writes staking parameters pre-init — but a full grep for writes to minimumStake/lockupDurationMicros/unbondingDelayMicros outside StakingConfig.sol returns no other contracts mutating these fields, and initialize() itself is GENESIS-only and one-shot (`if (_initialized) revert AlreadyInitialized;` at L92). So the residual pre-init write surface is zero.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "fixed"
+}

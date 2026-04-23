@@ -1,0 +1,98 @@
+{
+  "issue_number": 574,
+  "verdict": "PARTIAL",
+  "confidence": "medium",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Operator calls joinValidatorSet at VM.sol:328-362 → validator enters PENDING_ACTIVE.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:357-389",
+      "verified": "yes",
+      "current_state_summary": "joinValidatorSet still sets status to PENDING_ACTIVE and pushes into _pendingActive.",
+      "gating_conditions": "allowValidatorSetChange() must be true; validator must be INACTIVE; bond >= minimumBond; active+pending count < maxValidatorSetSize.",
+      "differs_from_original": "Function location shifted; logic unchanged (status=PENDING_ACTIVE at line 387).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "At epoch N-1→N boundary, Reconfiguration._applyReconfiguration invokes VM.onNewEpoch; _applyActivations transitions PENDING_ACTIVE → ACTIVE, and _setActiveValidators reassigns the fresh validator an index.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-288, src/staking/ValidatorManagement.sol:548-558,754-766,797-810",
+      "verified": "yes",
+      "current_state_summary": "_applyReconfiguration calls VM.onNewEpoch() (line 280); onNewEpoch() invokes _applyActivations (line 548) then _setActiveValidators (line 558). Activations flip status to ACTIVE; _setActiveValidators re-pushes all validators and assigns validatorIndex.",
+      "gating_conditions": "Inside _applyReconfiguration — executed either via _doImmediateReconfigure or finishTransition path.",
+      "differs_from_original": "Mechanics identical; line numbers differ.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Still in the same boundary, PERFORMANCE_TRACKER.onNewEpoch(newCount) pops all counters and pushes fresh (0,0) entries — the newly-activated validator starts epoch N with (0,0).",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:282-288, src/blocker/ValidatorPerformanceTracker.sol:96-115",
+      "verified": "yes",
+      "current_state_summary": "After VM.onNewEpoch completes, tracker.onNewEpoch(newValidatorCount) pops all entries and pushes newCount fresh (0,0) entries. Fresh validator begins their active epoch with zeroed counters.",
+      "gating_conditions": "Always runs inside _applyReconfiguration.",
+      "differs_from_original": "Unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Blocker.onBlockStart → Tracker.updateStatistics increments successfulProposals only for the validator whose index matches the chain-selected proposer.",
+      "current_code_ref": "src/blocker/Blocker.sol:85-97, src/blocker/ValidatorPerformanceTracker.sol:60-93",
+      "verified": "yes",
+      "current_state_summary": "updateStatistics increments _validators[proposerIndex].successfulProposals; if never chosen, counter stays at 0 for the epoch.",
+      "gating_conditions": "Consensus scheduling must pick the validator at least once for successfulProposals>0.",
+      "differs_from_original": "Unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "At epoch N→N+1 boundary, Reconfig.sol:274 calls VALIDATOR_MANAGER.evictUnderperformingValidators(); the loop evaluates `perfs[i].successfulProposals <= threshold` with threshold=0 — fresh validator's 0<=0 holds and they are pushed to _pendingInactive.",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:98-99,150-151, src/staking/ValidatorManagement.sol:610-725",
+      "verified": "partial",
+      "current_state_summary": "Semantics changed: evictUnderperformingValidators() is now called from checkAndStartTransition() (line 99) and governanceReconfigure() (line 151), BEFORE _applyReconfiguration runs. The Phase-2 performance check no longer uses an inclusive absolute threshold. Instead at VM.sol:698-709 it evicts when total==0 OR successfulProposals==0 OR successPct<thresholdPct. So a fresh validator who misses all proposals in their first ACTIVE epoch still gets evicted at the NEXT boundary via the successfulProposals==0 branch (line 701-703). Key gating: Phase 2 requires autoEvictEnabled() (line 665-668) — default is set by genesis (Genesis.sol:191). There is also a bootstrap skip `if (closingEpoch <= 1) return;` (line 623-626) and a last-active liveness guard `if (remainingActive <= 1) continue;` (line 712-715).",
+      "gating_conditions": "autoEvictEnabled() must be true; closingEpoch>1; remainingActive>1; allowValidatorSetChange() true (line 617-619).",
+      "differs_from_original": "Original cited `successfulProposals <= threshold` with default threshold=0 — that exact line no longer exists. Current code instead has an explicit `successfulProposals == 0 → shouldEvict=true` branch that has identical effect for a validator who got zero proposals. Ordering changed: evict now happens BEFORE _applyReconfiguration, so fresh validator gets one full epoch (their first ACTIVE epoch N+1) to produce proposals, not zero.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 6,
+      "original": "onNewEpoch's _applyDeactivations (VM.sol:494) finalizes the transition to INACTIVE, removing them from the next active set with no grace-period code path available.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:727-749, src/blocker/Reconfiguration.sol:280",
+      "verified": "yes",
+      "current_state_summary": "_applyDeactivations sets INACTIVE for each _pendingInactive pool, clears validatorIndex and pendingFeeRecipient, deletes _pendingInactive. Still no activationEpoch-based grace period anywhere in the codebase (grep confirms no activationEpoch/gracePeriod/firstEpoch/newlyActivated identifiers).",
+      "gating_conditions": "Runs as part of onNewEpoch().",
+      "differs_from_original": "Still no grace period.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "The originally-described data-flow is mostly intact. The exact line the issue cites ('successfulProposals <= threshold', default 0) no longer exists — the code has been refactored to use a percentage threshold. However, the refactor retained an explicit `successfulProposals == 0 → shouldEvict` branch (VM.sol:701-703) which has identical behaviour for a validator with zero proposals. The timing the issue describes is off by one epoch: evict now runs at the START of the N→N+1 transition in checkAndStartTransition() BEFORE _applyReconfiguration executes (Reconfig.sol:99 vs 280), meaning a freshly activated validator (promoted at N-1→N) gets their entire first active epoch N to produce proposals; only if they produce zero during that first full epoch are they evicted at the N→N+1 boundary. Gating: Phase-2 performance eviction is only active when autoEvictEnabled() is true (VM.sol:665-668) — if the deployment configures autoEvictEnabled=false this vector is fully closed. There's also a closingEpoch<=1 skip and a remainingActive<=1 last-validator guard. Because (a) the fresh validator now gets one full epoch of runway instead of zero, (b) the whole check is gated by autoEvictEnabled, and (c) the symptom is not really 'first-epoch eviction' anymore but 'any-epoch eviction for a validator who fails to be scheduled to propose even once', the issue as written is partially invalidated; yet the underlying complaint — no activation-epoch grace period and zero-proposal → eviction — still holds when autoEvictEnabled=true.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "695-724",
+      "excerpt": "if (total == 0) { shouldEvict = true; } else if (perfs[i].successfulProposals == 0) { shouldEvict = true; } else { uint256 successPct = (uint256(perfs[i].successfulProposals) * 100) / total; if (successPct < thresholdPct) { shouldEvict = true; } } ... if (shouldEvict) { if (remainingActive <= 1) continue; validator.status = ValidatorStatus.PENDING_INACTIVE; _pendingInactive.push(pool); ...",
+      "why_matters": "Confirms zero-successful-proposal → eviction even under the new percentage-based scheme. The original `<= threshold` wording is gone but the effect persists."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "98-115,265-288",
+      "excerpt": "checkAndStartTransition: ... IValidatorManagement(...).evictUnderperformingValidators(); ... _applyReconfiguration: ... IValidatorManagement(...).onNewEpoch(); IValidatorPerformanceTracker(...).onNewEpoch(newValidatorCount);",
+      "why_matters": "Shows evict runs BEFORE onNewEpoch and tracker reset — fresh validator is not activated yet when evict runs, contradicting the issue's step-3/5 ordering. The vulnerability shifts by one epoch."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "617-626,665-668,712-715",
+      "excerpt": "if (!IValidatorConfig(...).allowValidatorSetChange()) return; ... if (closingEpoch <= 1) return; ... bool enabled = IValidatorConfig(...).autoEvictEnabled(); if (!enabled) return; ... if (remainingActive <= 1) continue;",
+      "why_matters": "Three gating conditions that further attenuate the scenario: freeze switch, epoch-1 bootstrap skip, and last-validator liveness guard."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "114-147",
+      "excerpt": "function initialize(..., bool _autoEvictEnabled, uint64 _autoEvictThresholdPct) ... autoEvictEnabled = _autoEvictEnabled;",
+      "why_matters": "autoEvictEnabled is a genesis/governance parameter (not hard-coded true), so severity depends on deployment configuration."
+    }
+  ],
+  "counterargument": "One could argue the issue is FIXED because the exact citation (`successfulProposals <= threshold` with default 0) no longer exists in code, the ordering the issue describes is wrong (evict now precedes activation, giving the fresh validator a full epoch of runway), and Phase-2 eviction is config-gated by autoEvictEnabled. However, the refactored code explicitly encodes `successfulProposals == 0 → shouldEvict=true` (VM.sol:701-703), preserving the exact zero-proposal griefing surface the issue targets — just shifted by one epoch. No activationEpoch-based grace period exists anywhere (grep confirmed). So when autoEvictEnabled=true, the structural weakness the issue describes is still present; the ordering nuance does not close the hole, it only changes the epoch index at which it bites.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "cannot_tell"
+}

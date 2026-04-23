@@ -1,0 +1,88 @@
+{
+  "issue_number": 403,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls StakingConfig.setLockupDurationMicros(type(uint64).max) — only zero is rejected, no upper bound check (src/runtime/StakingConfig.sol:103-116)",
+      "current_code_ref": "src/runtime/StakingConfig.sol:19,181-195,130-147",
+      "verified": "no",
+      "current_state_summary": "No standalone setLockupDurationMicros() setter exists. Governance updates go through setForNextEpoch(minimumStake, _lockupDurationMicros, _unbondingDelayMicros) which calls _validateConfig(). _validateConfig enforces both a non-zero check and an upper bound MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000 (~1.262e14 µs, i.e., 4 years). Any value above this reverts with Errors.ExcessiveDuration before it can be staged as a pending config. initialize() also calls _validateConfig(), so the bound applies at genesis too.",
+      "gating_conditions": "_validateConfig is unconditionally invoked in every write path (initialize, setForNextEpoch) that can mutate lockupDurationMicros. applyPendingConfig only copies an already-validated pending value into live state, so it cannot introduce a bypass.",
+      "differs_from_original": "The report asserts 'only zero is rejected, no upper bound check'. The actual contract has BOTH checks: zero-reject (line 187) AND MAX_LOCKUP_DURATION cap (lines 188-190). Also, the setter name cited in the report does not exist; the only governance mutator is setForNextEpoch.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "At next epoch boundary: Reconfiguration._applyReconfiguration() → ValidatorManagement.onNewEpoch() → _renewActiveValidatorLockups() iterates all _activeValidators[]",
+      "current_code_ref": "src/staking/StakePool.sol:505-518",
+      "verified": "partial",
+      "current_state_summary": "systemRenewLockup() still exists and is onlyFactory-gated; it is invoked at epoch boundary for each active validator. The control flow described is still plausible at a structural level, so the per-epoch iteration is not in dispute. What matters for the attack is the *value* of lockupDuration on this path, which is bounded to <= 4 years by step 1.",
+      "gating_conditions": "onlyFactory modifier restricts caller; invoked only via the staking factory during reconfiguration.",
+      "differs_from_original": "No material difference in control flow; only the input-value domain differs.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Per active validator: IStaking.renewPoolLockup(pool) → StakePool.systemRenewLockup() (gated onlyFactory) (src/staking/StakePool.sol:336-349)",
+      "current_code_ref": "src/staking/StakePool.sol:505-518",
+      "verified": "yes",
+      "current_state_summary": "systemRenewLockup() is defined at 505, onlyFactory-gated, and computes newLockedUntil = now_ + lockupDuration using uint64 arithmetic under Solidity 0.8 checked math.",
+      "gating_conditions": "onlyFactory; no other access.",
+      "differs_from_original": "Line numbers shifted (now 505-518 vs cited 336-349) but semantics unchanged.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "uint64 newLockedUntil = now_ + lockupDuration overflows uint64 → revert with panic 0x11",
+      "current_code_ref": "src/staking/StakePool.sol:506-508; src/runtime/StakingConfig.sol:19",
+      "verified": "no",
+      "current_state_summary": "now_ is a uint64 wall-clock in µs (nowMicroseconds, ~1.7e15 for current real time). lockupDuration is capped at MAX_LOCKUP_DURATION = 4*365*86400*1e6 ≈ 1.262e14 µs. Sum ≈ 1.83e15, more than 4 orders of magnitude below uint64 max (≈1.845e19). Overflow is mathematically impossible for any governance-accepted value. The unbondingDelay cap (MAX_UNBONDING_DELAY = 1 year ≈ 3.15e13 µs) does not enter this path, so even the stacked worst case stays safe.",
+      "gating_conditions": "Governance must pass _validateConfig first; no way to write lockupDurationMicros bypassing this check in current code.",
+      "differs_from_original": "The overflow scenario relied on lockupDuration = type(uint64).max (~1.8e19 µs, ~585k years). The current upper bound (4 years) precludes this by 5 orders of magnitude.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Revert propagates up through onNewEpoch() step 7 → _applyReconfiguration() aborts entirely → epoch transition never completes → chain permanently stuck",
+      "current_code_ref": "src/staking/StakePool.sol:505-518",
+      "verified": "no",
+      "current_state_summary": "Because step 4 cannot produce an overflow-revert under the current validation bounds, this cascading chain-halt outcome does not occur. systemRenewLockup completes normally for any lockupDuration that passed _validateConfig.",
+      "gating_conditions": "Requires step 4 to revert, which is impossible under current constraints.",
+      "differs_from_original": "Outcome negated by upstream validation cap.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 4],
+  "reasoning_chain": "The attack is a uint64 overflow of now_ + lockupDurationMicros. It requires lockupDurationMicros to be near uint64 max. The report's premise — that StakingConfig rejects only zero — is false: StakingConfig.sol defines MAX_LOCKUP_DURATION = 4 years in µs (line 19) and _validateConfig enforces it (lines 188-189) on every write path (initialize line 93, setForNextEpoch line 137). With lockupDuration ≤ 1.26e14 and now_ ≈ 1.7e15, the sum is ≈1.83e15 — six orders of magnitude below uint64 max (~1.845e19). Solidity 0.8 checked arithmetic cannot overflow for any governance-accepted input. The downstream chain-halt cascade in steps 2-5 is predicated on step 1/4 succeeding, so the entire bug thesis collapses. Same reasoning protects the addStake path (line 420) and the constructor comparison (line 474) mentioned in 'Impact'.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "19-22",
+      "excerpt": "uint64 public constant MAX_LOCKUP_DURATION = uint64(4 * 365 days) * 1_000_000; uint64 public constant MAX_UNBONDING_DELAY = uint64(365 days) * 1_000_000;",
+      "why_matters": "Defines the hard upper bound (~1.26e14 µs, 4 years) enforced on lockupDurationMicros — this is precisely the guard the issue claims is missing."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "185-195",
+      "excerpt": "if (_lockupDurationMicros == 0) revert Errors.InvalidLockupDuration(); if (_lockupDurationMicros > MAX_LOCKUP_DURATION) { revert Errors.ExcessiveDuration(_lockupDurationMicros, MAX_LOCKUP_DURATION); }",
+      "why_matters": "_validateConfig enforces both the zero-check and the upper-bound check on every mutation path."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(uint256 _minimumStake, uint64 _lockupDurationMicros, uint64 _unbondingDelayMicros) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros); ...",
+      "why_matters": "Only governance write path for lockupDurationMicros; routes unconditionally through _validateConfig. No standalone setLockupDurationMicros() setter exists."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "505-518",
+      "excerpt": "function systemRenewLockup() external onlyFactory { uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint64 lockupDuration = IStakingConfig(SystemAddresses.STAKE_CONFIG).lockupDurationMicros(); uint64 newLockedUntil = now_ + lockupDuration; ...",
+      "why_matters": "This is the cited overflow site. Arithmetic is over a now_ of ~1.7e15 and a bounded lockupDuration ≤ 1.26e14 — product well within uint64 range."
+    }
+  ],
+  "counterargument": "One could argue that _validateConfig might be bypassable via a storage-layout quirk or a forgotten setter. Inspection shows only two writers of lockupDurationMicros: initialize (line 96, gated by GENESIS + _validateConfig) and applyPendingConfig (line 162, which copies _pendingConfig that was itself validated in setForNextEpoch). There is no external/public setter that writes lockupDurationMicros directly, and no assembly sstore. A second theoretical concern is that even the bounded value could overflow if combined with lockedUntil (e.g., in extendLockup at line 466: lockedUntil + durationMicros) — but systemRenewLockup uses now_, not lockedUntil, so this concern does not apply to the cited code path. Finally, one could argue MAX_LOCKUP_DURATION itself can be changed — but it is a `constant`, burned at compile time, not governance-mutable.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "fixed"
+}

@@ -1,0 +1,103 @@
+{
+  "issue_number": 555,
+  "verdict": "EXISTS",
+  "confidence": "medium",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "createProposal snapshots minVoteThreshold from GovernanceConfig.minVotingThreshold() into Proposal.minVoteThreshold",
+      "current_code_ref": "src/governance/Governance.sol:322-334",
+      "verified": "yes",
+      "current_state_summary": "In createProposal the Proposal struct is initialized with `minVoteThreshold: _config().minVotingThreshold()` at line 329. The value is read from GovernanceConfig at proposal creation time and stored immutably on the proposal, so a later config change will not affect already-created proposals (but equally will not help a deadlock since you cannot create a passing proposal).",
+      "gating_conditions": "Caller must be a valid pool voter with votingPower >= requiredProposerStake (Governance.sol:309-311).",
+      "differs_from_original": "Line numbers have drifted: the snapshot is now at L329, not L300, but the logic is identical.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "getProposalState requires yesVotes + noVotes >= p.minVoteThreshold for SUCCEEDED",
+      "current_code_ref": "src/governance/Governance.sol:156-174",
+      "verified": "yes",
+      "current_state_summary": "Both the resolved branch (L158) and the expired-unresolved branch (L171) require `p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold` to return SUCCEEDED; otherwise FAILED. There is no alternative SUCCEEDED path.",
+      "gating_conditions": "Proposal must exist and be either explicitly resolved (p.isResolved) or past expirationTime.",
+      "differs_from_original": "None beyond small line-number drift (issue cited L137/L150, current is L158/L171).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "If sum of all pools' getPoolVotingPower across pool registry < minVotingThreshold, yes+no cannot reach threshold at 100% participation",
+      "current_code_ref": "src/governance/Governance.sol:178-197 and src/staking/Staking.sol:94-99",
+      "verified": "yes",
+      "current_state_summary": "getRemainingVotingPower caps per-pool contribution at `getPoolVotingPower(stakePool, p.expirationTime)` minus used (L188-196). Voting only adds via _voteInternal (L426-433). Hence yes+no is bounded by the sum of all pools' power at expirationTime; if that aggregate < minVoteThreshold (stored on the proposal), the quorum check at L158/L171 can never be satisfied no matter who votes.",
+      "gating_conditions": "Requires a scenario in which total addressable voting power across all pools at expirationTime is strictly less than the previously-snapshotted minVotingThreshold (e.g., mass unstake / lockup expiry / misconfigured genesis).",
+      "differs_from_original": "None - the arithmetic invariant still holds.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Only on-chain remediation is GovernanceConfig.setForNextEpoch, gated by GOVERNANCE, which needs a SUCCEEDED proposal - chicken-and-egg",
+      "current_code_ref": "src/runtime/GovernanceConfig.sol:130-149 and src/governance/Governance.sol:482-536",
+      "verified": "yes",
+      "current_state_summary": "setForNextEpoch enforces `requireAllowed(SystemAddresses.GOVERNANCE)` at GovernanceConfig.sol:135. SystemAddresses.GOVERNANCE is the Governance contract (foundation/SystemAddresses.sol:103). Governance.execute (L482-536) requires state == SUCCEEDED (L511-514), which in turn demands quorum. _validateConfig (L188-213) bounds threshold away from 0 and type(uint128).max but permits any intermediate pathologically-high value. There is no owner / emergency / genesis-only re-initialize path (initialize is one-shot, L87-89).",
+      "gating_conditions": "Any attempt to lower minVotingThreshold via setForNextEpoch must come from a succeeded proposal, which itself needs quorum -> circular dependency once stuck.",
+      "differs_from_original": "None. Validation rejects only the two extreme sentinel values; it does not sanity-check against reachable stake.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "No cancel, executor allowlist is owner-controlled but owner cannot bypass quorum",
+      "current_code_ref": "src/governance/Governance.sol:21-571",
+      "verified": "yes",
+      "current_state_summary": "No cancelProposal or ownerOverride function exists in Governance.sol. The owner (Ownable2Step) only manages the executor allowlist via addExecutor/removeExecutor (L555-570). renounceOwnership is explicitly blocked (L85-87). Executors can only call execute, which still requires SUCCEEDED. There is no owner path to modify GovernanceConfig directly.",
+      "gating_conditions": "None - this is a structural property.",
+      "differs_from_original": "None.",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Each step of the data flow is directly verifiable in current code (commit a623eab). The quorum check in getProposalState (L158, L171) uses an absolute, proposal-snapshotted minVoteThreshold derived from GovernanceConfig. The only mutation path for minVotingThreshold after genesis is GovernanceConfig.setForNextEpoch, which requires GOVERNANCE as msg.sender, reachable only via Governance.execute on a SUCCEEDED proposal. SUCCEEDED itself requires yes+no >= minVoteThreshold. If the aggregate reachable voting power (sum of getPoolVotingPower over all pools at expirationTime) drops below the snapshot, no proposal can ever succeed, including one that would lower the threshold. Genesis initialize is one-shot, owner has no override, and there is no emergency bypass. The validator-bond + pool-stake economic model plus the _validateConfig bounds (reject 0 and uint128.max) make an accidental genesis trigger unlikely but not impossible; operational triggers (mass unstake, lockup expiry, large validator churn) can push the system below a threshold that was set at a safer point in the past.",
+  "key_evidence": [
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "156-174",
+      "excerpt": "if (p.isResolved) { if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) return SUCCEEDED; return FAILED; } ... if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) return SUCCEEDED; return FAILED;",
+      "why_matters": "The only SUCCEEDED gate; absolute quorum check with no fallback makes deadlock possible when aggregate voting power < threshold."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "322-334",
+      "excerpt": "_proposals[proposalId] = Proposal({ ... minVoteThreshold: _config().minVotingThreshold(), ... });",
+      "why_matters": "Threshold is snapshotted per-proposal. Future config changes do not unblock already-created proposals, and new proposals re-read the same (unchanged, because unchangeable) threshold."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "130-149",
+      "excerpt": "function setForNextEpoch(...) external { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); _validateConfig(...); _pendingConfig = PendingConfig({...}); hasPendingConfig = true; }",
+      "why_matters": "The only post-genesis mutation path for minVotingThreshold; gated on GOVERNANCE system-address == Governance contract executing a succeeded proposal."
+    },
+    {
+      "file": "src/runtime/GovernanceConfig.sol",
+      "lines": "188-213",
+      "excerpt": "_validateConfig rejects _minVotingThreshold == 0 and _minVotingThreshold == type(uint128).max but accepts anything in between.",
+      "why_matters": "Validator does not sanity-check threshold against reachable stake; misconfigured or later-unreachable thresholds are accepted."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "85-87, 555-570",
+      "excerpt": "renounceOwnership blocked; owner only manages executor set via addExecutor/removeExecutor; no emergency path.",
+      "why_matters": "Confirms absence of an owner override - the executor allowlist cannot bypass quorum because execute() still validates ProposalState.SUCCEEDED at L511-514."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "482-514",
+      "excerpt": "function execute(...) external onlyExecutor { ... ProposalState state = getProposalState(proposalId); if (state != ProposalState.SUCCEEDED) revert ProposalNotSucceeded(proposalId); ... }",
+      "why_matters": "Closes the loop: even authorized executors cannot skip the absolute quorum check."
+    }
+  ],
+  "counterargument": "In realistic deployments the genesis parameters (minVotingThreshold = 1e18 in genesis_config.json vs minimumBond = 1e18 per validator and maxValidatorSetSize = 100) mean total stake is at least ~100e18, two orders of magnitude above the threshold. _validateConfig (GovernanceConfig.sol:197-198) explicitly rejects type(uint128).max to avoid the obvious unreachable-threshold case. Staking lockup + unbonding delays (stakingConfig.lockupDurationMicros = 86400s, unbondingDelayMicros = 86400s, plus validator unbondingDelayMicros = 604800s) bound the rate at which voting power can leave; an attacker cannot unilaterally drain below threshold in a single tx. The proposer-stake gate (requiredProposerStake = 10e18) and the voter-delegation model mean isolated small pools cannot spam. Therefore reaching a real deadlock requires either (a) a deliberate genesis misconfiguration, in which case the chain is DOA and no exploit is needed, or (b) a coordinated mass-unstake event that simultaneously drives aggregate power below a historically-valid threshold - which is a governance/economic failure rather than a code-level vulnerability. Additionally, chain operators can intervene via binary upgrade (ITimestamp/Genesis/... are system contracts reachable at genesis addresses) without touching this contract. So while the invariant violation is real in code, there is no concrete attacker-controlled path to exploit it.",
+  "related_existing_tests": [
+    "test/unit/governance/GovernanceConfig.t.sol",
+    "test/unit/foundation/Types.t.sol"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

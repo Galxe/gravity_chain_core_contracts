@@ -1,0 +1,88 @@
+{
+  "issue_number": 527,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "GOVERNANCE calls setForNextEpoch(...) with autoEvictEnabled=true and autoEvictThreshold=type(uint256).max; _validateConfig does not bound autoEvictThreshold.",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:186-207",
+      "verified": "no",
+      "current_state_summary": "The 8th parameter is now `uint64 _autoEvictThresholdPct` (a percentage) instead of `uint256 _autoEvictThreshold` (a raw proposal count). _validateConfig is called at :200-207 and explicitly bounds the threshold at :301-303 — `if (_autoEvictThresholdPct > 100) revert Errors.InvalidAutoEvictThresholdPct(...)`.",
+      "gating_conditions": "Any value > 100 reverts. Even uint64.max input cannot bypass (compiler rejects uint256.max at ABI level; any value in (100, uint64.max] reverts in _validateConfig).",
+      "differs_from_original": "Field type changed from `uint256 autoEvictThreshold` to `uint64 autoEvictThresholdPct`; new validator enforces [0,100]; the legacy uint256 field is retained only as `__deprecated_autoEvictThreshold` for storage-layout compatibility (always written as 0 — see :217).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 2,
+      "original": "Pending struct written with unbounded threshold; hasPendingConfig=true.",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:209-222",
+      "verified": "partial",
+      "current_state_summary": "PendingConfig is still written and hasPendingConfig set to true, but the written autoEvictThresholdPct has already passed the 0..100 validation; __deprecated_autoEvictThreshold is hard-coded to 0.",
+      "gating_conditions": "Must pass _validateConfig first; unreachable with malicious threshold.",
+      "differs_from_original": "Struct now carries autoEvictThresholdPct (bounded) plus a dead __deprecated_autoEvictThreshold (always 0).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "applyPendingConfig copies autoEvictThreshold to live storage.",
+      "current_code_ref": "src/runtime/ValidatorConfig.sol:232-257",
+      "verified": "partial",
+      "current_state_summary": "applyPendingConfig now copies autoEvictThresholdPct (line 248). The deprecated raw threshold is never copied/read.",
+      "gating_conditions": "Only RECONFIGURATION may call; hasPendingConfig must be true.",
+      "differs_from_original": "Copies the bounded pct, not a uint256 raw count.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "ValidatorManagement loop tests `perfs[i].successfulProposals <= threshold`; threshold=uint256.max makes the test true for all validators.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:664-724",
+      "verified": "no",
+      "current_state_summary": "The loop now reads `autoEvictThresholdPct` (uint64, already bounded to [0,100] at write-time) at :670. The comparison at :705-706 is `successPct = (successfulProposals * 100) / total; if (successPct < thresholdPct) shouldEvict = true`. There is no `<= uint256.max` path — a threshold above 100 can never be stored.",
+      "gating_conditions": "Eviction only occurs for validators with strict success percentage below the configured (0..100) threshold; zero-proposal or zero-success validators are evicted regardless, but that is an orthogonal, intentional rule.",
+      "differs_from_original": "Absolute-count comparison replaced with percentage comparison; threshold domain shrunk from uint256 to [0,100]; semantics reversed (evict if BELOW threshold, not AT/BELOW).",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Every ACTIVE except last is set PENDING_INACTIVE in one tx — C6 violated.",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:685-724",
+      "verified": "partial",
+      "current_state_summary": "The liveness-preserve check (`if (remainingActive <= 1) continue`) still exists at :712-715. With a well-behaved, correctly-configured network (validators averaging >= thresholdPct success), no mass eviction occurs. The attack's root cause — unbounded threshold covering all validators — is gone.",
+      "gating_conditions": "Even at the max legal value thresholdPct=100, only validators strictly below 100% success would be evicted. This is a tight but intentional admin choice, not an unbounded weapon.",
+      "differs_from_original": "No way to craft a threshold that deterministically evicts every validator; the attacker's cudgel (uint256.max) is rejected in _validateConfig.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [1, 4],
+  "reasoning_chain": "The reported vulnerability — governance sets autoEvictThreshold=uint256.max to mass-evict all validators — is rooted in (a) the threshold being an unbounded uint256 raw proposal count, (b) _validateConfig not checking it, and (c) the loop using `successfulProposals <= threshold`. The current code completely refactors this: the field is renamed to `autoEvictThresholdPct`, typed `uint64`, and _validateConfig at src/runtime/ValidatorConfig.sol:301-303 reverts on any value > 100. ValidatorManagement.sol:670 reads this bounded pct and at :705-706 compares `successPct < thresholdPct`. A malicious governance call cannot set a threshold that evicts all honest validators; at worst thresholdPct=100 evicts only those with <100% success, which is an operator-risk decision rather than an unbounded admin-rug. The original vector is fully closed.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "301-303",
+      "excerpt": "if (_autoEvictThresholdPct > 100) { revert Errors.InvalidAutoEvictThresholdPct(_autoEvictThresholdPct, 100); }",
+      "why_matters": "Explicit upper bound on the threshold that previously was unbounded — blocks the uint256.max input described in the report."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "33-43",
+      "excerpt": "struct PendingConfig { ... uint256 __deprecated_autoEvictThreshold; uint64 autoEvictThresholdPct; }",
+      "why_matters": "The raw-count threshold is explicitly marked deprecated and replaced by a percentage; storage layout is preserved only for upgrade safety."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "694-709",
+      "excerpt": "uint256 total = successfulProposals + failedProposals; ... uint256 successPct = (successfulProposals * 100) / total; if (successPct < thresholdPct) shouldEvict = true;",
+      "why_matters": "Eviction criterion is now a percentage comparison against a bounded value; uint256.max is unrepresentable as a percentage and was already rejected at config-write time."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "209-219",
+      "excerpt": "_pendingConfig = PendingConfig({ ... __deprecated_autoEvictThreshold: 0, autoEvictThresholdPct: _autoEvictThresholdPct });",
+      "why_matters": "The deprecated uint256 field is hard-coded to 0 on every write — no path keeps the old unbounded threshold alive."
+    }
+  ],
+  "counterargument": "One might argue that governance setting thresholdPct=100 still lets a malicious proposal mass-evict any validator whose success rate is <100%, which in a realistic network is almost everyone — effectively preserving the original attack with a one-epoch delay. However, (i) the report explicitly frames the issue as an unbounded uint256 allowing `successfulProposals <= uint256.max` to always hold; the current code has no such path. (ii) thresholdPct=100 is a deliberate, on-chain-visible governance knob with a bounded domain, not an overflow/missing-check bug. (iii) The liveness preserve at ValidatorManagement.sol:712-715 still spares at least one validator, and unbonded/pending_inactive validators can rejoin next epoch. The specific high-severity vector described — unbounded threshold causing deterministic mass eviction of an arbitrary active set — no longer exists in the code.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "fixed"
+}

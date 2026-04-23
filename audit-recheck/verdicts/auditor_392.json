@@ -1,0 +1,87 @@
+{
+  "issue_number": 392,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Two ACTIVE validators exist: _activeValidators = [V1, V2], length == 2",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:394-429",
+      "verified": "yes",
+      "current_state_summary": "Function leaveValidatorSet still operates on _activeValidators and _pendingInactive arrays in the same way; no architectural change to storage representation.",
+      "gating_conditions": "validatorExists, onlyOperator, whenNotReconfiguring, allowValidatorSetChange()==true, validator.status == ACTIVE",
+      "differs_from_original": "Same data model",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "V1's operator calls leaveValidatorSet(V1) — guard at line 389 checks _activeValidators.length == 1 → false, passes",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:417-422",
+      "verified": "no",
+      "current_state_summary": "The guard has been rewritten to: `if (_activeValidators.length <= _pendingInactive.length + 1) revert CannotRemoveLastValidator();`. The inline comment explicitly states: `Use _pendingInactive.length to account for validators already leaving this epoch. This prevents concurrent leave calls from bypassing the last-validator guard.`",
+      "gating_conditions": "Triggers revert when active.length <= pendingInactive.length + 1, i.e., when after the candidate is enqueued, fewer than 1 ACTIVE validator would remain",
+      "differs_from_original": "The vulnerable predicate `_activeValidators.length == 1` no longer exists. The new predicate accounts for prior in-epoch PENDING_INACTIVE entries.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "V1.status set to PENDING_INACTIVE, pushed to _pendingInactive",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:424-426",
+      "verified": "yes",
+      "current_state_summary": "Same: validator.status = PENDING_INACTIVE; _pendingInactive.push(stakePool);",
+      "gating_conditions": "Reaches this point only if step-2 guard passes",
+      "differs_from_original": "No change",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "V2 calls leaveValidatorSet(V2); guard passes again because length still 2",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:417-422",
+      "verified": "no",
+      "current_state_summary": "After V1 enqueued, _pendingInactive.length == 1 and _activeValidators.length == 2. The check `2 <= 1 + 1` is true, so leaveValidatorSet(V2) reverts with CannotRemoveLastValidator. The collusion drain is blocked at the second concurrent call.",
+      "gating_conditions": "Revert is unconditional given the active/pendingInactive counters",
+      "differs_from_original": "Original code did not consult _pendingInactive; current code does",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "At epoch boundary, _applyDeactivations deactivates both → 0 active validators",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:537-589, 727-...",
+      "verified": "no",
+      "current_state_summary": "Unreachable: the second leave reverted in step 4, so only one validator is ever in PENDING_INACTIVE in this epoch. After onNewEpoch(), at least one ACTIVE validator remains. The same protection has been added symmetrically to forceLeaveValidatorSet at lines 452-456.",
+      "gating_conditions": "Requires step-4 to succeed, which it cannot",
+      "differs_from_original": "Outcome impossible due to upstream guard fix",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 4],
+  "reasoning_chain": "The reported vulnerability hinges on the last-validator guard ignoring already-enqueued PENDING_INACTIVE entries. In current code (commit a623eab), src/staking/ValidatorManagement.sol:420 implements `if (_activeValidators.length <= _pendingInactive.length + 1) revert CannotRemoveLastValidator();` — exactly the corrected pattern the issue requested (matching evictUnderperformingValidators' remainingActive logic). The fix is mirrored in forceLeaveValidatorSet at lines 454. A dedicated regression test test_audit_concurrentLeave_preventsConsensusHalt at test/unit/staking/ValidatorManagement.t.sol:2360-2383 specifically exercises the concurrent-leave attack path and asserts the third leave reverts with CannotRemoveLastValidator. A companion test_audit_concurrentForceLeave_preventsConsensusHalt at lines 2386-2402 covers the governance-driven variant. Therefore the chain of state transitions described in the report is broken at step 4, and the consensus-halt outcome is unreachable.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "417-422",
+      "excerpt": "// Prevent removing the last active validator (would halt consensus)\n// Use _pendingInactive.length to account for validators already leaving this epoch\n// This prevents concurrent leave calls from bypassing the last-validator guard\nif (_activeValidators.length <= _pendingInactive.length + 1) {\n    revert Errors.CannotRemoveLastValidator();\n}",
+      "why_matters": "Replaces the vulnerable `length == 1` predicate with one that accounts for in-epoch enqueued leavers, directly closing the bypass."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "452-456",
+      "excerpt": "// Prevent removing the last active validator (would halt consensus)\n// Use _pendingInactive.length to account for validators already leaving this epoch\nif (_activeValidators.length <= _pendingInactive.length + 1) {\n    revert Errors.CannotRemoveLastValidator();\n}",
+      "why_matters": "Same fix applied symmetrically to governance-controlled forceLeaveValidatorSet, eliminating the parallel attack path."
+    },
+    {
+      "file": "test/unit/staking/ValidatorManagement.t.sol",
+      "lines": "2359-2383",
+      "excerpt": "function test_audit_concurrentLeave_preventsConsensusHalt() public { ... validatorManager.leaveValidatorSet(pool1); validatorManager.leaveValidatorSet(pool2); vm.expectRevert(abi.encodeWithSelector(Errors.CannotRemoveLastValidator.selector)); validatorManager.leaveValidatorSet(pool3); ... assertEq(validatorManager.getActiveValidatorCount(), 1, ...);",
+      "why_matters": "Explicit regression test for D1-1 fix; replicates the exact concurrent-leave scenario from the issue and proves the third call reverts."
+    }
+  ],
+  "counterargument": "One could argue the new guard still permits the active set to shrink to 1 in a single epoch, which is itself fragile (a 1-of-1 BFT is not Byzantine-fault-tolerant). However, that is a separate liveness/quorum-policy concern (not the reported issue): the reported attack is consensus halt via 0 active validators, and the new predicate `_activeValidators.length <= _pendingInactive.length + 1` strictly guarantees `activeAfterEpoch >= 1`. A second possible objection is reentrancy or out-of-order epoch processing causing _pendingInactive to be cleared before the second call; but leaveValidatorSet is gated by whenNotReconfiguring (line 396) and onNewEpoch is the only path that drains _pendingInactive, so the counters cannot desync within a single epoch. The bypass described in the issue is therefore not reachable.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol:1131-1140 test_RevertWhen_leaveValidatorSet_lastValidator (single-validator base case)",
+    "test/unit/staking/ValidatorManagement.t.sol:1855-1866 force-leave last-validator guard",
+    "test/unit/staking/ValidatorManagement.t.sol:2360-2383 test_audit_concurrentLeave_preventsConsensusHalt (D1-1 regression)",
+    "test/unit/staking/ValidatorManagement.t.sol:2386-2402 test_audit_concurrentForceLeave_preventsConsensusHalt"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

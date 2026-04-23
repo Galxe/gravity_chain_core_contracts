@@ -1,0 +1,110 @@
+{
+  "issue_number": 357,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "Governance calls governanceReconfigure() at src/blocker/Reconfiguration.sol",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:141-166",
+      "verified": "yes",
+      "current_state_summary": "governanceReconfigure() is gated only by requireAllowed(SystemAddresses.GOVERNANCE) and _requireInitialized(). It does not call _canTransition() and does not consult lastReconfigurationTime/epochInterval at all. The only state-based guard is the _transitionState != DkgInProgress check (line 146-148).",
+      "gating_conditions": "Caller must be SystemAddresses.GOVERNANCE (0x...1625F3000); contract must be initialized; _transitionState must not be DkgInProgress.",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_transitionState == Idle and RandomnessConfig variant == Off, so _doImmediateReconfigure() is called",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:154-165",
+      "verified": "yes",
+      "current_state_summary": "Function fetches RandomnessConfig.getCurrentConfig() and branches on config.variant. When variant == ConfigVariant.Off, _doImmediateReconfigure() is invoked (line 161). Otherwise, _startDkgSession() is invoked (line 164). Idle path is unchanged.",
+      "gating_conditions": "RandomnessConfig.variant == Off (a config the governance itself controls).",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "_doImmediateReconfigure() calls _applyReconfiguration() which increments currentEpoch, updates lastReconfigurationTime, sets _transitionState = Idle",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:254-260, 265-308",
+      "verified": "yes",
+      "current_state_summary": "_doImmediateReconfigure() clears any DKG session and calls _applyReconfiguration(). The latter (a) applies all eight pending configs (lines 267-274), (b) calls ValidatorManagement.onNewEpoch() (line 280) which renews lockups via _renewActiveValidatorLockups, (c) resets PerformanceTracker (line 288) — destructively zeroing all per-validator counters, (d) increments currentEpoch (lines 291-292), (e) updates lastReconfigurationTime to block timestamp (line 293), (f) sets _transitionState = Idle (line 296).",
+      "gating_conditions": "None additional.",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Governance immediately calls governanceReconfigure() again — no _canTransition() check means the time guard is never evaluated",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:141-166 (re-entry); src/governance/Governance.sol:482-536",
+      "verified": "yes",
+      "current_state_summary": "Governance.execute() iterates over targets[]/datas[] arrays and atomically performs each call (lines 527-533). A single resolved+succeeded proposal can list governanceReconfigure() N times. Because _applyReconfiguration set _transitionState back to Idle and lastReconfigurationTime is never consulted, the second call passes both gates immediately — even though the block.timestamp (and therefore Timestamp.nowMicroseconds()) has not advanced.",
+      "gating_conditions": "Proposal must already be resolved with state == SUCCEEDED; executionHash must match. No per-call time/cooldown check.",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "_doImmediateReconfigure() executes again, incrementing epoch a second time in the same block",
+      "current_code_ref": "src/blocker/Reconfiguration.sol:265-308",
+      "verified": "yes",
+      "current_state_summary": "Each repeated call walks the same _applyReconfiguration path: configs apply, onNewEpoch fires, perf tracker is wiped, currentEpoch += 1, lastReconfigurationTime is overwritten with the same block timestamp. There is no per-block guard.",
+      "gating_conditions": "None.",
+      "differs_from_original": "no",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "Repeated N times in a single transaction via a governance proposal batch, advancing epochs arbitrarily",
+      "current_code_ref": "src/governance/Governance.sol:527-533",
+      "verified": "yes",
+      "current_state_summary": "The execute() loop has no cap on len and reverts only if any sub-call fails. So an N-element batch of (Reconfiguration, governanceReconfigure() selector) tuples will atomically push currentEpoch up by N. Side effects observed in current code: ValidatorManagement.evictUnderperformingValidators() (called from governanceReconfigure line 151) reads PerformanceTracker, which was zeroed by the previous iteration; src/staking/ValidatorManagement.sol:698-703 marks any validator with total==0 proposals as PENDING_INACTIVE — so from the second iteration onward, every active validator (except the last, by the liveness guard at 712-715) is queued for eviction.",
+      "gating_conditions": "Phase 2 perf-eviction only runs if autoEvictEnabled; underbonded eviction (Phase 1) runs unconditionally. Epoch-1 short-circuit at lines 624-626 only protects the very first call.",
+      "differs_from_original": "partial",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "Source of truth (Reconfiguration.sol:141-166) confirms governanceReconfigure() only checks GOVERNANCE caller, initialization, and _transitionState != DkgInProgress. It never calls _canTransition() (defined at lines 215-219), so the lastReconfigurationTime + epochInterval guard that protects checkAndStartTransition() (line 94-96) is bypassed. _applyReconfiguration() resets _transitionState to Idle (line 296), so subsequent calls in the same tx pass the only state guard. Governance.execute() (lines 482-536) atomically loops over arbitrary-length targets/datas batches, so a single proposal can call governanceReconfigure() N times. Each iteration: (a) increments currentEpoch, (b) wipes PerformanceTracker, (c) makes the next iteration's evictUnderperformingValidators see total==0 for every validator (ValidatorManagement.sol:698-703) → mass eviction queueing bounded only by the remainingActive>1 liveness guard, (d) instantly applies all pending configs without the intended epoch-length notice. The lockup-stacking sub-claim is overstated: systemRenewLockup (StakePool.sol:505-518) sets lockedUntil = now_ + lockupDuration absolutely (not additive), and now_ is constant within the same tx, so lockup is bumped to one fixed horizon, not arbitrarily extended. Even so, the rapid-epoch-advance and perf-reset-then-evict consequences alone match the High severity. No tests cover governanceReconfigure() (zero hits in test/).",
+  "key_evidence": [
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "141-166",
+      "excerpt": "function governanceReconfigure() external override { requireAllowed(SystemAddresses.GOVERNANCE); _requireInitialized(); if (_transitionState == TransitionState.DkgInProgress) { revert Errors.ReconfigurationInProgress(); } ... if (config.variant == RandomnessConfig.ConfigVariant.Off) { _doImmediateReconfigure(); } else { _startDkgSession(config); } }",
+      "why_matters": "Direct evidence: no _canTransition() / time-elapsed check on the governance fast path."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "84-115",
+      "excerpt": "function checkAndStartTransition() ... { if (_transitionState == TransitionState.DkgInProgress) return false; if (!_canTransition()) return false; ... }",
+      "why_matters": "Counterpart entry point that DOES enforce _canTransition() — proves the omission in governanceReconfigure() is asymmetric, not a global design."
+    },
+    {
+      "file": "src/blocker/Reconfiguration.sol",
+      "lines": "265-308",
+      "excerpt": "_applyReconfiguration() ... currentEpoch = newEpoch; lastReconfigurationTime = ITimestamp(...).nowMicroseconds(); _transitionState = TransitionState.Idle;",
+      "why_matters": "After each call _transitionState returns to Idle, so the only remaining gate in governanceReconfigure() is also reset — enabling the loop."
+    },
+    {
+      "file": "src/governance/Governance.sol",
+      "lines": "527-533",
+      "excerpt": "for (uint256 i = 0; i < len; ++i) { (bool success, bytes memory returnData) = targets[i].call(datas[i]); if (!success) revert Errors.ExecutionFailed(...); }",
+      "why_matters": "Confirms the exploit primitive: a single proposal atomically performs an N-element batch of arbitrary calls."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "693-723",
+      "excerpt": "uint256 total = uint256(perfs[i].successfulProposals) + uint256(perfs[i].failedProposals); ... if (total == 0) { shouldEvict = true; } ... validator.status = ValidatorStatus.PENDING_INACTIVE;",
+      "why_matters": "Verifies the secondary impact: after PerformanceTracker.onNewEpoch() resets counters, every active validator on the next iteration shows total==0 and is queued for auto-eviction."
+    },
+    {
+      "file": "src/staking/StakePool.sol",
+      "lines": "505-518",
+      "excerpt": "function systemRenewLockup() external onlyFactory { uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds(); uint64 newLockedUntil = now_ + lockupDuration; if (newLockedUntil > lockedUntil) { lockedUntil = newLockedUntil; ... } }",
+      "why_matters": "Refutes the 'stacking lockups' sub-claim: lockedUntil is set to an absolute now_ + lockupDuration, so within one tx it does not compound. The rest of the impact still stands."
+    }
+  ],
+  "counterargument": "A defender might argue: (1) the GOVERNANCE address is a high-trust system role gated by Governance proposal flow (propose → resolve → execute), so reaching governanceReconfigure() at all already requires majority approval, making this a 'governance has the keys' scenario rather than a flaw. (2) The lockup-stacking sub-claim is incorrect because StakePool.systemRenewLockup() at lines 505-518 uses an absolute newLockedUntil = now_ + lockupDuration and only writes if it grows beyond the current value — within one transaction now_ is constant, so calling it N times yields the same lockedUntil as calling it once. (3) Per-epoch effects rely on autoEvictEnabled and the liveness guard at ValidatorManagement.sol:712-715 (last validator never evicted), bounding catastrophic loss. However, these defenses do not eliminate the bug: rationale (1) is not an excuse — the symmetric path checkAndStartTransition() still enforces _canTransition(), so the asymmetric omission in governanceReconfigure() is plainly an oversight; even an honest governance multisig executing a non-malicious config-update proposal would unintentionally collapse multiple epochs into one block if listed twice. Rationale (2) only weakens one of three impact prongs; the unintended-instant-config-apply and zeroed-perf-mass-eviction prongs survive. Rationale (3) limits but does not prevent harm. So the underlying defect — missing time guard — is real and the High severity is defensible.",
+  "related_existing_tests": [],
+  "fp_or_fixed_hint": "cannot_tell"
+}

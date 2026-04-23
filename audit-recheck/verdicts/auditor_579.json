@@ -1,0 +1,108 @@
+{
+  "issue_number": 579,
+  "verdict": "EXISTS",
+  "confidence": "medium",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "GOVERNANCE calls JWKManager.setPatches(patches) with a large Patch[] — requireAllowed(GOVERNANCE) passes",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:159-179",
+      "verified": "yes",
+      "current_state_summary": "setPatches is external, gated only by requireAllowed(GOVERNANCE) at L162. The calldata Patch[] has no length cap; L168-173 iterates patches.length and pushes every element into storage _patches, then calls _regeneratePatchedJWKs() at L178 in the same transaction.",
+      "gating_conditions": "SystemAddresses.GOVERNANCE is the only gate; no bound check on patches.length before the copy loop or before regeneration.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_patches is replaced (delete + push loop); _regeneratePatchedJWKs runs inline (initial bloat absorbed by governance tx)",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:165-178",
+      "verified": "yes",
+      "current_state_summary": "delete _patches (L165) wipes prior state; a bounded-per-iter push loop (L168-173) copies the calldata array in; _regeneratePatchedJWKs() is invoked synchronously at L178 inside the governance tx. The governance tx itself may be funded with arbitrary gas (no SYSTEM_CALLER gas cap here), so it does not OOG trivially.",
+      "gating_conditions": "Governance supplies gas; no contract-side safety valve.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "SYSTEM_CALLER invokes NativeOracle.record(sourceType=1, sourceId=keccak256(issuer), nonce, payload, gasLimit) with gasLimit bounded by consensus policy",
+      "current_code_ref": "src/oracle/NativeOracle.sol:74-101",
+      "verified": "yes",
+      "current_state_summary": "record is gated to SYSTEM_CALLER (L82), advances nonce (L85 via _updateNonce), then calls _invokeCallback(..., callbackGasLimit) at L90. callbackGasLimit is an opaque parameter set by the off-chain consensus engine — contract treats it as fixed/bounded input.",
+      "gating_conditions": "SYSTEM_CALLER-only; gasLimit is passed through verbatim to the callback.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "NativeOracle._invokeCallback dispatches to JWKManager.onOracleEvent which reaches _regeneratePatchedJWKs — cost O(I²+P·I) per rotation",
+      "current_code_ref": "src/oracle/NativeOracle.sol:296-326 ; src/oracle/jwk/JWKManager.sol:117-152,334-359",
+      "verified": "yes",
+      "current_state_summary": "NativeOracle._invokeCallback (L314) does try IOracleCallback(callback).onOracleEvent{gas: gasLimit}(...). JWKManager.onOracleEvent passes version check (L135), updates _issuerVersions (L140), upserts observed (L143), then unconditionally calls _regeneratePatchedJWKs() at L148. _regeneratePatchedJWKs (L334-359) does: _clearPatchedState (L336; O(I) storage deletes), a loop over _observedIssuers calling _upsertPatchedProvider (L339-348) where each call invokes _insertSortedIssuer (L386) — a linear scan + shift of _patchedIssuers, O(I) per insert × I inserts = O(I²); plus a loop over every patch (L351-356) where _upsertJWKToPatched may call _insertSortedIssuer (L550) — O(P·I) worst case. Net ≈ O(I² + P·I) matching the claim.",
+      "gating_conditions": "Runs on every JWK rotation for any issuer, not just the one being rotated. No early-exit or incremental update path.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "With P (or I) large, _regeneratePatchedJWKs OOGs the fixed callback gasLimit; try/catch stores raw payload and emits failure path",
+      "current_code_ref": "src/oracle/NativeOracle.sol:314-325",
+      "verified": "partial",
+      "current_state_summary": "The try/catch at L314-325 catches any revert (including OOG) and returns true, so NativeOracle.record then stores the raw payload at L93-100 and emits CallbackFailed (L323) + DataRecorded. The callback's state mutations (version bump, observed upsert, patched regen) all revert. One nuance: after an OOG, the outer record still has at least 1/64 gas remaining per EIP-150, so the fallback store and event-emission path typically succeeds. The original description accurately reflects the fallback behavior.",
+      "gating_conditions": "Requires that the O(I²+P·I) regeneration actually exceeds the callback gasLimit supplied by consensus. This is an offchain constant; the contract provides no upper-bound assurance.",
+      "differs_from_original": "none of substance; minor: the fallback emits CallbackFailed (not a dedicated rotation-failure event).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 6,
+      "original": "_issuerVersions not advanced; subsequent rotations repeat OOG until governance clears patches",
+      "current_code_ref": "src/oracle/jwk/JWKManager.sol:140,148 ; src/oracle/NativeOracle.sol:85,322-325",
+      "verified": "yes",
+      "current_state_summary": "Because onOracleEvent reverts (OOG inside _regeneratePatchedJWKs at L148), all its state writes are rolled back — _issuerVersions[issuerHash] stays at the pre-rotation value and observed state is unchanged. Meanwhile NativeOracle._updateNonce (L85, L257-270) already persisted the nonce increment outside the try, so nonces advance but JWK state does not. The patches array remains until GOVERNANCE calls setPatches([]) — which itself re-runs _regeneratePatchedJWKs one final time with the governance-sized gas budget.",
+      "gating_conditions": "Recovery requires a governance tx with enough gas to run the final regen with P=old_large + the clear; on a congested chain this may need multiple attempts as the description notes.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "All six claimed steps are present in code at a623eab. (1) setPatches has zero length validation (JWKManager.sol:159-179). (2) It inlines a full regeneration. (3-4) onOracleEvent also calls _regeneratePatchedJWKs on every rotation (L148); complexity is provably O(I²+P·I): the observed-copy loop invokes _insertSortedIssuer (L428-459) which is a scan+shift, giving I² over I issuers; the patch-apply loop can add I-width shifts per UpsertJWK patch. (5) NativeOracle.sol:314-325 has the try/catch-OOG-fallback exactly as described. (6) The nonce advances regardless (L85) while callback state reverts, so subsequent rotations keep OOGing with the same bloated patches. No cap, no pagination, no incremental-update shortcut exists anywhere in the contract. The severity rating Medium is justified: governance-triggered (not attacker-triggered), governance-recoverable, but silent and targets a consensus-critical output (keyless-account auth).",
+  "key_evidence": [
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "159-179",
+      "excerpt": "function setPatches(Patch[] calldata patches) external override { requireAllowed(SystemAddresses.GOVERNANCE); delete _patches; for (uint256 i; i < patches.length;) { _patches.push(patches[i]); ... } emit PatchesUpdated(patches.length); _regeneratePatchedJWKs(); }",
+      "why_matters": "Demonstrates the only gate is governance authorization; no patches.length cap and regeneration is inlined in the same tx."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "334-359",
+      "excerpt": "function _regeneratePatchedJWKs() internal { _clearPatchedState(); for (uint256 i; i < _observedIssuers.length;) { ... _upsertPatchedProvider(issuerHash, observed.issuer, observed.version, observed.jwks); ... } for (uint256 i; i < _patches.length;) { _applyPatch(_patches[i]); ... } emit PatchedJWKsRegenerated(_patchedIssuers.length); }",
+      "why_matters": "The full-rebuild-from-scratch pattern. Each _upsertPatchedProvider calls _insertSortedIssuer → O(I) per issuer → O(I²); each _applyPatch/UpsertJWK on a new issuer is also O(I). Confirms O(I²+P·I)."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "428-459",
+      "excerpt": "function _insertSortedIssuer(bytes[] storage issuers, bytes memory issuer) internal { ... for (uint256 i; i < len;) { if (_compareBytes(issuer, issuers[i]) < 0) { insertIdx = i; break; } ... } issuers.push(); for (uint256 i = len; i > insertIdx;) { issuers[i] = issuers[i - 1]; ... } issuers[insertIdx] = issuer; }",
+      "why_matters": "Sort-insert scans + shifts the storage issuers array; combined with _compareBytes this is the quadratic inner operation."
+    },
+    {
+      "file": "src/oracle/jwk/JWKManager.sol",
+      "lines": "117-152",
+      "excerpt": "function onOracleEvent(...) external override returns (bool shouldStore) { requireAllowed(SystemAddresses.NATIVE_ORACLE); ... _issuerVersions[issuerHash] = version; _upsertObservedProvider(...); emit ObservedJWKsUpdated(...); _regeneratePatchedJWKs(); return false; }",
+      "why_matters": "Every JWK rotation triggers a full O(I²+P·I) regen, regardless of which single issuer changed. This is the DoS amplifier."
+    },
+    {
+      "file": "src/oracle/NativeOracle.sol",
+      "lines": "85-101,314-325",
+      "excerpt": "_updateNonce(sourceType, sourceId, nonce); ... try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(...) returns (bool callbackShouldStore) { ... } catch (bytes memory reason) { emit CallbackFailed(sourceType, sourceId, nonce, callback, reason); return true; }",
+      "why_matters": "Shows (a) nonce is committed before callback, so rotations keep being consumed; (b) callback revert is swallowed, preserving the stuck state silently; (c) the contract always passes the caller-supplied gasLimit, offering no floor/ceiling safety."
+    }
+  ],
+  "counterargument": "One could argue this is not a real vulnerability because: (a) setPatches is governance-only, so the attacker must be governance itself — effectively a governance footgun, not an external DoS. (b) P in practice is bounded by the number of emergency JWK overrides governance actually needs, likely O(10s). (c) If the callback OOGs, the raw payload is still stored by NativeOracle (L93-100), so in principle another consumer could read _records[1][sourceId][nonce] and recover off-chain. (d) Governance can always call setPatches([]) to clear. However these don't defeat the issue: getJWK/hasJWK read _patchedProviders only (L191,L211), not _records, so stored-raw payload is dead to consumers; governance-only trust doesn't remove the bug class (governance operator error or social-engineered patch list), and the claim's metric is a reachable stuck-state not an attacker-controlled one; and setPatches([]) itself must succeed on a congested chain at the same O(P·I) cost. So the medium severity stands.",
+  "related_existing_tests": [
+    "test/unit/oracle/JWKManager.t.sol::test_SetPatches_RemoveAll",
+    "test/unit/oracle/JWKManager.t.sol::test_SetPatches_UpsertJWK",
+    "test/unit/oracle/JWKManager.t.sol::test_SetPatches_ClearPatches"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

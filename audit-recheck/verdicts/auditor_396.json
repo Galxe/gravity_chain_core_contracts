@@ -1,0 +1,133 @@
+{
+  "issue_number": 396,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "evictUnderperformingValidators() outer loop iterates checkLen validators (line 572)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:640-662, 685-724",
+      "verified": "yes",
+      "current_state_summary": "There are actually two outer loops each iterating activeLen (Phase 1 underbonded eviction at 640-662 and Phase 2 performance eviction at 685-724). Each loop body is O(1) work plus at most one emit/state mutation; the loop is O(activeLen), not quadratic.",
+      "gating_conditions": "requireAllowed(RECONFIGURATION); allowValidatorSetChange==true; closingEpoch>1; Phase 2 also requires autoEvictEnabled and perfLen==activeLen.",
+      "differs_from_original": "Original cited 'checkLen' and line 572; current code uses activeLen and has been restructured into two sequential single-pass loops.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "For each candidate meeting eviction threshold, inner loop at line 586 re-scans ALL activeLen validators to count remainingActive",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:633-638, 658, 720",
+      "verified": "no",
+      "current_state_summary": "remainingActive is initialized ONCE before the eviction loops by a single O(activeLen) pass at 633-638, and then decremented in-place (remainingActive-- at lines 658 and 720) whenever a validator is marked PENDING_INACTIVE. There is NO inner loop recomputation. Total eviction cost is O(activeLen), not O(activeLen^2). This exactly matches the optimization described in the GCC-035 commit message in audit_1 branch ('Hoist remainingActive counter before the eviction loop and decrement on each eviction. Previously the count was recomputed in an O(n) inner loop on every eviction candidate, making worst case O(n^2).').",
+      "gating_conditions": "N/A — there is no inner loop to gate.",
+      "differs_from_original": "The O(n^2) inner loop claimed by the issue does not exist in current code. remainingActive is a hoisted counter.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "Worst case: all validators meet threshold → O(activeLen^2) storage reads",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:640-724",
+      "verified": "no",
+      "current_state_summary": "Even if every active validator meets the eviction threshold, each is visited exactly once per phase. Total storage reads are O(activeLen) per phase plus one pre-count pass — all linear in activeLen.",
+      "gating_conditions": "N/A",
+      "differs_from_original": "Quadratic behavior is absent.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 4,
+      "original": "_computeNextEpochValidatorSet calls _isInPendingInactive (O(pendingInactiveLen)) twice per active validator (lines 787, 832)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:951-1058, 1260-1270",
+      "verified": "no",
+      "current_state_summary": "_computeNextEpochValidatorSet uses direct O(1) status checks via _validators[pool].status == ValidatorStatus.PENDING_INACTIVE at lines 972 (staying count), 1025 (building next set), and _calculateStayingVotingPower uses the same pattern at line 922. The helper function _isInPendingInactive (lines 1260-1270) is defined but grep shows ZERO callers in ValidatorManagement.sol. The O(activeLen * pendingInactiveLen) scan that the issue alleges does not exist.",
+      "gating_conditions": "N/A — the linear scan is not invoked.",
+      "differs_from_original": "The alleged callsites are status-field lookups (O(1)), not array scans.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Total: O(activeLen × pendingInactiveLen × 2) for the inactive check passes",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:917-928, 964-976, 1022-1039",
+      "verified": "no",
+      "current_state_summary": "All three passes that 'skip PENDING_INACTIVE' use direct status comparison. Total work across these passes is O(activeLen) + O(pendingInactiveLen), not O(activeLen * pendingInactiveLen).",
+      "gating_conditions": "N/A",
+      "differs_from_original": "No multiplicative cost exists.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "Combined with _calculateTotalVotingPower (3 external calls per validator) and _syncValidatorBonds (3 external calls per validator)",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:875-893, 934-941",
+      "verified": "partial",
+      "current_state_summary": "The former _calculateTotalVotingPower and _syncValidatorBonds have been merged into a single pass _syncBondsAndCalculateTotalVotingPower (883-893) that calls _getValidatorVotingPower once per validator. _getValidatorVotingPower makes 2 external calls (Staking.getPoolVotingPower + ValidatorConfig.maximumBond + 1 call to Timestamp). So per-validator external-call count is ~3 in one pass (linear), not 3+3=6 as the issue implies.",
+      "gating_conditions": "N/A",
+      "differs_from_original": "The duplicate per-validator external-call pattern cited as a stacking cost has been eliminated; the two functions are fused.",
+      "breaks_attack": "partial"
+    },
+    {
+      "step": 7,
+      "original": "Gas cost scales quadratically with validator count — may exceed block gas limit",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:610-725, 883-893, 951-1058",
+      "verified": "no",
+      "current_state_summary": "All hot paths in evictUnderperformingValidators, _syncBondsAndCalculateTotalVotingPower, and _computeNextEpochValidatorSet are linear in activeLen (with pendingInactiveLen and pendingActiveLen added linearly, not multiplied). There is no remaining O(n^2) structure in the epoch-transition flow described by the issue.",
+      "gating_conditions": "N/A",
+      "differs_from_original": "The quadratic claim does not hold against current code.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 4, 5, 7],
+  "reasoning_chain": "The issue's quadratic-cost claim rests on two concrete allegations: (a) remainingActive is recomputed inside the eviction outer loop (step 2), and (b) _isInPendingInactive (an O(pendingInactiveLen) linear scan) is called twice per active validator inside _computeNextEpochValidatorSet (step 4). Both are false on current main (commit a623eab). At src/staking/ValidatorManagement.sol:633-638 remainingActive is hoisted ONCE before both eviction phases and decremented in-place at lines 658 and 720; the 'inner loop at line 586' described in the issue does not exist. At src/staking/ValidatorManagement.sol:972, 1025, and 922 the 'is this validator leaving' check is a direct status-field comparison (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE), which is O(1) per check. _isInPendingInactive is still defined at 1260-1270 but grep confirms it has zero callers. Additionally _syncBondsAndCalculateTotalVotingPower at 883-893 fuses the formerly duplicated external-call passes (_syncValidatorBonds + _calculateTotalVotingPower) into one. All three epoch-transition hot paths are therefore linear in validator counts. The attack is broken at steps 2, 4, 5, and 7 by the code as written. Confirmation: the audit_1 branch commit 2287dac ('perf: optimize validator eviction and epoch transitions (GCC-034, GCC-035)') documents exactly these two fixes, and they are already present on main.",
+  "key_evidence": [
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "633-638",
+      "excerpt": "uint256 remainingActive = 0;\nfor (uint256 i = 0; i < activeLen; i++) {\n    if (_validators[_activeValidators[i]].status == ValidatorStatus.ACTIVE) {\n        remainingActive++;\n    }\n}",
+      "why_matters": "remainingActive is a single pre-loop O(activeLen) count; refutes the O(n^2) 'recomputed inside the loop' claim at step 2."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "656-658",
+      "excerpt": "validator.status = ValidatorStatus.PENDING_INACTIVE;\n_pendingInactive.push(pool);\nremainingActive--;",
+      "why_matters": "Shows remainingActive is maintained by O(1) decrement, not re-scan."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "718-720",
+      "excerpt": "validator.status = ValidatorStatus.PENDING_INACTIVE;\n_pendingInactive.push(pool);\nremainingActive--;",
+      "why_matters": "Phase 2 performance eviction reuses the same hoisted counter."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "970-976",
+      "excerpt": "for (uint256 i = 0; i < activeLen; i++) {\n    address pool = _activeValidators[i];\n    if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {\n        continue;\n    }\n    stayingActiveCount++;\n}",
+      "why_matters": "Direct O(1) status check, not the O(pendingInactiveLen) _isInPendingInactive scan alleged at step 4."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "917-928",
+      "excerpt": "function _calculateStayingVotingPower() internal view returns (uint256) {\n    uint256 total = 0;\n    uint256 length = _activeValidators.length;\n    for (uint256 i = 0; i < length; i++) {\n        address pool = _activeValidators[i];\n        if (_validators[pool].status == ValidatorStatus.PENDING_INACTIVE) {\n            continue;\n        }\n        total += _getValidatorVotingPower(pool);\n    }\n    return total;\n}",
+      "why_matters": "Single-pass linear cost, O(1) membership check."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "883-893",
+      "excerpt": "function _syncBondsAndCalculateTotalVotingPower() internal returns (uint256) {\n    uint256 total = 0;\n    uint256 length = _activeValidators.length;\n    for (uint256 i = 0; i < length; i++) {\n        address pool = _activeValidators[i];\n        uint256 power = _getValidatorVotingPower(pool);\n        _validators[pool].bond = power;\n        total += power;\n    }\n    return total;\n}",
+      "why_matters": "Formerly two passes (_syncValidatorBonds + _calculateTotalVotingPower) are now fused into one; halves the external-call count per validator and eliminates the stacking cost alleged at step 6."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "1260-1270",
+      "excerpt": "function _isInPendingInactive(\n    address pool\n) internal view returns (bool) {\n    uint256 length = _pendingInactive.length;\n    for (uint256 i = 0; i < length; i++) {\n        if (_pendingInactive[i] == pool) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "why_matters": "The helper the issue blamed for O(activeLen*pendingInactiveLen) cost is dead code — grep over ValidatorManagement.sol returns only its definition, zero callers."
+    }
+  ],
+  "counterargument": "Even though each pass is linear, the epoch transition still invokes multiple full-array passes (two eviction phases, _calculateStayingVotingPower, the compute-next-set builder, and the bond-sync pass), each with external calls per validator. With a very large validator set (e.g. thousands) plus many _pendingActive and _pendingInactive entries, the absolute gas cost could in principle still approach the block gas limit even under O(n) scaling, especially because _getValidatorVotingPower itself does external calls to Staking and ValidatorConfig. If one broadens the definition of 'gas-DoS at scale' to include linear-but-large costs, a weaker form of the issue could be argued to hold. Against this: (1) maxValidatorSetSize caps activeLen to BFT-reasonable numbers (typically ≤150-200 in Aptos-style chains); (2) the issue explicitly frames the problem as quadratic, which is the precise claim that current code refutes; (3) no test in the repo demonstrates the transition reverting at any realistic validator count. So the counterargument does not rescue the original finding as stated.",
+  "related_existing_tests": [
+    "test/unit/staking/ValidatorManagement.t.sol::test_audit_evict_honorsAllowValidatorSetChange",
+    "test/unit/staking/ValidatorManagement.t.sol::test_audit_evict_doesNotRevert",
+    "test/unit/staking/ValidatorManagement.t.sol::test_d3_2_governanceRaisesMinimumBond_evictsUnderbonded",
+    "test/unit/staking/ValidatorManagement.t.sol::test_d3_2_evictedValidator_canRejoin",
+    "test/unit/staking/ValidatorManagement.t.sol::test_d3_2_underbondedEviction_independentOfAutoEvictEnabled",
+    "test/unit/staking/ValidatorManagement.t.sol::test_d3_2_underbondedAndUnderperforming_bothEvicted"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}

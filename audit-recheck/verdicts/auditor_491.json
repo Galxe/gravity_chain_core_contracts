@@ -1,0 +1,97 @@
+{
+  "issue_number": 491,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "SYSTEM_CALLER calls Genesis.initialize() — outer guard _isInitialized false, passes",
+      "current_code_ref": "src/Genesis.sol:134-149",
+      "verified": "yes",
+      "current_state_summary": "initialize() has requireAllowed(SYSTEM_CALLER) at line 145 and if (_isInitialized) revert AlreadyInitialized() at lines 147-149. The outer guard exists and only sets _isInitialized=true at line 172 after all sub-calls succeed.",
+      "gating_conditions": "msg.sender must be SYSTEM_CALLER; _isInitialized must be false",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "_initializeConfigs() → each sub-config sets its own _initialized = true on success",
+      "current_code_ref": "src/Genesis.sol:152 and src/runtime/ValidatorConfig.sol:114-152",
+      "verified": "yes",
+      "current_state_summary": "_initializeConfigs (Genesis.sol:180-218) calls ValidatorConfig/StakingConfig/EpochConfig/ConsensusConfig/ExecutionConfig/GovernanceConfig/VersionConfig/RandomnessConfig.initialize sequentially. Each sub-contract (e.g. ValidatorConfig.sol:149) sets _initialized=true at the end of a successful call and reverts Errors.AlreadyInitialized() on re-entry (ValidatorConfig.sol:126-128). Same pattern confirmed in StakingConfig.sol:98, EpochConfig.sol:69, etc.",
+      "gating_conditions": "each sub-initialize requires requireAllowed(GENESIS) and _initialized==false",
+      "differs_from_original": "none — factual description of storage writes is correct",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "ValidatorManagement.initialize() reverts MonikerTooLong mid-loop after configs/pools already set _initialized=true",
+      "current_code_ref": "src/staking/ValidatorManagement.sol:115-135, 147-153",
+      "verified": "partial",
+      "current_state_summary": "ValidatorManagement.initialize (line 115) iterates validators at line 127-129. _initializeGenesisValidator reverts Errors.MonikerTooLong at line 152-153 if bytes(v.moniker).length > 31 (MAX_MONIKER_LENGTH=31 at line 45). This revert propagates up to Genesis.sol:162.",
+      "gating_conditions": "any validator moniker > 31 bytes triggers revert",
+      "differs_from_original": "The revert does propagate as described, but the premise about persistent state is incorrect (see step 4).",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "If any sub-call reverts mid-loop, Genesis tx reverts but sub-contracts that already completed retain _initialized=true in storage",
+      "current_code_ref": "src/Genesis.sol:134-174 (no try/catch)",
+      "verified": "no",
+      "current_state_summary": "Genesis.initialize contains NO try/catch blocks (grep confirms zero matches for 'try' in Genesis.sol). All sub-initializations are direct external calls (lines 152, 155, 162, 165, 167, 170). Per EVM semantics, when ValidatorManagement.initialize() reverts at line 162, the entire top-level transaction reverts and ALL storage writes — including _initialized=true in ValidatorConfig/StakingConfig/etc. performed earlier within the same transaction — are atomically rolled back. Sub-contracts do NOT retain _initialized=true after a revert.",
+      "gating_conditions": "Only a try/catch at the Genesis level (or a sub-contract swallowing its own revert) could persist partial state — neither exists here.",
+      "differs_from_original": "Fundamentally different. The report assumes storage changes of inner calls persist when an outer revert occurs; EVM atomic rollback makes this impossible.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 5,
+      "original": "Retry: Genesis.initialize() re-enters and immediately reverts at the first already-initialized sub-contract with AlreadyInitialized",
+      "current_code_ref": "src/Genesis.sol:147-149; src/runtime/ValidatorConfig.sol:126-128",
+      "verified": "no",
+      "current_state_summary": "On retry after the failed initialization tx is fully rolled back, all sub-contracts' _initialized flags are still false, so a corrected Genesis.initialize() (with a valid moniker) succeeds normally. There is no AlreadyInitialized revert chain.",
+      "gating_conditions": "N/A — precondition (persistent partial state) does not hold.",
+      "differs_from_original": "The described retry path does not materialize.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 6,
+      "original": "Genesis.sol:168 _isInitialized = true never reached — chain permanently unlaunchable",
+      "current_code_ref": "src/Genesis.sol:172",
+      "verified": "no",
+      "current_state_summary": "_isInitialized=true is at line 172 (not 168). Because a retry after a reverted attempt sees a clean slate, the retry can reach line 172 and complete genesis. Chain is not permanently unlaunchable.",
+      "gating_conditions": "Operators supply a GenesisInitParams that passes all validation rules.",
+      "differs_from_original": "Conclusion contradicted by EVM atomicity.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [4, 5, 6],
+  "reasoning_chain": "The reported deadlock requires sub-contracts to retain _initialized=true across a failed Genesis.initialize() transaction. However, Genesis.initialize (src/Genesis.sol:134-174) performs all sub-initializations via plain external calls without any try/catch. Under EVM semantics, when a nested call reverts and the revert propagates to the top level, the ENTIRE transaction — including every storage slot modified in any contract during that transaction — is atomically rolled back. Therefore, after ValidatorManagement.initialize() reverts (e.g., MonikerTooLong at src/staking/ValidatorManagement.sol:152-153), the _initialized flags written earlier in ValidatorConfig (src/runtime/ValidatorConfig.sol:149), StakingConfig, EpochConfig, etc. all revert to false. A subsequent Genesis.initialize() retry with corrected params sees a clean slate and can complete successfully. The ‘partial initialization deadlock’ is not realizable in current code and reflects a misunderstanding of EVM state rollback.",
+  "key_evidence": [
+    {
+      "file": "src/Genesis.sol",
+      "lines": "134-174",
+      "excerpt": "function initialize(GenesisInitParams calldata params) external payable { ... requireAllowed(SystemAddresses.SYSTEM_CALLER); if (_isInitialized) revert Errors.AlreadyInitialized(); _initializeConfigs(params); _initializeOracles(...); ...ValidatorManagement(...).initialize(genesisValidators); ...  _isInitialized = true; ... }",
+      "why_matters": "No try/catch anywhere. Any revert from any sub-call propagates to the top-level and rolls back the whole tx, including all sub-contract _initialized writes."
+    },
+    {
+      "file": "src/runtime/ValidatorConfig.sol",
+      "lines": "114-152",
+      "excerpt": "function initialize(...) external { requireAllowed(SystemAddresses.GENESIS); if (_initialized) revert Errors.AlreadyInitialized(); ... _initialized = true; ... }",
+      "why_matters": "Representative of all sub-configs. _initialized=true persistence is contingent on transaction success; EVM rolls this slot back if the enclosing Genesis tx reverts."
+    },
+    {
+      "file": "src/staking/ValidatorManagement.sol",
+      "lines": "115-135, 147-153",
+      "excerpt": "for (uint256 i = 0; i < length; i++) { totalPower += _initializeGenesisValidator(validators[i], uint64(i)); } ... if (bytes(v.moniker).length > MAX_MONIKER_LENGTH) revert Errors.MonikerTooLong(...);",
+      "why_matters": "This is the revert the report points to. It does cause the enclosing tx to revert, but that revert resets state globally — not just locally."
+    }
+  ],
+  "counterargument": "One could argue the exploit is plausible if the attacker somehow isolates sub-contract state changes — for example if Genesis wrapped each sub-call in try/catch and swallowed reverts. In that hypothetical, a sub-contract could indeed retain _initialized=true even though the outer Genesis.initialize re-threw or continued. The current Genesis.sol does not do this — all sub-calls are direct. Another theoretical path would be a sub-contract itself catching its own internal reverts and leaving _initialized=true; none of the runtime configs or ValidatorManagement do this either (each sets _initialized=true only at the end of a linear initialize body). Without either of those mechanisms, EVM’s default atomic rollback makes the reported deadlock impossible.",
+  "related_existing_tests": [
+    "test/unit/runtime/ValidatorConfig.t.sol (tests AlreadyInitialized revert)",
+    "test/unit/staking/ValidatorManagement.t.sol (tests initialize + MonikerTooLong path)",
+    "test/unit/runtime/StakingConfig.t.sol",
+    "test/unit/foundation/Errors.t.sol"
+  ],
+  "fp_or_fixed_hint": "fp"
+}

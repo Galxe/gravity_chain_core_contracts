@@ -1,0 +1,86 @@
+{
+  "issue_number": 301,
+  "verdict": "EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "User submits bridgeToGravityWithPermit(amount, recipient, deadline, v, r, s) to the mempool.",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeSender.sol:63-73",
+      "verified": "yes",
+      "current_state_summary": "bridgeToGravityWithPermit is an external payable function taking (amount, recipient, deadline, v, r, s) — a public entrypoint whose tx is visible in the mempool before inclusion.",
+      "gating_conditions": "No access control (external). Callable by anyone with msg.sender as permit owner.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "Attacker extracts the permit parameters from the pending transaction.",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeSender.sol:63-73",
+      "verified": "yes",
+      "current_state_summary": "The function signature exposes the entire permit tuple (msg.sender = owner, spender = address(this) = bridge contract, amount, deadline, v, r, s) as plain calldata; all fields are directly extractable by any mempool observer.",
+      "gating_conditions": "Requires public mempool (Ethereum L1 default). Private relays (e.g. Flashbots) would mitigate but are not enforced here.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 3,
+      "original": "Attacker calls gToken.permit(user, GBridgeSender, amount, deadline, v, r, s) directly with higher gas, consuming the nonce.",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeSender.sol:71",
+      "verified": "yes",
+      "current_state_summary": "Line 71 calls IERC20Permit(gToken).permit(msg.sender, address(this), amount, deadline, v, r, s) with no try/catch. gToken is a standard ERC20Permit (EIP-2612) whose permit() increments nonces[owner] and reverts on nonce mismatch. Nothing prevents an attacker from submitting the identical (owner, spender, amount, deadline, v, r, s) tuple directly to gToken.permit() in a preceding tx — EIP-2612 validates the signature against the current nonce, so a replay by any caller is accepted.",
+      "gating_conditions": "gToken must implement EIP-2612 (asserted by IERC20Permit cast). Front-runner must win gas priority auction, which is cheap (single permit call ~50k gas).",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 4,
+      "original": "Victim's transaction executes — permit() reverts because the nonce was already consumed; the entire bridgeToGravityWithPermit reverts.",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeSender.sol:71-72",
+      "verified": "yes",
+      "current_state_summary": "The permit() call at line 71 is invoked as a plain external call (not wrapped in try/catch). When EIP-2612 permit reverts due to nonce mismatch (attacker's front-run already bumped nonces[alice] from N to N+1, but victim's signature was produced against N), the revert propagates and the entire bridgeToGravityWithPermit tx reverts before reaching _bridgeToGravity at line 72. A Grep for 'try.*permit|catch.*permit' over src/ returned zero matches, confirming no fallback exists.",
+      "gating_conditions": "none — any permit revert kills the whole call.",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 5,
+      "original": "User is forced to use bridgeToGravity with a separate approve tx, or resubmit with a new permit (which can be front-run again). DoS persists.",
+      "current_code_ref": "src/oracle/evm/native_token_bridge/GBridgeSender.sol:55-60,63-73",
+      "verified": "yes",
+      "current_state_summary": "bridgeToGravity (lines 55-60) exists as an alternative path but requires a pre-existing allowance, so the user must pay for a separate approve() tx. Re-signing a new permit reproduces the same mempool-visible tuple, enabling repeated DoS. Notably, the attacker's front-run permit call DOES set the allowance on the bridge (spender=address(this), amount), so a try/catch fallthrough to safeTransferFrom inside _bridgeToGravity would actually succeed — confirming the irony the reporter noted and validating the feasibility of the standard mitigation.",
+      "gating_conditions": "Attacker must keep monitoring mempool; griefing is persistent but not free-forever (each attack costs attacker one permit gas).",
+      "differs_from_original": "none",
+      "breaks_attack": "no"
+    }
+  ],
+  "attack_blocked_at_steps": [],
+  "reasoning_chain": "The vulnerable function bridgeToGravityWithPermit at GBridgeSender.sol:63-73 invokes IERC20Permit.permit without try/catch at line 71. A grep across the src/ tree confirms no catch-block variant exists. Git log on the file (most recent security-relevant commit bd42d9a introduces balance-delta pattern for fee-on-transfer, unrelated) shows no mitigation has been applied. The attack is a textbook EIP-2612 front-running DoS: permit signatures are replayable by any caller (the function validates signer vs. owner field, not msg.sender), so extracting (v,r,s,deadline,amount) from the mempool and calling gToken.permit directly bumps the nonce, causing the victim's identical permit call in bridgeToGravityWithPermit to revert with InvalidSigner/InvalidNonce. No try/catch, no fallback, no private-mempool assumption, no access control — every precondition from the issue's exploit holds verbatim against current code.",
+  "key_evidence": [
+    {
+      "file": "src/oracle/evm/native_token_bridge/GBridgeSender.sol",
+      "lines": "63-73",
+      "excerpt": "function bridgeToGravityWithPermit(uint256 amount, address recipient, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external payable returns (uint128 messageNonce) { IERC20Permit(gToken).permit(msg.sender, address(this), amount, deadline, v, r, s); return _bridgeToGravity(amount, recipient); }",
+      "why_matters": "Exact vulnerable function body. permit() call is unguarded; any revert propagates and aborts the whole bridge operation."
+    },
+    {
+      "file": "src/oracle/evm/native_token_bridge/GBridgeSender.sol",
+      "lines": "71",
+      "excerpt": "IERC20Permit(gToken).permit(msg.sender, address(this), amount, deadline, v, r, s);",
+      "why_matters": "The single point of failure. Wrapping this in try/catch {} would allow fallthrough to safeTransferFrom, which succeeds because the front-runner's own permit call set the allowance."
+    },
+    {
+      "file": "src/oracle/evm/native_token_bridge/GBridgeSender.sol",
+      "lines": "83-102",
+      "excerpt": "function _bridgeToGravity(uint256 amount, address recipient) internal ... { ... IERC20(gToken).safeTransferFrom(msg.sender, address(this), amount); ... }",
+      "why_matters": "_bridgeToGravity uses safeTransferFrom — which WOULD succeed on the attacker-set allowance if permit() were wrapped in try/catch. This confirms the reporter's observation that the fix is trivial and the DoS is gratuitous."
+    }
+  ],
+  "counterargument": "One could argue (a) attackers may not bother because they gain nothing beyond griefing; (b) users can use private mempools (Flashbots, MEV-Blocker) to hide the signature; (c) re-signing with a fresh deadline is inexpensive. However: (a) griefing alone is recognized by industry standards (OZ, Uniswap Permit2) as a High-impact UX/liveness concern — Permit2 specifically exists to address this class; (b) private-mempool usage is not enforced by the contract and most retail users submit to the public mempool; (c) re-signing produces the same replayable tuple and can be front-run again at ~50k gas per attack, making the DoS persistent and very cheap relative to the victim's wasted base-tx gas. No code-level mitigation is present, so the severity assessment stands.",
+  "related_existing_tests": [
+    "test/unit/oracle/GBridgeSender.t.sol::test_BridgeToGravityWithPermit (happy-path only; no front-run / nonce-already-consumed test)",
+    "test/unit/oracle/GBridgeSender.t.sol::test_BridgeToGravityWithPermit_RevertWhenExpired (asserts the current behavior where permit revert propagates — i.e., the vulnerable behavior)",
+    "test/unit/oracle/GBridgeSender.t.sol::test_BridgeToGravityWithPermit_RevertWhenInvalidSignature (same — confirms no try/catch)"
+  ],
+  "fp_or_fixed_hint": "cannot_tell"
+}

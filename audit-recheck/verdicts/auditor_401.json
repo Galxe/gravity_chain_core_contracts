@@ -1,0 +1,66 @@
+{
+  "issue_number": 401,
+  "verdict": "NOT_EXISTS",
+  "confidence": "high",
+  "data_flow_trace": [
+    {
+      "step": 1,
+      "original": "All 7 pending-pattern contracts call _requireInitialized() in their setForNextEpoch()",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "yes",
+      "current_state_summary": "StakingConfig has been refactored to use the same pending-config pattern as its peers. setForNextEpoch() is now the single governance setter.",
+      "gating_conditions": "Caller must be GOVERNANCE AND contract must be initialized.",
+      "differs_from_original": "Issue targeted a state that no longer exists — StakingConfig already conforms to the peer pattern.",
+      "breaks_attack": "no"
+    },
+    {
+      "step": 2,
+      "original": "StakingConfig's four setters (setMinimumStake at line 89, setLockupDurationMicros 103, setUnbondingDelayMicros 121, setMinimumProposalStake 139) only check requireAllowed(GOVERNANCE) with no _requireInitialized().",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147",
+      "verified": "no",
+      "current_state_summary": "The four per-field setters were entirely removed in commit 49dce4a ('refactor: apply pending config pattern to StakingConfig (GCC-004) (#33)', dated 2026-02-27). They are replaced by setForNextEpoch(uint256,uint64,uint64) which, at line 136, calls _requireInitialized() before mutating pending state. The guard implementation is at src/runtime/StakingConfig.sol:198-200 ('if (!_initialized) revert Errors.StakingConfigNotInitialized();').",
+      "gating_conditions": "setForNextEpoch now requires (a) requireAllowed(GOVERNANCE) at line 135, (b) _requireInitialized() at line 136, (c) _validateConfig(...) at line 137.",
+      "differs_from_original": "The four targeted setters no longer exist — function signatures cited in the issue are gone from the current bytecode surface.",
+      "breaks_attack": "yes"
+    },
+    {
+      "step": 3,
+      "original": "If GOVERNANCE were active pre-genesis, setMinimumStake(0) could write to uninitialized storage; a later initialize() would overwrite.",
+      "current_code_ref": "src/runtime/StakingConfig.sol:130-147, 198-200",
+      "verified": "no",
+      "current_state_summary": "Even hypothetically, (a) setMinimumStake/setLockupDurationMicros/etc. no longer exist; (b) the replacement setForNextEpoch reverts with StakingConfigNotInitialized when _initialized == false; (c) _validateConfig also rejects _minimumStake == 0 via InvalidMinimumStake. The attack scenario has no remaining surface.",
+      "gating_conditions": "Any attempt to call setForNextEpoch prior to initialize() reverts on line 136.",
+      "differs_from_original": "Defense-in-depth gap has been closed by the refactor; StakingConfig now matches the peer pattern exactly.",
+      "breaks_attack": "yes"
+    }
+  ],
+  "attack_blocked_at_steps": [2, 3],
+  "reasoning_chain": "The finding targets four specific setters (setMinimumStake, setLockupDurationMicros, setUnbondingDelayMicros, setMinimumProposalStake) that lack _requireInitialized(). These functions no longer exist in the current source — commit 49dce4a (#33, GCC-004) removed them and introduced the pending-config pattern. The replacement setForNextEpoch() at src/runtime/StakingConfig.sol:130-147 calls _requireInitialized() at line 136, which reverts with Errors.StakingConfigNotInitialized when _initialized is false (guard defined at lines 198-200). The test suite codifies this via test_RevertWhen_SetForNextEpoch_NotInitialized at test/unit/runtime/StakingConfig.t.sol:122-126. Step 2 of the attack is broken by the _requireInitialized() call at line 136, making the original vulnerability non-existent in current code.",
+  "key_evidence": [
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "130-147",
+      "excerpt": "function setForNextEpoch(\n        uint256 _minimumStake,\n        uint64 _lockupDurationMicros,\n        uint64 _unbondingDelayMicros\n    ) external {\n        requireAllowed(SystemAddresses.GOVERNANCE);\n        _requireInitialized();\n        _validateConfig(_minimumStake, _lockupDurationMicros, _unbondingDelayMicros);\n        ...\n    }",
+      "why_matters": "This is the only governance setter in current StakingConfig. It explicitly includes _requireInitialized() at line 136, directly closing the defense-in-depth gap raised by the finding."
+    },
+    {
+      "file": "src/runtime/StakingConfig.sol",
+      "lines": "198-200",
+      "excerpt": "function _requireInitialized() internal view {\n        if (!_initialized) revert Errors.StakingConfigNotInitialized();\n    }",
+      "why_matters": "The guard that actually enforces the initialization check — present and identical in form to peer config contracts."
+    },
+    {
+      "file": "test/unit/runtime/StakingConfig.t.sol",
+      "lines": "122-126",
+      "excerpt": "function test_RevertWhen_SetForNextEpoch_NotInitialized() public {\n        vm.prank(SystemAddresses.GOVERNANCE);\n        vm.expectRevert(Errors.StakingConfigNotInitialized.selector);\n        config.setForNextEpoch(5 ether, LOCKUP_DURATION, UNBONDING_DELAY);\n    }",
+      "why_matters": "Regression test locking in the behavior: a GOVERNANCE-originated call pre-initialize must revert with StakingConfigNotInitialized."
+    }
+  ],
+  "counterargument": "One could argue the finding is PARTIAL rather than NOT_EXISTS if one considers the historical code that existed at the time of audit. Additionally, one might worry that other governance-mutable state (e.g., hasPendingConfig written indirectly) still lacks protection pre-init. However, reading the current file end-to-end shows every non-view external function (initialize at line 86-101 with AlreadyInitialized check, setForNextEpoch at 130-147 with _requireInitialized, applyPendingConfig at 156-171 with _requireInitialized) is gated. No writable surface remains that could be reached pre-init. The finding's scope is explicitly 'StakingConfig setters missing _requireInitialized() guard' — those setters do not exist, so the vulnerability as described is absent. A reviewer rebutting NOT_EXISTS would need to point to a currently-present external function that writes state without an init check, and there is none.",
+  "related_existing_tests": [
+    "test/unit/runtime/StakingConfig.t.sol::test_RevertWhen_SetForNextEpoch_NotInitialized",
+    "test/unit/runtime/StakingConfig.t.sol::test_RevertWhen_ApplyPendingConfig_NotInitialized",
+    "test/unit/runtime/StakingConfig.t.sol::test_RevertWhen_GetPendingConfig_NotInitialized"
+  ],
+  "fp_or_fixed_hint": "fixed"
+}
