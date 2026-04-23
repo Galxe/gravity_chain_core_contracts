@@ -28,3 +28,10 @@ GOVERNANCE=$(_addr 0x1625F3000)
 # ── Oracle (0x1625F4xxx) ─────────────────────────────────────────────
 NATIVE_ORACLE=$(_addr 0x1625F4000)
 ORACLE_REQUEST_QUEUE=$(_addr 0x1625F4002)
+
+# ── Genesis (0x1625F0xxx) ────────────────────────────────────────────
+GENESIS=$(_addr 0x1625F0001)
+
+# ── Bridge (dynamically deployed by Genesis, not a 0x1625Fxxxx slot) ──
+# Default to gravity testnet deployment; override with `GBRIDGE_RECEIVER=0x... verify.sh ...`
+GBRIDGE_RECEIVER="${GBRIDGE_RECEIVER:-0x595475934ed7d9faa7fca28341c2ce583904a44e}"
