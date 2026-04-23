@@ -121,10 +121,15 @@ contract ValidatorWhitelistTest is Test {
         address pool,
         string memory moniker
     ) internal {
+        bytes memory pk = _uniquePubkey(pool);
+        // Audit #580: commit-reveal precondition.
+        bytes32 commitment = keccak256(abi.encode(pk, pool, block.chainid));
         vm.prank(owner);
-        validatorManager.registerValidator(
-            pool, moniker, _uniquePubkey(pool), CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
-        );
+        validatorManager.commitConsensusPubkey(commitment);
+        vm.roll(block.number + 1);
+
+        vm.prank(owner);
+        validatorManager.registerValidator(pool, moniker, pk, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES);
     }
 
     function _allow(

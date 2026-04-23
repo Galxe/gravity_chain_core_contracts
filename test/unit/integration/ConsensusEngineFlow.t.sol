@@ -224,6 +224,13 @@ contract ConsensusEngineFlowTest is Test {
         pool = _createStakePool(owner, stakeAmount);
         // Generate unique 48-byte pubkey based on pool address (BLS12-381 G1 compressed size)
         bytes memory uniquePubkey = abi.encodePacked(pool, bytes28(keccak256(abi.encodePacked(pool))));
+
+        // Audit #580: commit-reveal precondition for registerValidator.
+        bytes32 commitment = keccak256(abi.encode(uniquePubkey, pool, block.chainid));
+        vm.prank(owner);
+        validatorManager.commitConsensusPubkey(commitment);
+        vm.roll(block.number + 1);
+
         vm.prank(owner);
         validatorManager.registerValidator(
             pool, moniker, uniquePubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
