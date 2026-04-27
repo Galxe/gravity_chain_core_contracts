@@ -138,8 +138,11 @@ run_smoke_tests() {
     # Validation tightening is only observable via setPatches() with an empty
     # field in one of the JWKs — that entrypoint is onlyGenesis and calldata-heavy,
     # so we only assert selector presence on the already-exposed views.
-    check_exists  "getProviderCount()"                    "$NATIVE_ORACLE" "getProviderCount()(uint256)"
-    check_exists  "getPatches()"                          "$NATIVE_ORACLE" "getPatches()"
+    # JWKManager lives at its own system address (0x…4001), distinct from
+    # NativeOracle (0x…4000); the two contracts share lineage but expose
+    # different selectors.
+    check_exists  "getProviderCount()"                    "$JWK_MANAGER" "getProviderCount()(uint256)"
+    check_exists  "getPatches()"                          "$JWK_MANAGER" "getPatches()"
     echo ""
 
     # ── ReentrancyGuard persistence check (inherited from Delta) ──────

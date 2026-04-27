@@ -27,6 +27,7 @@ GOVERNANCE=$(_addr 0x1625F3000)
 
 # ── Oracle (0x1625F4xxx) ─────────────────────────────────────────────
 NATIVE_ORACLE=$(_addr 0x1625F4000)
+JWK_MANAGER=$(_addr 0x1625F4001)
 ORACLE_REQUEST_QUEUE=$(_addr 0x1625F4002)
 
 # ── Genesis (0x1625F0xxx) ────────────────────────────────────────────
