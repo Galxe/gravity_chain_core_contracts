@@ -80,6 +80,12 @@ check_reverts() {
 
 # check_exists: Verify that a function call does NOT revert (function exists).
 #   check_exists "label" "address" "sig()(returnType)" [args...]
+#
+# Distinguishes two revert flavors:
+#   - Empty revert (no data) ⇒ selector not in dispatcher ⇒ FAIL
+#   - Revert with 4-byte error selector ⇒ function ran, hit require/CustomError ⇒ PASS
+#     (e.g. OwnableUnauthorizedAccount when caller lacks --from, or InvalidMinimumStake
+#      when input fails validation; the dispatcher reaching the body proves existence)
 check_exists() {
     local label="$1"
     local addr="$2"
@@ -87,12 +93,18 @@ check_exists() {
     shift 3
     local args=("$@")
 
-    result=$(cast call "$addr" "$sig" ${args[@]+"${args[@]}"} --rpc-url "$RPC_URL" 2>/dev/null || echo "REVERT")
-
-    if [ "$result" = "REVERT" ]; then
-        fail "${label}: call reverted (function may not exist)"
-    else
+    local output
+    if output=$(cast call "$addr" "$sig" ${args[@]+"${args[@]}"} --rpc-url "$RPC_URL" 2>&1); then
         pass "${label}: OK"
+        return
+    fi
+
+    if echo "$output" | grep -qE 'data: "0x[0-9a-fA-F]{8}'; then
+        local sel
+        sel=$(echo "$output" | grep -oE 'data: "0x[0-9a-fA-F]{8}' | head -1 | sed 's/data: "//')
+        pass "${label}: OK (function exists; reverted with ${sel})"
+    else
+        fail "${label}: call reverted with no data (function may not exist)"
     fi
 }
 
