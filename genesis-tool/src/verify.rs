@@ -192,6 +192,13 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     let input: Bytes = call.abi_encode().into();
     let tx = new_system_call_txn(vm_addr, input);
 
+    // block.timestamp = 0 is safe here: verify replays only pure view calls
+    // (getActiveValidators / epochIntervalMicros) against a sealed genesis.json
+    // alloc and does NOT re-run Genesis.initialize; neither probe reads
+    // block.timestamp transitively, so the value is unobservable in the
+    // returned bytes. If a future probe touches time-dependent code, switch
+    // this to a deterministic non-zero constant (or thread through the
+    // genesis header timestamp).
     let env = prepare_env(1337, 0);
     let result = execute_revm_sequential(db, SpecId::LATEST, env, &[tx], None);
 
@@ -212,6 +219,8 @@ fn verify_epoch_interval(db: &revm::InMemoryDB) -> Option<u64> {
     let input: Bytes = call.abi_encode().into();
     let tx = new_system_call_txn(EPOCH_CONFIG_ADDR, input);
 
+    // See note above on the getActiveValidators call site: block.timestamp = 0
+    // is safe for these view-call ABI probes.
     let env = prepare_env(1337, 0);
     let result = execute_revm_sequential(db.clone(), SpecId::LATEST, env, &[tx], None);
 
