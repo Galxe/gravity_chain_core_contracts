@@ -100,19 +100,30 @@ fn extract_runtime_bytecode(constructor_bytecode: &str) -> Vec<u8> {
     }
 }
 
-pub fn prepare_env(chain_id: u64) -> Env {
+pub fn prepare_env(chain_id: u64, block_timestamp_secs: u64) -> Env {
     let mut env = Env::default();
     env.cfg.chain_id = chain_id;
     env.tx.gas_limit = 30_000_000;
-    // Set block.timestamp to current time so Genesis.sol's lockedUntil calculation works correctly
-    // Genesis.sol calculates: lockedUntil = block.timestamp * 1_000_000 + lockupDuration
-    env.block.timestamp = U256::from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs(),
-    );
+    env.block.timestamp = U256::from(block_timestamp_secs);
     env
+}
+
+/// Resolve the EVM `block.timestamp` to use for genesis simulation.
+///
+/// `config.genesis_timestamp_secs` is REQUIRED so that independent operators
+/// running the same input produce byte-identical `genesis.json` — this is the
+/// reproducibility guarantee the multi-operator genesis ceremony relies on.
+///
+/// Panics if the field is missing, rather than silently falling back to
+/// host wall-clock (which would reintroduce the drift this function exists
+/// to prevent).
+pub fn resolve_block_timestamp(config: &GenesisConfig) -> u64 {
+    config.genesis_timestamp_secs.expect(
+        "genesisTimestampSecs is required in the genesis config: \
+         without a deterministic EVM block.timestamp, generated genesis.json \
+         is not byte-reproducible across operators and the ceremony \
+         consistency check will fail.",
+    )
 }
 
 /// Transaction builder for genesis initialization
@@ -155,7 +166,12 @@ pub fn genesis_generate(
 
     let db = deploy_bsc_style(byte_code_dir, total_stake);
 
-    let env = prepare_env(config.chain_id);
+    let block_timestamp_secs = resolve_block_timestamp(config);
+    info!(
+        "Using EVM block.timestamp = {} for genesis simulation",
+        block_timestamp_secs
+    );
+    let env = prepare_env(config.chain_id, block_timestamp_secs);
 
     let txs = build_genesis_transactions(config);
 
