@@ -893,8 +893,8 @@ contract ReconfigurationTest is Test {
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG)
             .setForNextEpoch(
                 RandomnessConfig.RandomnessConfigData({
-                    variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
-                })
+                variant: RandomnessConfig.ConfigVariant.Off, configV2: RandomnessConfig.ConfigV2Data(0, 0, 0)
+            })
             );
         vm.prank(SystemAddresses.RECONFIGURATION);
         RandomnessConfig(SystemAddresses.RANDOMNESS_CONFIG).applyPendingConfig();
