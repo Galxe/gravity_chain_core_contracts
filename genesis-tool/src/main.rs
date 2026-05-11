@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use genesis_tool::{execute, genesis::GenesisConfig, post_genesis, verify};
 use serde_json;
 use std::fs;
-use tracing::{Level, info, warn};
+use tracing::{Level, info};
 
 // Custom guard to ensure proper log flushing
 struct LogGuard {
@@ -156,16 +156,10 @@ async fn run_generate(byte_code_dir: &str, config_file: &str, output: &str) -> R
     info!("Epoch interval: {} micros", config.epoch_interval_micros);
     info!("Major version: {}", config.major_version);
 
-    // Log genesis timestamp status
-    match config.genesis_timestamp_secs {
-        Some(ts) => {
-            info!("Genesis timestamp: {}", ts);
-        }
-        None => {
-            warn!(
-                "genesisTimestampSecs not set; genesis.json will use the template default timestamp."
-            );
-        }
+    // Log genesis timestamp status (resolve_block_timestamp will warn loudly
+    // on the fallback path when the field is absent).
+    if let Some(ts) = config.genesis_timestamp_secs {
+        info!("Configured genesisTimestampSecs: {}", ts);
     }
 
     if !fs::metadata(output).is_ok() {

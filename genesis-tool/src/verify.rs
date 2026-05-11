@@ -192,7 +192,7 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     let input: Bytes = call.abi_encode().into();
     let tx = new_system_call_txn(vm_addr, input);
 
-    let env = prepare_env(1337);
+    let env = prepare_env(1337, 0);
     let result = execute_revm_sequential(db, SpecId::LATEST, env, &[tx], None);
 
     match result {
@@ -212,7 +212,7 @@ fn verify_epoch_interval(db: &revm::InMemoryDB) -> Option<u64> {
     let input: Bytes = call.abi_encode().into();
     let tx = new_system_call_txn(EPOCH_CONFIG_ADDR, input);
 
-    let env = prepare_env(1337);
+    let env = prepare_env(1337, 0);
     let result = execute_revm_sequential(db.clone(), SpecId::LATEST, env, &[tx], None);
 
     match result {
