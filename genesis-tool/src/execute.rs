@@ -2,7 +2,7 @@ use crate::{
     genesis::{GenesisConfig, call_genesis_initialize, calculate_total_stake},
     utils::{
         CONTRACTS, GENESIS_ADDR, SYSTEM_ACCOUNT_INFO, SYSTEM_CALLER, analyze_txn_result,
-        execute_revm_sequential, read_hex_from_file,
+        execute_revm_sequential, read_hex_from_file, write_json_deterministic,
     },
 };
 
@@ -12,7 +12,7 @@ use revm::{
     primitives::{AccountInfo, Env, SpecId, U256},
 };
 use revm_primitives::{Bytecode, Bytes, TxEnv, hex};
-use std::{collections::HashMap, fs::File, io::BufWriter};
+use std::collections::BTreeMap;
 use tracing::{debug, error, info, warn};
 
 /// Deploy contracts using BSC-style direct bytecode deployment
@@ -205,8 +205,11 @@ pub fn genesis_generate(
         result.len()
     );
 
-    // Add deployed contracts to the final state
-    let mut genesis_state = HashMap::new();
+    // Add deployed contracts to the final state.
+    // BTreeMap keeps the top-level address ordering stable; the per-account
+    // storage HashMaps and the bundle_state's internal HashMaps are sorted at
+    // serialization time by `write_json_deterministic`.
+    let mut genesis_state: BTreeMap<_, PlainAccount> = BTreeMap::new();
 
     for (contract_name, contract_address) in CONTRACTS {
         let hex_path = format!("{}/{}.hex", byte_code_dir, contract_name);
@@ -266,11 +269,7 @@ pub fn genesis_generate(
     }
 
     // write bundle state into one json file named bundle_state.json
-    serde_json::to_writer_pretty(
-        BufWriter::new(File::create(format!("{output_dir}/bundle_state.json")).unwrap()),
-        &bundle_state,
-    )
-    .unwrap();
+    write_json_deterministic(format!("{output_dir}/bundle_state.json"), &bundle_state).unwrap();
 
     info!(
         "bundle state size is {:?}, contracts size {:?}",
@@ -296,14 +295,14 @@ pub fn genesis_generate(
         }
     }
 
-    serde_json::to_writer_pretty(
-        BufWriter::new(File::create(format!("{output_dir}/genesis_accounts.json")).unwrap()),
+    write_json_deterministic(
+        format!("{output_dir}/genesis_accounts.json"),
         &genesis_state,
     )
     .unwrap();
 
     // Create contracts JSON with bytecode
-    let contracts_json: HashMap<_, _> = genesis_state
+    let contracts_json: BTreeMap<_, _> = genesis_state
         .iter()
         .filter_map(|(addr, account)| {
             account
@@ -314,8 +313,8 @@ pub fn genesis_generate(
         })
         .collect();
 
-    serde_json::to_writer_pretty(
-        BufWriter::new(File::create(format!("{output_dir}/genesis_contracts.json")).unwrap()),
+    write_json_deterministic(
+        format!("{output_dir}/genesis_contracts.json"),
         &contracts_json,
     )
     .unwrap();

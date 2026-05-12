@@ -8,7 +8,14 @@ use revm::{
     primitives::{Address, EVMError, Env, ExecutionResult, SpecId, TxEnv, U256},
 };
 use revm_primitives::{AccountInfo, Bytes, KECCAK_EMPTY, TxKind, hex, uint};
-use std::u64;
+use serde::Serialize;
+use serde_json::{Map, Value};
+use std::{
+    fs::File,
+    io::{BufWriter, Result as IoResult},
+    path::Path,
+    u64,
+};
 use tracing::info;
 
 pub const DEAD_ADDRESS: Address = address!("000000000000000000000000000000000000dEaD");
@@ -291,4 +298,66 @@ pub fn new_system_create_txn(hex_code: &str, args: Bytes) -> TxEnv {
 
 pub fn read_hex_from_file(path: &str) -> String {
     std::fs::read_to_string(path).expect(&format!("Failed to open {}", path))
+}
+
+/// Recursively normalize a `serde_json::Value` for deterministic output:
+///   - object keys sorted lexicographically
+///   - arrays whose every element is a 2-element `[string, _]` pair are
+///     sorted by that string. This handles `Vec<(StringLike, V)>` shapes
+///     that Rust produces when a `HashMap` is serialized as a sequence of
+///     pairs (e.g. `revm::db::Reverts` → `Vec<Vec<(Address, AccountRevert)>>`).
+///
+/// `serde_json` is compiled with the `preserve_order` feature transitively
+/// (via reqwest → ethers), so `serde_json::Map` is backed by `IndexMap` and
+/// keeps insertion order — we must rebuild every object by inserting entries
+/// in sorted-key order to get reproducible output.
+fn normalize_value(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut sorted = Map::with_capacity(entries.len());
+            for (k, v) in entries {
+                sorted.insert(k, normalize_value(v));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(items) => {
+            let mut items: Vec<Value> = items.into_iter().map(normalize_value).collect();
+            // If this looks like a serialized map (`Vec<(string, V)>`), sort by key.
+            // Empty arrays and arrays of non-pair elements are left untouched so we
+            // don't reorder semantically-ordered sequences like the validators list.
+            let is_pair_array = !items.is_empty()
+                && items.iter().all(|el| {
+                    el.as_array()
+                        .map(|a| a.len() == 2 && a[0].is_string())
+                        .unwrap_or(false)
+                });
+            if is_pair_array {
+                items.sort_by(|a, b| {
+                    let ka = a[0].as_str().unwrap_or("");
+                    let kb = b[0].as_str().unwrap_or("");
+                    ka.cmp(kb)
+                });
+            }
+            Value::Array(items)
+        }
+        other => other,
+    }
+}
+
+/// Serialize `value` to `path` as pretty JSON with deterministic ordering of
+/// object keys and `Vec<(string, _)>`-shaped arrays. Guarantees byte-identical
+/// output for byte-identical input, independent of `HashMap` iteration order
+/// in the source data.
+pub fn write_json_deterministic<T, P>(path: P, value: &T) -> IoResult<()>
+where
+    T: Serialize,
+    P: AsRef<Path>,
+{
+    let raw = serde_json::to_value(value).expect("failed to convert value to serde_json::Value");
+    let normalized = normalize_value(raw);
+    let writer = BufWriter::new(File::create(path)?);
+    serde_json::to_writer_pretty(writer, &normalized)?;
+    Ok(())
 }
