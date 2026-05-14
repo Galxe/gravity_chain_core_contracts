@@ -46,6 +46,12 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 contract VerifyBridgeMainnet is Script {
     uint256 internal constant MAINNET_CHAIN_ID = 1;
     address internal constant DEFAULT_G_TOKEN = 0x9C7BEBa8F6eF6643aBd725e45a4E8387eF260649;
+
+    /// @notice Verified production multisig — the expected final owner.
+    /// @dev    Gnosis Safe v1.3.0, 3-of-6, also the on-chain owner of DEFAULT_G_TOKEN.
+    ///         Must stay in sync with DeployBridgeKeystore.DEFAULT_MULTISIG.
+    address internal constant DEFAULT_MULTISIG = 0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D;
+
     uint256 internal constant DEFAULT_ETH_PRICE_USD = 2500;
     uint256 internal constant DEFAULT_USD_CENTS_PER_32_BYTES = 10;
     uint256 internal constant DEFAULT_BASE_FEE_WEI = 0;
@@ -93,9 +99,10 @@ contract VerifyBridgeMainnet is Script {
     // ========================================================================
 
     function _loadExpected() internal view returns (Expected memory e) {
-        // Final intended owner: the multisig if the keystore/handoff path was
-        // used, else the single-EOA owner (back-compat with deploy_mainnet.sh).
-        e.owner = _envAddressOr("MULTISIG_ADDRESS", _envAddressOr("GRAVITY_CORE_CONTRACT_EOA_OWNER", address(0)));
+        // Final intended owner: an explicit MULTISIG_ADDRESS, else the single-EOA
+        // owner (back-compat with deploy_mainnet.sh), else the verified production
+        // Safe baked in as DEFAULT_MULTISIG.
+        e.owner = _envAddressOr("MULTISIG_ADDRESS", _envAddressOr("GRAVITY_CORE_CONTRACT_EOA_OWNER", DEFAULT_MULTISIG));
         // Temporary owner during an Ownable2Step handoff (keystore path only).
         e.deployer = _envAddressOr("DEPLOYER_ADDRESS", address(0));
         // Portal fee recipient: explicit env, else defaults to the final owner.

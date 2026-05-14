@@ -21,8 +21,10 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 ///
 ///         Required env:
 ///           DEPLOYER_ADDRESS   - the keystore EOA address (must match --sender)
-///           MULTISIG_ADDRESS   - final owner (Safe) for BOTH contracts; MUST differ from deployer
 ///         Optional env:
+///           MULTISIG_ADDRESS      - final owner (Safe) for BOTH contracts. Defaults to the
+///                                   verified production Safe (DEFAULT_MULTISIG below); only
+///                                   override for fork tests. MUST differ from the deployer.
 ///           FEE_RECIPIENT_ADDRESS - portal fee recipient (default: MULTISIG_ADDRESS)
 ///           G_TOKEN_ADDRESS       - default: mainnet canonical G
 ///           BASE_FEE_WEI          - default: 0
@@ -31,19 +33,28 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 contract DeployBridgeKeystore is Script {
     uint256 internal constant MAINNET_CHAIN_ID = 1;
     address internal constant DEFAULT_G_TOKEN = 0x9C7BEBa8F6eF6643aBd725e45a4E8387eF260649;
+
+    /// @notice Verified production multisig — the final owner of both contracts.
+    /// @dev    Gnosis Safe v1.3.0, 3-of-6, on the canonical L1 singleton
+    ///         (0xd9db270c…ee709552). Verified on-chain to also be the owner of
+    ///         the G token (DEFAULT_G_TOKEN). Baked in so the audit's #1 risk —
+    ///         a wrong owner — cannot be introduced by a fat-fingered env var.
+    address internal constant DEFAULT_MULTISIG = 0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D;
+
     uint256 internal constant DEFAULT_BASE_FEE_WEI = 0;
     uint256 internal constant DEFAULT_FEE_PER_BYTE_WEI = 1_250_000;
 
     function run() external {
         address deployer = vm.envAddress("DEPLOYER_ADDRESS");
-        address multisig = vm.envAddress("MULTISIG_ADDRESS");
+        address multisig = _envAddressOr("MULTISIG_ADDRESS", DEFAULT_MULTISIG);
         address feeRecipient = _envAddressOr("FEE_RECIPIENT_ADDRESS", multisig);
         address gToken = _envAddressOr("G_TOKEN_ADDRESS", DEFAULT_G_TOKEN);
         uint256 baseFee = _envUintOr("BASE_FEE_WEI", DEFAULT_BASE_FEE_WEI);
         uint256 feePerByte = _envUintOr("FEE_PER_BYTE_WEI", DEFAULT_FEE_PER_BYTE_WEI);
 
         // --- safety gates ---
-        if (!_envBoolOr("ALLOW_NON_MAINNET", false)) {
+        bool mainnet = !_envBoolOr("ALLOW_NON_MAINNET", false);
+        if (mainnet) {
             require(block.chainid == MAINNET_CHAIN_ID, "DeployBridgeKeystore: not Ethereum mainnet (chainId != 1)");
         }
         require(deployer != address(0), "DeployBridgeKeystore: DEPLOYER_ADDRESS unset");
@@ -52,6 +63,12 @@ contract DeployBridgeKeystore is Script {
         require(feeRecipient != address(0), "DeployBridgeKeystore: feeRecipient invalid");
         require(gToken.code.length > 0, "DeployBridgeKeystore: G token has no code on this chain");
         require(feePerByte > 0, "DeployBridgeKeystore: feePerByte must be > 0");
+        // On mainnet (or a mainnet fork) the multisig MUST be a deployed contract — a
+        // typo'd EOA passing as the owner would be unrecoverable. Skipped only when the
+        // chainId guard is bypassed for pure-anvil tests.
+        if (mainnet) {
+            require(multisig.code.length > 0, "DeployBridgeKeystore: multisig has no code (not a deployed Safe?)");
+        }
 
         // --- banner ---
         console.log("=========================================================");
