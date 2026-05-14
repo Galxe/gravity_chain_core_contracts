@@ -3,11 +3,11 @@
   "plugins": [],
   "rules": {
     "no-console": "off",
-    "no-global-import": ["off"],
+    "no-global-import": "off",
     "import-path-check": "off",
     "code-complexity": ["warn", 7],
-    "function-max-lines": ["off", 50],
-    "max-line-length": ["off", 120],
+    "function-max-lines": "off",
+    "max-line-length": "off",
     "max-states-count": ["warn", 15],
     "no-empty-blocks": "off",
     "no-unused-vars": "warn",
@@ -43,12 +43,7 @@
         "ignoreConstructors": true
       }
     ],
-    "private-vars-leading-underscore": [
-      "off",
-      {
-        "strict": false
-      }
-    ],
+    "private-vars-leading-underscore": "off",
     "const-name-snakecase": "warn",
     "func-name-mixedcase": "off",
     "use-forbidden-name": "warn",

@@ -34,31 +34,33 @@ fi
 
 # Check if Slither is installed
 if ! command -v slither &> /dev/null; then
-  echo -e "${YELLOW}Slither not found. Attempting to install via pip...${NC}"
-  
-  # Try to install Slither
-  if command -v pip3 &> /dev/null; then
-    echo -e "${YELLOW}Installing slither-analyzer...${NC}"
-    pip3 install slither-analyzer
-  elif command -v pip &> /dev/null; then
-    echo -e "${YELLOW}Installing slither-analyzer...${NC}"
-    pip install slither-analyzer
-  elif command -v pipx &> /dev/null; then
-    echo -e "${YELLOW}Installing slither-analyzer...${NC}"
-    pipx install slither-analyzer
+  echo -e "${YELLOW}Slither not found. Attempting to install...${NC}"
+
+  if command -v pipx &> /dev/null; then
+    echo -e "${YELLOW}Installing slither-analyzer via pipx...${NC}"
+    pipx install slither-analyzer || true
+  elif command -v pip3 &> /dev/null && pip3 install --user --dry-run slither-analyzer &> /dev/null; then
+    echo -e "${YELLOW}Installing slither-analyzer via pip3 --user...${NC}"
+    pip3 install --user slither-analyzer
+  elif command -v pip &> /dev/null && pip install --user --dry-run slither-analyzer &> /dev/null; then
+    echo -e "${YELLOW}Installing slither-analyzer via pip --user...${NC}"
+    pip install --user slither-analyzer
   else
-    echo -e "${RED}Error: pip not found. Please install Python and pip first.${NC}"
-    echo -e "${YELLOW}Installation instructions:${NC}"
-    echo -e "${YELLOW}  pip3 install slither-analyzer${NC}"
-    echo -e "${YELLOW}  or visit: https://github.com/crytic/slither${NC}"
+    echo -e "${RED}Error: cannot auto-install slither-analyzer.${NC}"
+    echo -e "${YELLOW}Modern Python distributions (PEP 668) block pip from writing to system or user site-packages.${NC}"
+    echo -e "${YELLOW}Install manually with one of:${NC}"
+    echo -e "${YELLOW}  pipx install slither-analyzer            # recommended${NC}"
+    echo -e "${YELLOW}  python3 -m venv .venv && source .venv/bin/activate && pip install slither-analyzer${NC}"
+    echo -e "${YELLOW}  pip install --user --break-system-packages slither-analyzer  # last resort${NC}"
+    echo -e "${YELLOW}Project page: https://github.com/crytic/slither${NC}"
     exit 1
   fi
-  
+
   # Verify installation
   if ! command -v slither &> /dev/null; then
-    echo -e "${RED}Error: Slither installation failed.${NC}"
-    echo -e "${YELLOW}Please try manual installation:${NC}"
-    echo -e "${YELLOW}  pip3 install slither-analyzer${NC}"
+    echo -e "${RED}Error: slither was installed but is not on PATH.${NC}"
+    echo -e "${YELLOW}For pipx installs, run 'pipx ensurepath' once and restart your shell.${NC}"
+    echo -e "${YELLOW}For pip --user installs, ensure ~/.local/bin (or your user base) is on PATH.${NC}"
     exit 1
   fi
 fi
