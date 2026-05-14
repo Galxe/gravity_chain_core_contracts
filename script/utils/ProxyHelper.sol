@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import "forge-std/Vm.sol";
+import { Vm } from "forge-std/Vm.sol";
 
 /**
  * @title ProxyHelper
@@ -16,7 +16,7 @@ library ProxyHelper {
     bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
 
     // Vm instance
-    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    Vm constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     /**
      * @notice Get proxy contract implementation address (read directly from storage slot)
@@ -27,7 +27,7 @@ library ProxyHelper {
         address proxy
     ) internal view returns (address implementationAddress) {
         // Use vm.load to read directly from proxy contract storage slot
-        bytes32 value = vm.load(proxy, IMPLEMENTATION_SLOT);
+        bytes32 value = VM.load(proxy, IMPLEMENTATION_SLOT);
         implementationAddress = address(uint160(uint256(value)));
     }
 
@@ -40,7 +40,7 @@ library ProxyHelper {
         address proxy
     ) internal view returns (address adminAddress) {
         // Use vm.load to read directly from proxy contract storage slot
-        bytes32 value = vm.load(proxy, ADMIN_SLOT);
+        bytes32 value = VM.load(proxy, ADMIN_SLOT);
         adminAddress = address(uint160(uint256(value)));
     }
 }

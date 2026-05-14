@@ -33,24 +33,33 @@ fi
 
 # Check if Mythril is installed
 if ! command -v myth &> /dev/null; then
-  echo -e "${YELLOW}Mythril not found. Attempting to install via pip...${NC}"
-  
-  # Try to install Mythril
-  if command -v pip3 &> /dev/null; then
-    pip3 install mythril
-  elif command -v pip &> /dev/null; then
-    pip install mythril
+  echo -e "${YELLOW}Mythril not found. Attempting to install...${NC}"
+
+  if command -v pipx &> /dev/null; then
+    echo -e "${YELLOW}Installing mythril via pipx...${NC}"
+    pipx install mythril || true
+  elif command -v pip3 &> /dev/null && pip3 install --user --dry-run mythril &> /dev/null; then
+    echo -e "${YELLOW}Installing mythril via pip3 --user...${NC}"
+    pip3 install --user mythril
+  elif command -v pip &> /dev/null && pip install --user --dry-run mythril &> /dev/null; then
+    echo -e "${YELLOW}Installing mythril via pip --user...${NC}"
+    pip install --user mythril
   else
-    echo -e "${RED}Error: pip not found. Please install Python and pip first.${NC}"
-    echo -e "${YELLOW}Installation instructions:${NC}"
-    echo -e "${YELLOW}  pip3 install mythril${NC}"
-    echo -e "${YELLOW}  or use Docker: docker pull mythril/myth${NC}"
+    echo -e "${RED}Error: cannot auto-install mythril.${NC}"
+    echo -e "${YELLOW}Modern Python distributions (PEP 668) block pip from writing to system or user site-packages.${NC}"
+    echo -e "${YELLOW}Install manually with one of:${NC}"
+    echo -e "${YELLOW}  pipx install mythril                     # recommended${NC}"
+    echo -e "${YELLOW}  python3 -m venv .venv && source .venv/bin/activate && pip install mythril${NC}"
+    echo -e "${YELLOW}  docker pull mythril/myth                 # alternative${NC}"
+    echo -e "${YELLOW}Project page: https://github.com/ConsenSys/mythril${NC}"
     exit 1
   fi
-  
+
   # Verify installation
   if ! command -v myth &> /dev/null; then
-    echo -e "${RED}Error: Mythril installation failed.${NC}"
+    echo -e "${RED}Error: myth was installed but is not on PATH.${NC}"
+    echo -e "${YELLOW}For pipx installs, run 'pipx ensurepath' once and restart your shell.${NC}"
+    echo -e "${YELLOW}For pip --user installs, ensure ~/.local/bin (or your user base) is on PATH.${NC}"
     exit 1
   fi
 fi
