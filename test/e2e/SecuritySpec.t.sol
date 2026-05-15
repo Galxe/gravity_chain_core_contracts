@@ -467,16 +467,34 @@ contract SecuritySpecE2E is Test {
         assertEq(gToken.balanceOf(alice), aliceBalBefore, "alice tokens untouched on permit front-run");
     }
 
-    /// S-6 Owner CAN drain locked tokens (documented centralization).
-    function test_S6_OwnerCanDrainLockedTokens() public {
+    /// S-6 Owner CAN still drain locked tokens (documented centralization), but only
+    ///     through the 7-day timelock. The old immediate path — recoverERC20 on the G
+    ///     token — is now blocked (I-1 fix).
+    function test_S6_OwnerCanDrainLockedTokens_ViaTimelock() public {
         _bridge(200 ether, bob);
         assertEq(gToken.balanceOf(address(sender)), 200 ether);
 
         address rescueTo = makeAddr("rescueTo");
+
+        // recoverERC20 can no longer move the G token.
         vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.CannotRecoverGToken.selector);
         sender.recoverERC20(address(gToken), rescueTo, 200 ether);
 
-        assertEq(gToken.balanceOf(address(sender)), 0, "sender drained");
+        // Locked G can only leave via the timelocked emergency path.
+        vm.prank(owner);
+        sender.requestEmergencyWithdraw(rescueTo, 200 ether);
+
+        // Not executable until the delay elapses.
+        vm.prank(owner);
+        vm.expectRevert();
+        sender.executeEmergencyWithdraw();
+
+        vm.warp(block.timestamp + sender.TIMELOCK_DELAY());
+        vm.prank(owner);
+        sender.executeEmergencyWithdraw();
+
+        assertEq(gToken.balanceOf(address(sender)), 0, "sender drained via timelock");
         assertEq(gToken.balanceOf(rescueTo), 200 ether, "rescue recipient paid");
     }
 
@@ -490,7 +508,19 @@ contract SecuritySpecE2E is Test {
         sender.recoverERC20(address(gToken), attacker, 1);
 
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
-        sender.emergencyWithdraw(attacker, 1);
+        sender.requestEmergencyWithdraw(attacker, 1);
+
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        sender.cancelEmergencyWithdraw();
+
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        sender.executeEmergencyWithdraw();
+
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        sender.pause();
+
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
+        portal.pause();
 
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, attacker));
         portal.setBaseFee(0);

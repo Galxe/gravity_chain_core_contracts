@@ -27,8 +27,8 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 ///                                   override for fork tests. MUST differ from the deployer.
 ///           FEE_RECIPIENT_ADDRESS - portal fee recipient (default: MULTISIG_ADDRESS)
 ///           G_TOKEN_ADDRESS       - default: mainnet canonical G
-///           BASE_FEE_WEI          - default: 0
-///           FEE_PER_BYTE_WEI      - default: 1_250_000 (≈ $0.10 / 32B at ETH=$2500; revisit!)
+///           BASE_FEE_WEI          - default: 50_000_000_000_000 (≈ $0.10 at ETH = $2000)
+///           FEE_PER_BYTE_WEI      - default: 2_343_750_000_000 (≈ $0.15 / 32 B at ETH = $2000)
 ///           ALLOW_NON_MAINNET     - "1" to bypass the chainId==1 guard (fork tests only)
 contract DeployBridgeKeystore is Script {
     uint256 internal constant MAINNET_CHAIN_ID = 1;
@@ -41,8 +41,12 @@ contract DeployBridgeKeystore is Script {
     ///         a wrong owner — cannot be introduced by a fat-fingered env var.
     address internal constant DEFAULT_MULTISIG = 0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D;
 
-    uint256 internal constant DEFAULT_BASE_FEE_WEI = 0;
-    uint256 internal constant DEFAULT_FEE_PER_BYTE_WEI = 1_250_000;
+    /// @notice Default base fee: ≈ $0.10 at ETH = $2000 (0.10 / 2000 ETH).
+    uint256 internal constant DEFAULT_BASE_FEE_WEI = 50_000_000_000_000;
+
+    /// @notice Default fee per byte: ≈ $0.15 per 32 bytes at ETH = $2000
+    ///         (0.15 / 2000 ETH / 32 bytes = 2_343_750_000_000 wei/byte).
+    uint256 internal constant DEFAULT_FEE_PER_BYTE_WEI = 2_343_750_000_000;
 
     function run() external {
         address deployer = vm.envAddress("DEPLOYER_ADDRESS");

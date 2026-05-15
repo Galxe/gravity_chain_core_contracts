@@ -52,9 +52,12 @@ contract VerifyBridgeMainnet is Script {
     ///         Must stay in sync with DeployBridgeKeystore.DEFAULT_MULTISIG.
     address internal constant DEFAULT_MULTISIG = 0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D;
 
-    uint256 internal constant DEFAULT_ETH_PRICE_USD = 2500;
-    uint256 internal constant DEFAULT_USD_CENTS_PER_32_BYTES = 10;
-    uint256 internal constant DEFAULT_BASE_FEE_WEI = 0;
+    // Fee defaults — kept in sync with DeployBridgeKeystore. With no fee env vars
+    // set, the USD derivation below yields feePerByte = 2_343_750_000_000 wei
+    // (15 * 1e16 / (32 * 2000)), matching DeployBridgeKeystore.DEFAULT_FEE_PER_BYTE_WEI.
+    uint256 internal constant DEFAULT_ETH_PRICE_USD = 2000;
+    uint256 internal constant DEFAULT_USD_CENTS_PER_32_BYTES = 15;
+    uint256 internal constant DEFAULT_BASE_FEE_WEI = 50_000_000_000_000; // ≈ $0.10 at ETH = $2000
 
     struct Expected {
         address owner; // intended FINAL owner (multisig, or the EOA in path (a))

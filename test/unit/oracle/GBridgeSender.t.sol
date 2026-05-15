@@ -6,6 +6,8 @@ import { GBridgeSender } from "@src/oracle/evm/native_token_bridge/GBridgeSender
 import { IGBridgeSender } from "@src/oracle/evm/native_token_bridge/IGBridgeSender.sol";
 import { GravityPortal } from "@src/oracle/evm/GravityPortal.sol";
 import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
+import { Ownable } from "@openzeppelin/access/Ownable.sol";
+import { Pausable } from "@openzeppelin/utils/Pausable.sol";
 
 /// @title MockERC20Permit
 /// @notice Mock ERC20 token with permit support for testing
@@ -413,6 +415,222 @@ contract GBridgeSenderTest is Test {
         assertEq(nonce, 1);
         assertEq(gToken.balanceOf(alice), INITIAL_BALANCE - amount);
         assertEq(gToken.balanceOf(address(bridge)), amount);
+    }
+
+    // ========================================================================
+    // HARDENING HELPERS
+    // ========================================================================
+
+    /// @dev Lock `amount` of G into the bridge so there is something to withdraw.
+    function _lock(
+        uint256 amount
+    ) internal {
+        uint256 fee = bridge.calculateBridgeFee(amount, bob);
+        vm.startPrank(alice);
+        gToken.approve(address(bridge), amount);
+        bridge.bridgeToGravity{ value: fee }(amount, bob);
+        vm.stopPrank();
+    }
+
+    // ========================================================================
+    // HARDENING: PAUSABLE (M-1)
+    // ========================================================================
+
+    function test_Pause_BlocksBridge() public {
+        vm.prank(owner);
+        bridge.pause();
+        assertTrue(bridge.paused());
+
+        uint256 amount = 100 ether;
+        uint256 fee = bridge.calculateBridgeFee(amount, bob);
+        vm.startPrank(alice);
+        gToken.approve(address(bridge), amount);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        bridge.bridgeToGravity{ value: fee }(amount, bob);
+        vm.stopPrank();
+    }
+
+    function test_Pause_BlocksBridgeWithPermit() public {
+        vm.prank(owner);
+        bridge.pause();
+
+        uint256 amount = 100 ether;
+        uint256 fee = bridge.calculateBridgeFee(amount, bob);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 structHash = keccak256(
+            abi.encode(gToken.PERMIT_TYPEHASH(), alice, address(bridge), amount, gToken.nonces(alice), deadline)
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", gToken.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePrivateKey, digest);
+
+        vm.deal(alice, fee);
+        vm.prank(alice);
+        // Pause must be enforced before the permit nonce is consumed.
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        bridge.bridgeToGravityWithPermit{ value: fee }(amount, bob, deadline, v, r, s);
+    }
+
+    function test_Unpause_RestoresBridge() public {
+        vm.prank(owner);
+        bridge.pause();
+        vm.prank(owner);
+        bridge.unpause();
+        assertFalse(bridge.paused());
+
+        uint256 amount = 100 ether;
+        uint256 fee = bridge.calculateBridgeFee(amount, bob);
+        vm.startPrank(alice);
+        gToken.approve(address(bridge), amount);
+        assertEq(bridge.bridgeToGravity{ value: fee }(amount, bob), 1);
+        vm.stopPrank();
+    }
+
+    function test_Pause_RevertWhenNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        bridge.pause();
+    }
+
+    // ========================================================================
+    // HARDENING: EMERGENCY-WITHDRAW 7-DAY TIMELOCK (C-1)
+    // ========================================================================
+
+    function test_RequestEmergencyWithdraw_SetsState() public {
+        _lock(100 ether);
+        uint256 expectedAt = block.timestamp + bridge.TIMELOCK_DELAY();
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit IGBridgeSender.EmergencyWithdrawRequested(bob, 100 ether, expectedAt);
+        bridge.requestEmergencyWithdraw(bob, 100 ether);
+
+        assertEq(bridge.pendingWithdrawRecipient(), bob);
+        assertEq(bridge.pendingWithdrawAmount(), 100 ether);
+        assertEq(bridge.pendingWithdrawExecutableAt(), expectedAt);
+    }
+
+    function test_RequestEmergencyWithdraw_RevertWhenAlreadyPending() public {
+        _lock(100 ether);
+        vm.startPrank(owner);
+        bridge.requestEmergencyWithdraw(bob, 50 ether);
+        vm.expectRevert(IGBridgeSender.WithdrawalAlreadyPending.selector);
+        bridge.requestEmergencyWithdraw(bob, 50 ether);
+        vm.stopPrank();
+    }
+
+    function test_RequestEmergencyWithdraw_RevertWhenZeroRecipient() public {
+        vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.ZeroRecipient.selector);
+        bridge.requestEmergencyWithdraw(address(0), 1 ether);
+    }
+
+    function test_RequestEmergencyWithdraw_RevertWhenZeroAmount() public {
+        vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.ZeroAmount.selector);
+        bridge.requestEmergencyWithdraw(bob, 0);
+    }
+
+    function test_RequestEmergencyWithdraw_RevertWhenNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        bridge.requestEmergencyWithdraw(bob, 1 ether);
+    }
+
+    function test_CancelEmergencyWithdraw() public {
+        _lock(100 ether);
+        vm.startPrank(owner);
+        bridge.requestEmergencyWithdraw(bob, 100 ether);
+
+        vm.expectEmit(true, true, true, true);
+        emit IGBridgeSender.EmergencyWithdrawCancelled();
+        bridge.cancelEmergencyWithdraw();
+        vm.stopPrank();
+
+        assertEq(bridge.pendingWithdrawExecutableAt(), 0);
+        assertEq(bridge.pendingWithdrawRecipient(), address(0));
+        assertEq(bridge.pendingWithdrawAmount(), 0);
+    }
+
+    function test_CancelEmergencyWithdraw_RevertWhenNonePending() public {
+        vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.NoWithdrawalPending.selector);
+        bridge.cancelEmergencyWithdraw();
+    }
+
+    function test_ExecuteEmergencyWithdraw_RevertBeforeTimelock() public {
+        _lock(100 ether);
+        vm.startPrank(owner);
+        bridge.requestEmergencyWithdraw(bob, 100 ether);
+
+        uint256 executableAt = bridge.pendingWithdrawExecutableAt();
+        vm.warp(executableAt - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IGBridgeSender.TimelockNotElapsed.selector, executableAt, block.timestamp)
+        );
+        bridge.executeEmergencyWithdraw();
+        vm.stopPrank();
+    }
+
+    function test_ExecuteEmergencyWithdraw_AfterTimelock() public {
+        _lock(100 ether);
+        vm.startPrank(owner);
+        bridge.requestEmergencyWithdraw(bob, 100 ether);
+        vm.warp(bridge.pendingWithdrawExecutableAt());
+
+        vm.expectEmit(true, true, true, true);
+        emit IGBridgeSender.EmergencyWithdraw(bob, 100 ether);
+        bridge.executeEmergencyWithdraw();
+
+        // Request state is cleared; a second execute reverts.
+        vm.expectRevert(IGBridgeSender.NoWithdrawalPending.selector);
+        bridge.executeEmergencyWithdraw();
+        vm.stopPrank();
+
+        assertEq(gToken.balanceOf(bob), 100 ether);
+        assertEq(gToken.balanceOf(address(bridge)), 0);
+        assertEq(bridge.pendingWithdrawExecutableAt(), 0);
+    }
+
+    function test_ExecuteEmergencyWithdraw_RevertWhenNonePending() public {
+        vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.NoWithdrawalPending.selector);
+        bridge.executeEmergencyWithdraw();
+    }
+
+    function test_EmergencyWithdraw_NewRequestAllowedAfterCancel() public {
+        _lock(100 ether);
+        vm.startPrank(owner);
+        bridge.requestEmergencyWithdraw(bob, 40 ether);
+        bridge.cancelEmergencyWithdraw();
+        // A fresh request is allowed once the prior one is cleared.
+        bridge.requestEmergencyWithdraw(alice, 60 ether);
+        vm.warp(bridge.pendingWithdrawExecutableAt());
+        bridge.executeEmergencyWithdraw();
+        vm.stopPrank();
+
+        assertEq(gToken.balanceOf(alice), INITIAL_BALANCE - 100 ether + 60 ether);
+        assertEq(gToken.balanceOf(address(bridge)), 40 ether);
+    }
+
+    // ========================================================================
+    // HARDENING: recoverERC20 G-TOKEN GUARD (I-1)
+    // ========================================================================
+
+    function test_RecoverERC20_RevertForGToken() public {
+        _lock(100 ether);
+        vm.prank(owner);
+        vm.expectRevert(IGBridgeSender.CannotRecoverGToken.selector);
+        bridge.recoverERC20(address(gToken), owner, 100 ether);
+    }
+
+    function test_RecoverERC20_WorksForOtherToken() public {
+        // An unrelated token accidentally sent to the bridge can still be rescued.
+        MockERC20Permit other = new MockERC20Permit();
+        other.mint(address(bridge), 5 ether);
+
+        vm.prank(owner);
+        bridge.recoverERC20(address(other), bob, 5 ether);
+        assertEq(other.balanceOf(bob), 5 ether);
     }
 }
 

@@ -6,6 +6,7 @@ import { GravityPortal } from "@src/oracle/evm/GravityPortal.sol";
 import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
+import { Pausable } from "@openzeppelin/utils/Pausable.sol";
 
 /// @title GravityPortalTest
 /// @notice Unit tests for GravityPortal contract (deployed on Ethereum)
@@ -400,8 +401,8 @@ contract GravityPortalTest is Test {
         uint256 baseFee,
         uint256 feePerByte
     ) public {
-        baseFee = bound(baseFee, 0, 1 ether);
-        feePerByte = bound(feePerByte, 0, 10000 wei);
+        baseFee = bound(baseFee, 0, portal.MAX_BASE_FEE());
+        feePerByte = bound(feePerByte, 0, portal.MAX_FEE_PER_BYTE());
 
         vm.startPrank(owner);
         portal.setBaseFee(baseFee);
@@ -442,5 +443,152 @@ contract GravityPortalTest is Test {
         assertEq(decodedSender, sender, "Sender should match");
         assertEq(decodedNonce, 1, "First message nonce should be 1");
         assertEq(keccak256(decodedMessage), keccak256(message), "Message should match");
+    }
+
+    // ========================================================================
+    // HARDENING: FEE CEILINGS (M-2)
+    // ========================================================================
+
+    function test_Constructor_RevertWhenBaseFeeExceedsMax() public {
+        uint256 tooMuch = portal.MAX_BASE_FEE() + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, portal.MAX_BASE_FEE())
+        );
+        new GravityPortal(owner, tooMuch, INITIAL_FEE_PER_BYTE, feeRecipient);
+    }
+
+    function test_Constructor_RevertWhenFeePerByteExceedsMax() public {
+        uint256 tooMuch = portal.MAX_FEE_PER_BYTE() + 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, portal.MAX_FEE_PER_BYTE())
+        );
+        new GravityPortal(owner, INITIAL_BASE_FEE, tooMuch, feeRecipient);
+    }
+
+    function test_SetBaseFee_RevertWhenExceedsMax() public {
+        uint256 maxBaseFee = portal.MAX_BASE_FEE();
+        uint256 tooMuch = maxBaseFee + 1;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, maxBaseFee));
+        portal.setBaseFee(tooMuch);
+    }
+
+    function test_SetBaseFee_AcceptsMax() public {
+        uint256 maxBaseFee = portal.MAX_BASE_FEE();
+        vm.prank(owner);
+        portal.setBaseFee(maxBaseFee);
+        assertEq(portal.baseFee(), maxBaseFee);
+    }
+
+    function test_SetFeePerByte_RevertWhenExceedsMax() public {
+        uint256 maxFeePerByte = portal.MAX_FEE_PER_BYTE();
+        uint256 tooMuch = maxFeePerByte + 1;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, maxFeePerByte));
+        portal.setFeePerByte(tooMuch);
+    }
+
+    // ========================================================================
+    // HARDENING: PAUSABLE (M-1)
+    // ========================================================================
+
+    function test_Pause_BlocksSend() public {
+        vm.prank(owner);
+        portal.pause();
+        assertTrue(portal.paused());
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.deal(alice, fee);
+        vm.prank(alice);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        portal.send{ value: fee }(message);
+    }
+
+    function test_Unpause_RestoresSend() public {
+        vm.prank(owner);
+        portal.pause();
+        vm.prank(owner);
+        portal.unpause();
+        assertFalse(portal.paused());
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        uint128 n = portal.send{ value: fee }(message);
+        assertEq(n, 1);
+    }
+
+    function test_Pause_RevertWhenNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.pause();
+    }
+
+    // ========================================================================
+    // HARDENING: EXPLICIT FEE ACCOUNTING (I-3)
+    // ========================================================================
+
+    function test_AccumulatedFees_TracksSends() public {
+        assertEq(portal.accumulatedFees(), 0);
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+        assertEq(portal.accumulatedFees(), fee);
+
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+        assertEq(portal.accumulatedFees(), 2 * fee);
+    }
+
+    function test_WithdrawFees_PartialAmount() public {
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        uint256 half = fee / 2;
+        uint256 recipientBefore = feeRecipient.balance;
+
+        vm.prank(owner);
+        portal.withdrawFees(half);
+
+        assertEq(portal.accumulatedFees(), fee - half);
+        assertEq(feeRecipient.balance, recipientBefore + half);
+        assertEq(address(portal).balance, fee - half);
+    }
+
+    function test_WithdrawFees_RevertWhenExceedsAccumulated() public {
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.InsufficientAccumulatedFees.selector, fee + 1, fee));
+        portal.withdrawFees(fee + 1);
+    }
+
+    function test_WithdrawFees_DoesNotSweepForceSentEth() public {
+        // A bridge fee is collected normally...
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        // ...and extra ETH is force-sent to the contract (e.g. via selfdestruct).
+        vm.deal(address(portal), address(portal).balance + 1 ether);
+
+        // withdrawFees() only pays out the tracked fee ledger, not the force-sent ETH.
+        uint256 recipientBefore = feeRecipient.balance;
+        vm.prank(owner);
+        portal.withdrawFees();
+
+        assertEq(feeRecipient.balance, recipientBefore + fee, "only accumulated fees withdrawn");
+        assertEq(portal.accumulatedFees(), 0);
+        assertEq(address(portal).balance, 1 ether, "force-sent ETH stays put");
     }
 }
