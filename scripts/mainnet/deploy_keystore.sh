@@ -72,6 +72,11 @@ fi
 
 DRY_RUN="${DRY_RUN:-0}"
 
+# Deployments dir must exist before either the dry-run or the live broadcast — the
+# .s.sol script writes deployments/mainnet.json via vm.writeJson, which does NOT
+# create parent directories.
+mkdir -p "${REPO_ROOT}/deployments"
+
 # -- validate -----------------------------------------------------------------
 require_var DEPLOYER_ADDRESS
 require_var MAINNET_RPC_URL
@@ -135,8 +140,6 @@ if [[ "${FORCE_DEPLOY:-0}" != "1" ]]; then
         die "aborted by user"
     fi
 fi
-
-mkdir -p "${REPO_ROOT}/deployments"
 
 green "Running forge script (broadcast + verify)..."
 # --account decrypts the keystore in-process (you will be prompted for the
