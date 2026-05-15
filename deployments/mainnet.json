@@ -1,0 +1,14 @@
+{
+  "baseFeeWei": 50000000000000,
+  "chainId": 1,
+  "createX": "0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed",
+  "deployer": "0x397b9dAb337f286f169C5bcF2810Aea2Dce1ee13",
+  "feePerByteWei": 2343750000000,
+  "feeRecipient": "0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D",
+  "gBridgeSender": "0xE82c61Ac9Ec2041b493118051afa4F18a55dC876",
+  "gToken": "0x9C7BEBa8F6eF6643aBd725e45a4E8387eF260649",
+  "gravityPortal": "0x76cf8526Fa9461e50B2c6702a7246ce6915f6E53",
+  "multisig": "0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D",
+  "saltPortal": "0x397b9dab337f286f169c5bcf2810aea2dce1ee1300992b35550447ec7978f856",
+  "saltSender": "0x397b9dab337f286f169c5bcf2810aea2dce1ee1300f422d65e0b56e46d700e9f"
+}
