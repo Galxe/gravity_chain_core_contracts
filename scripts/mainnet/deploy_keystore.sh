@@ -13,9 +13,10 @@
 #    1. Validates env vars (fails fast on missing values).
 #    2. Sanity-checks the RPC (chainId 1) and the deployer balance.
 #    3. Runs DeployBridgeKeystore.s.sol with --account/--sender, --broadcast,
-#       and --verify. GravityPortal + GBridgeSender are deployed, ownership
-#       of both is transferred to the multisig (Ownable2Step, pending), and
-#       both are source-verified on Etherscan in the same run.
+#       and --verify. GravityPortal + GBridgeSender are deployed via the
+#       canonical CreateX factory (CREATE3) at deterministic addresses,
+#       ownership of both is transferred to the multisig (Ownable2Step,
+#       pending), and both are source-verified on Etherscan in the same run.
 #    4. Prints deployed addresses and writes ./deployments/mainnet.json.
 #
 #  After this script: the multisig must call acceptOwnership() on BOTH
@@ -32,8 +33,8 @@
 #    MULTISIG_ADDRESS         default: verified production Safe (see the .s.sol)
 #    FEE_RECIPIENT_ADDRESS    default: MULTISIG_ADDRESS
 #    G_TOKEN_ADDRESS          default: 0x9C7BEBa8F6eF6643aBd725e45a4E8387eF260649
-#    BASE_FEE_WEI             default: 0
-#    FEE_PER_BYTE_WEI         default: 1_250_000
+#    BASE_FEE_WEI             default: 50_000_000_000_000   (≈ $0.10 at ETH = $2000)
+#    FEE_PER_BYTE_WEI         default: 2_343_750_000_000    (≈ $0.15 / 32 B at ETH = $2000)
 #
 #  Modes:
 #    DRY_RUN=1   simulate against a fork of MAINNET_RPC_URL — no broadcast,
@@ -97,7 +98,7 @@ fi
 # -- banner -------------------------------------------------------------------
 cat <<EOF
 =============================================================
-  Gravity Bridge Mainnet Deploy (keystore)
+  Gravity Bridge Mainnet Deploy (keystore + CreateX/CREATE3)
 -------------------------------------------------------------
   Mode           : $([[ "${DRY_RUN}" == "1" ]] && echo "DRY RUN (simulate, no broadcast)" || echo "LIVE (broadcast + verify)")
   Keystore acct  : ${KEYSTORE_ACCOUNT:-<n/a for dry-run>}
@@ -105,8 +106,9 @@ cat <<EOF
   Multisig owner : ${MULTISIG_ADDRESS:-0xbD6e434dB90FD8AD4E28d85C133AD34cA6fbfB6D (script default)}
   Fee recipient  : ${FEE_RECIPIENT_ADDRESS:-<defaults to multisig>}
   G token        : ${G_TOKEN_ADDRESS:-0x9C7BEBa8F6eF6643aBd725e45a4E8387eF260649}
-  baseFee wei    : ${BASE_FEE_WEI:-0}
-  feePerByte wei : ${FEE_PER_BYTE_WEI:-1250000}
+  baseFee wei    : ${BASE_FEE_WEI:-50000000000000   (≈ \$0.10 at ETH = \$2000)}
+  feePerByte wei : ${FEE_PER_BYTE_WEI:-2343750000000  (≈ \$0.15 / 32 B at ETH = \$2000)}
+  CreateX        : 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed (canonical)
   RPC            : ${MAINNET_RPC_URL}
 =============================================================
 EOF
