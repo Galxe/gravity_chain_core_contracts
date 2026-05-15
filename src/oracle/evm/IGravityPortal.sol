@@ -33,6 +33,12 @@ interface IGravityPortal {
     /// @param amount The amount withdrawn
     event FeesWithdrawn(address indexed recipient, uint256 amount);
 
+    /// @notice Emitted when ERC-20 tokens accidentally sent to the contract are recovered
+    /// @param token The ERC20 token address
+    /// @param recipient The address receiving the tokens
+    /// @param amount The amount of tokens recovered
+    event ERC20Recovered(address indexed token, address indexed recipient, uint256 amount);
+
     // ========================================================================
     // ERRORS
     // ========================================================================
@@ -56,15 +62,10 @@ interface IGravityPortal {
     /// @notice Fee transfer to recipient failed
     error TransferFailed();
 
-    /// @notice A fee config value exceeds its hard ceiling
-    /// @param provided The rejected value
-    /// @param maximum The hard ceiling
-    error FeeExceedsMaximum(uint256 provided, uint256 maximum);
-
-    /// @notice Withdrawal amount exceeds the tracked accumulated fees
+    /// @notice Withdrawal amount exceeds the contract's ETH balance
     /// @param requested The requested withdrawal amount
-    /// @param available The currently accumulated fee balance
-    error InsufficientAccumulatedFees(uint256 requested, uint256 available);
+    /// @param available The current contract ETH balance
+    error InsufficientBalance(uint256 requested, uint256 available);
 
     // ========================================================================
     // MESSAGE BRIDGING
@@ -84,14 +85,12 @@ interface IGravityPortal {
     // ========================================================================
 
     /// @notice Set the base fee for bridge operations
-    /// @dev Reverts if newBaseFee > MAX_BASE_FEE.
     /// @param newBaseFee The new base fee in wei
     function setBaseFee(
         uint256 newBaseFee
     ) external;
 
     /// @notice Set the fee per byte of payload
-    /// @dev Reverts if newFeePerByte > MAX_FEE_PER_BYTE.
     /// @param newFeePerByte The new fee per byte in wei
     function setFeePerByte(
         uint256 newFeePerByte
@@ -103,12 +102,25 @@ interface IGravityPortal {
         address newRecipient
     ) external;
 
-    /// @notice Withdraw all accumulated fees to the fee recipient
+    /// @notice Withdraw the contract's entire ETH balance to the fee recipient
+    /// @dev Sweeps `address(this).balance` so no ETH can get permanently stuck.
     function withdrawFees() external;
 
-    /// @notice Withdraw a specific amount of accumulated fees to the fee recipient
-    /// @param amount The amount to withdraw; must be <= accumulatedFees()
+    /// @notice Withdraw a specific amount of ETH to the fee recipient
+    /// @param amount The amount to withdraw; must be > 0 and <= the contract ETH balance
     function withdrawFees(
+        uint256 amount
+    ) external;
+
+    /// @notice Recover ERC-20 tokens accidentally sent to this contract
+    /// @dev Only callable by the owner. The portal handles only native ETH fees, so any
+    ///      ERC-20 balance here is accidental and safe to sweep.
+    /// @param token The ERC20 token address to recover
+    /// @param recipient Address to receive the tokens
+    /// @param amount Amount of tokens to recover
+    function recoverERC20(
+        address token,
+        address recipient,
         uint256 amount
     ) external;
 
@@ -142,18 +154,11 @@ interface IGravityPortal {
     /// @return The current nonce
     function nonce() external view returns (uint128);
 
-    /// @notice Get the fees collected via `send()` that are available to withdraw
-    /// @dev ETH force-sent to the contract is NOT counted here.
-    /// @return The accumulated fee balance in wei
+    /// @notice Lifetime cumulative total of fees ever taken by `send()` (in wei)
+    /// @dev Increase-only record/observability counter — `withdrawFees` does NOT decrement
+    ///      it and operates on `address(this).balance`, not on this value.
+    /// @return The cumulative fee total in wei
     function accumulatedFees() external view returns (uint256);
-
-    /// @notice The hard ceiling on `baseFee`
-    /// @return The maximum base fee in wei
-    function MAX_BASE_FEE() external view returns (uint256);
-
-    /// @notice The hard ceiling on `feePerByte`
-    /// @return The maximum fee per byte in wei
-    function MAX_FEE_PER_BYTE() external view returns (uint256);
 
     /// @notice Calculate the required fee for a message of given length
     /// @dev Fee = baseFee + (encodedPayloadLength * feePerByte)

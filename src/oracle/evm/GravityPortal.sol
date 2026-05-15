@@ -5,6 +5,8 @@ import { IGravityPortal } from "./IGravityPortal.sol";
 import { PortalMessage } from "./PortalMessage.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 import { Pausable } from "@openzeppelin/utils/Pausable.sol";
+import { IERC20 } from "@openzeppelin/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
 /// @title GravityPortal
 /// @author Gravity Team
@@ -16,23 +18,12 @@ import { Pausable } from "@openzeppelin/utils/Pausable.sol";
 ///
 ///      Hardening (see ETH-CONTRACTS-AUDIT-AND-DEPLOY-GUIDE.md §4):
 ///        - Pausable: the owner can halt `send()` as a circuit breaker (M-1).
-///        - Fee ceilings: `setBaseFee` / `setFeePerByte` and the constructor revert
-///          above MAX_BASE_FEE / MAX_FEE_PER_BYTE (M-2).
-///        - Explicit fee accounting: `accumulatedFees` tracks fees taken by `send()`;
-///          `withdrawFees` draws only from that ledger, not from arbitrary contract
-///          balance (I-3).
+///        - `accumulatedFees`: an increase-only counter of fees ever taken by `send()`,
+///          kept purely for off-chain accounting / observability (I-3).
+///        - `withdrawFees` sweeps the contract's ETH balance (so nothing gets stuck);
+///          `recoverERC20` rescues ERC-20s accidentally sent to the contract.
 contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
-    // ========================================================================
-    // CONSTANTS
-    // ========================================================================
-
-    /// @notice Hard ceiling on `baseFee`. The constructor and `setBaseFee` revert above this.
-    /// @dev A defense-in-depth bound against a soft-DoS via an absurd fee; far above any
-    ///      sane operating value (≈ $200 at ETH = $2000).
-    uint256 public constant MAX_BASE_FEE = 0.1 ether;
-
-    /// @notice Hard ceiling on `feePerByte`. The constructor and `setFeePerByte` revert above this.
-    uint256 public constant MAX_FEE_PER_BYTE = 0.001 ether;
+    using SafeERC20 for IERC20;
 
     // ========================================================================
     // STATE
@@ -50,10 +41,10 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
     /// @notice Monotonically increasing nonce for message ordering
     uint128 public nonce;
 
-    /// @notice Fees collected via `send()` that are available to withdraw.
-    /// @dev Incremented by the full `msg.value` of each `send()` (overpayment between
-    ///      1x–2x of the required fee is absorbed). ETH force-sent to the contract is
-    ///      deliberately NOT counted and is therefore not withdrawable via `withdrawFees`.
+    /// @notice Lifetime cumulative total of fees taken by `send()` (in wei).
+    /// @dev Increase-only — incremented by the full `msg.value` of every `send()` and
+    ///      never decremented. It is a record/observability counter, NOT a withdrawable
+    ///      balance: `withdrawFees` operates on `address(this).balance`, not on this value.
     uint256 public accumulatedFees;
 
     // ========================================================================
@@ -62,8 +53,8 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
 
     /// @notice Deploy the GravityPortal
     /// @param initialOwner The initial owner address
-    /// @param initialBaseFee The initial base fee in wei (must be <= MAX_BASE_FEE)
-    /// @param initialFeePerByte The initial fee per byte in wei (must be <= MAX_FEE_PER_BYTE)
+    /// @param initialBaseFee The initial base fee in wei
+    /// @param initialFeePerByte The initial fee per byte in wei
     /// @param initialFeeRecipient The initial fee recipient address
     constructor(
         address initialOwner,
@@ -73,8 +64,6 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
     ) Ownable(initialOwner) {
         if (initialOwner == address(0)) revert ZeroAddress();
         if (initialFeeRecipient == address(0)) revert ZeroAddress();
-        if (initialBaseFee > MAX_BASE_FEE) revert FeeExceedsMaximum(initialBaseFee, MAX_BASE_FEE);
-        if (initialFeePerByte > MAX_FEE_PER_BYTE) revert FeeExceedsMaximum(initialFeePerByte, MAX_FEE_PER_BYTE);
 
         baseFee = initialBaseFee;
         feePerByte = initialFeePerByte;
@@ -107,7 +96,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
             revert ExcessiveFee(requiredFee, msg.value);
         }
 
-        // The whole msg.value is kept as fee; record it in the explicit ledger.
+        // The whole msg.value is kept as fee; record it in the cumulative counter.
         accumulatedFees += msg.value;
 
         // Emit event for consensus engine to monitor
@@ -123,7 +112,6 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
     function setBaseFee(
         uint256 newBaseFee
     ) external onlyOwner {
-        if (newBaseFee > MAX_BASE_FEE) revert FeeExceedsMaximum(newBaseFee, MAX_BASE_FEE);
         baseFee = newBaseFee;
         emit FeeConfigUpdated(newBaseFee, feePerByte);
     }
@@ -132,7 +120,6 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
     function setFeePerByte(
         uint256 newFeePerByte
     ) external onlyOwner {
-        if (newFeePerByte > MAX_FEE_PER_BYTE) revert FeeExceedsMaximum(newFeePerByte, MAX_FEE_PER_BYTE);
         feePerByte = newFeePerByte;
         emit FeeConfigUpdated(baseFee, newFeePerByte);
     }
@@ -151,7 +138,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
 
     /// @inheritdoc IGravityPortal
     function withdrawFees() external onlyOwner {
-        _withdrawFees(accumulatedFees);
+        _withdrawFees(address(this).balance);
     }
 
     /// @inheritdoc IGravityPortal
@@ -159,6 +146,19 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
         uint256 amount
     ) external onlyOwner {
         _withdrawFees(amount);
+    }
+
+    /// @inheritdoc IGravityPortal
+    function recoverERC20(
+        address token,
+        address recipient,
+        uint256 amount
+    ) external onlyOwner {
+        if (recipient == address(0)) revert ZeroAddress();
+
+        IERC20(token).safeTransfer(recipient, amount);
+
+        emit ERC20Recovered(token, recipient, amount);
     }
 
     // ========================================================================
@@ -202,18 +202,18 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
         return baseFee + (payloadLength * feePerByte);
     }
 
-    /// @notice Withdraw `amount` of accumulated fees to the fee recipient
-    /// @dev Effects-before-interactions: the ledger is decremented before the transfer.
-    /// @param amount The amount to withdraw
+    /// @notice Withdraw `amount` of ETH from the contract balance to the fee recipient
+    /// @dev Sweeps from `address(this).balance` so any ETH (fees + anything force-sent)
+    ///      can always be recovered — nothing gets permanently stuck.
+    /// @param amount The amount to withdraw (must be > 0 and <= the contract balance)
     function _withdrawFees(
         uint256 amount
     ) internal {
         if (amount == 0) revert NoFeesToWithdraw();
 
-        uint256 available = accumulatedFees;
-        if (amount > available) revert InsufficientAccumulatedFees(amount, available);
+        uint256 balance = address(this).balance;
+        if (amount > balance) revert InsufficientBalance(amount, balance);
 
-        accumulatedFees = available - amount;
         address recipient = feeRecipient;
 
         (bool success,) = recipient.call{ value: amount }("");

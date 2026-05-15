@@ -7,6 +7,7 @@ import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/utils/Pausable.sol";
+import { MockGToken } from "@test/utils/MockGToken.sol";
 
 /// @title GravityPortalTest
 /// @notice Unit tests for GravityPortal contract (deployed on Ethereum)
@@ -401,8 +402,8 @@ contract GravityPortalTest is Test {
         uint256 baseFee,
         uint256 feePerByte
     ) public {
-        baseFee = bound(baseFee, 0, portal.MAX_BASE_FEE());
-        feePerByte = bound(feePerByte, 0, portal.MAX_FEE_PER_BYTE());
+        baseFee = bound(baseFee, 0, 1 ether);
+        feePerByte = bound(feePerByte, 0, 10000 wei);
 
         vm.startPrank(owner);
         portal.setBaseFee(baseFee);
@@ -446,49 +447,6 @@ contract GravityPortalTest is Test {
     }
 
     // ========================================================================
-    // HARDENING: FEE CEILINGS (M-2)
-    // ========================================================================
-
-    function test_Constructor_RevertWhenBaseFeeExceedsMax() public {
-        uint256 tooMuch = portal.MAX_BASE_FEE() + 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, portal.MAX_BASE_FEE())
-        );
-        new GravityPortal(owner, tooMuch, INITIAL_FEE_PER_BYTE, feeRecipient);
-    }
-
-    function test_Constructor_RevertWhenFeePerByteExceedsMax() public {
-        uint256 tooMuch = portal.MAX_FEE_PER_BYTE() + 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, portal.MAX_FEE_PER_BYTE())
-        );
-        new GravityPortal(owner, INITIAL_BASE_FEE, tooMuch, feeRecipient);
-    }
-
-    function test_SetBaseFee_RevertWhenExceedsMax() public {
-        uint256 maxBaseFee = portal.MAX_BASE_FEE();
-        uint256 tooMuch = maxBaseFee + 1;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, maxBaseFee));
-        portal.setBaseFee(tooMuch);
-    }
-
-    function test_SetBaseFee_AcceptsMax() public {
-        uint256 maxBaseFee = portal.MAX_BASE_FEE();
-        vm.prank(owner);
-        portal.setBaseFee(maxBaseFee);
-        assertEq(portal.baseFee(), maxBaseFee);
-    }
-
-    function test_SetFeePerByte_RevertWhenExceedsMax() public {
-        uint256 maxFeePerByte = portal.MAX_FEE_PER_BYTE();
-        uint256 tooMuch = maxFeePerByte + 1;
-        vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.FeeExceedsMaximum.selector, tooMuch, maxFeePerByte));
-        portal.setFeePerByte(tooMuch);
-    }
-
-    // ========================================================================
     // HARDENING: PAUSABLE (M-1)
     // ========================================================================
 
@@ -526,10 +484,10 @@ contract GravityPortalTest is Test {
     }
 
     // ========================================================================
-    // HARDENING: EXPLICIT FEE ACCOUNTING (I-3)
+    // HARDENING: FEE ACCOUNTING & WITHDRAWAL (I-3)
     // ========================================================================
 
-    function test_AccumulatedFees_TracksSends() public {
+    function test_AccumulatedFees_IsIncreaseOnly() public {
         assertEq(portal.accumulatedFees(), 0);
 
         bytes memory message = hex"1234";
@@ -542,6 +500,12 @@ contract GravityPortalTest is Test {
         vm.prank(alice);
         portal.send{ value: fee }(message);
         assertEq(portal.accumulatedFees(), 2 * fee);
+
+        // accumulatedFees is a record — withdrawing does NOT decrement it.
+        vm.prank(owner);
+        portal.withdrawFees();
+        assertEq(portal.accumulatedFees(), 2 * fee, "accumulatedFees is increase-only");
+        assertEq(address(portal).balance, 0);
     }
 
     function test_WithdrawFees_PartialAmount() public {
@@ -556,23 +520,23 @@ contract GravityPortalTest is Test {
         vm.prank(owner);
         portal.withdrawFees(half);
 
-        assertEq(portal.accumulatedFees(), fee - half);
         assertEq(feeRecipient.balance, recipientBefore + half);
         assertEq(address(portal).balance, fee - half);
+        assertEq(portal.accumulatedFees(), fee, "accumulatedFees untouched by withdraw");
     }
 
-    function test_WithdrawFees_RevertWhenExceedsAccumulated() public {
+    function test_WithdrawFees_RevertWhenExceedsBalance() public {
         bytes memory message = hex"1234";
         uint256 fee = portal.calculateFee(message.length);
         vm.prank(alice);
         portal.send{ value: fee }(message);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.InsufficientAccumulatedFees.selector, fee + 1, fee));
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.InsufficientBalance.selector, fee + 1, fee));
         portal.withdrawFees(fee + 1);
     }
 
-    function test_WithdrawFees_DoesNotSweepForceSentEth() public {
+    function test_WithdrawFees_SweepsForceSentEth() public {
         // A bridge fee is collected normally...
         bytes memory message = hex"1234";
         uint256 fee = portal.calculateFee(message.length);
@@ -581,14 +545,47 @@ contract GravityPortalTest is Test {
 
         // ...and extra ETH is force-sent to the contract (e.g. via selfdestruct).
         vm.deal(address(portal), address(portal).balance + 1 ether);
+        uint256 total = address(portal).balance;
 
-        // withdrawFees() only pays out the tracked fee ledger, not the force-sent ETH.
+        // withdrawFees() sweeps the WHOLE balance — nothing gets stuck.
         uint256 recipientBefore = feeRecipient.balance;
         vm.prank(owner);
         portal.withdrawFees();
 
-        assertEq(feeRecipient.balance, recipientBefore + fee, "only accumulated fees withdrawn");
-        assertEq(portal.accumulatedFees(), 0);
-        assertEq(address(portal).balance, 1 ether, "force-sent ETH stays put");
+        assertEq(feeRecipient.balance, recipientBefore + total, "entire balance swept");
+        assertEq(address(portal).balance, 0, "no ETH left stuck");
+    }
+
+    // ========================================================================
+    // HARDENING: recoverERC20
+    // ========================================================================
+
+    function test_RecoverERC20() public {
+        MockGToken token = new MockGToken();
+        token.mint(address(portal), 5 ether);
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit IGravityPortal.ERC20Recovered(address(token), bob, 5 ether);
+        portal.recoverERC20(address(token), bob, 5 ether);
+
+        assertEq(token.balanceOf(bob), 5 ether);
+        assertEq(token.balanceOf(address(portal)), 0);
+    }
+
+    function test_RecoverERC20_RevertWhenNotOwner() public {
+        MockGToken token = new MockGToken();
+        token.mint(address(portal), 1 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.recoverERC20(address(token), alice, 1 ether);
+    }
+
+    function test_RecoverERC20_RevertWhenZeroRecipient() public {
+        MockGToken token = new MockGToken();
+        vm.prank(owner);
+        vm.expectRevert(IGravityPortal.ZeroAddress.selector);
+        portal.recoverERC20(address(token), address(0), 0);
     }
 }
