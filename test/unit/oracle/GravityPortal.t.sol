@@ -6,6 +6,8 @@ import { GravityPortal } from "@src/oracle/evm/GravityPortal.sol";
 import { IGravityPortal } from "@src/oracle/evm/IGravityPortal.sol";
 import { PortalMessage } from "@src/oracle/evm/PortalMessage.sol";
 import { Ownable } from "@openzeppelin/access/Ownable.sol";
+import { Pausable } from "@openzeppelin/utils/Pausable.sol";
+import { MockGToken } from "@test/utils/MockGToken.sol";
 
 /// @title GravityPortalTest
 /// @notice Unit tests for GravityPortal contract (deployed on Ethereum)
@@ -442,5 +444,148 @@ contract GravityPortalTest is Test {
         assertEq(decodedSender, sender, "Sender should match");
         assertEq(decodedNonce, 1, "First message nonce should be 1");
         assertEq(keccak256(decodedMessage), keccak256(message), "Message should match");
+    }
+
+    // ========================================================================
+    // HARDENING: PAUSABLE (M-1)
+    // ========================================================================
+
+    function test_Pause_BlocksSend() public {
+        vm.prank(owner);
+        portal.pause();
+        assertTrue(portal.paused());
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.deal(alice, fee);
+        vm.prank(alice);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        portal.send{ value: fee }(message);
+    }
+
+    function test_Unpause_RestoresSend() public {
+        vm.prank(owner);
+        portal.pause();
+        vm.prank(owner);
+        portal.unpause();
+        assertFalse(portal.paused());
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        uint128 n = portal.send{ value: fee }(message);
+        assertEq(n, 1);
+    }
+
+    function test_Pause_RevertWhenNotOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.pause();
+    }
+
+    // ========================================================================
+    // HARDENING: FEE ACCOUNTING & WITHDRAWAL (I-3)
+    // ========================================================================
+
+    function test_AccumulatedFees_IsIncreaseOnly() public {
+        assertEq(portal.accumulatedFees(), 0);
+
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+        assertEq(portal.accumulatedFees(), fee);
+
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+        assertEq(portal.accumulatedFees(), 2 * fee);
+
+        // accumulatedFees is a record — withdrawing does NOT decrement it.
+        vm.prank(owner);
+        portal.withdrawFees();
+        assertEq(portal.accumulatedFees(), 2 * fee, "accumulatedFees is increase-only");
+        assertEq(address(portal).balance, 0);
+    }
+
+    function test_WithdrawFees_PartialAmount() public {
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        uint256 half = fee / 2;
+        uint256 recipientBefore = feeRecipient.balance;
+
+        vm.prank(owner);
+        portal.withdrawFees(half);
+
+        assertEq(feeRecipient.balance, recipientBefore + half);
+        assertEq(address(portal).balance, fee - half);
+        assertEq(portal.accumulatedFees(), fee, "accumulatedFees untouched by withdraw");
+    }
+
+    function test_WithdrawFees_RevertWhenExceedsBalance() public {
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IGravityPortal.InsufficientBalance.selector, fee + 1, fee));
+        portal.withdrawFees(fee + 1);
+    }
+
+    function test_WithdrawFees_SweepsForceSentEth() public {
+        // A bridge fee is collected normally...
+        bytes memory message = hex"1234";
+        uint256 fee = portal.calculateFee(message.length);
+        vm.prank(alice);
+        portal.send{ value: fee }(message);
+
+        // ...and extra ETH is force-sent to the contract (e.g. via selfdestruct).
+        vm.deal(address(portal), address(portal).balance + 1 ether);
+        uint256 total = address(portal).balance;
+
+        // withdrawFees() sweeps the WHOLE balance — nothing gets stuck.
+        uint256 recipientBefore = feeRecipient.balance;
+        vm.prank(owner);
+        portal.withdrawFees();
+
+        assertEq(feeRecipient.balance, recipientBefore + total, "entire balance swept");
+        assertEq(address(portal).balance, 0, "no ETH left stuck");
+    }
+
+    // ========================================================================
+    // HARDENING: recoverERC20
+    // ========================================================================
+
+    function test_RecoverERC20() public {
+        MockGToken token = new MockGToken();
+        token.mint(address(portal), 5 ether);
+
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit IGravityPortal.ERC20Recovered(address(token), bob, 5 ether);
+        portal.recoverERC20(address(token), bob, 5 ether);
+
+        assertEq(token.balanceOf(bob), 5 ether);
+        assertEq(token.balanceOf(address(portal)), 0);
+    }
+
+    function test_RecoverERC20_RevertWhenNotOwner() public {
+        MockGToken token = new MockGToken();
+        token.mint(address(portal), 1 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        portal.recoverERC20(address(token), alice, 1 ether);
+    }
+
+    function test_RecoverERC20_RevertWhenZeroRecipient() public {
+        MockGToken token = new MockGToken();
+        vm.prank(owner);
+        vm.expectRevert(IGravityPortal.ZeroAddress.selector);
+        portal.recoverERC20(address(token), address(0), 0);
     }
 }

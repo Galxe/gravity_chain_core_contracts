@@ -4,6 +4,9 @@ pragma solidity ^0.8.30;
 import { IGravityPortal } from "./IGravityPortal.sol";
 import { PortalMessage } from "./PortalMessage.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
+import { Pausable } from "@openzeppelin/utils/Pausable.sol";
+import { IERC20 } from "@openzeppelin/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 
 /// @title GravityPortal
 /// @author Gravity Team
@@ -12,7 +15,16 @@ import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
 ///      Charges fees in native token (ETH) for message bridging.
 ///      Consensus engine monitors MessageSent events and bridges to Gravity.
 ///      Uses compact encoding via PortalMessage library: sender (20B) + nonce (16B) + message.
-contract GravityPortal is IGravityPortal, Ownable2Step {
+///
+///      Hardening (see ETH-CONTRACTS-AUDIT-AND-DEPLOY-GUIDE.md §4):
+///        - Pausable: the owner can halt `send()` as a circuit breaker (M-1).
+///        - `accumulatedFees`: an increase-only counter of fees ever taken by `send()`,
+///          kept purely for off-chain accounting / observability (I-3).
+///        - `withdrawFees` sweeps the contract's ETH balance (so nothing gets stuck);
+///          `recoverERC20` rescues ERC-20s accidentally sent to the contract.
+contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
+    using SafeERC20 for IERC20;
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -28,6 +40,12 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
 
     /// @notice Monotonically increasing nonce for message ordering
     uint128 public nonce;
+
+    /// @notice Lifetime cumulative total of fees taken by `send()` (in wei).
+    /// @dev Increase-only — incremented by the full `msg.value` of every `send()` and
+    ///      never decremented. It is a record/observability counter, NOT a withdrawable
+    ///      balance: `withdrawFees` operates on `address(this).balance`, not on this value.
+    uint256 public accumulatedFees;
 
     // ========================================================================
     // CONSTRUCTOR
@@ -59,7 +77,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
     /// @inheritdoc IGravityPortal
     function send(
         bytes calldata message
-    ) external payable returns (uint128 messageNonce) {
+    ) external payable whenNotPaused returns (uint128 messageNonce) {
         // Assign nonce and increment
         messageNonce = ++nonce;
 
@@ -77,6 +95,9 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
         if (msg.value > 2 * requiredFee) {
             revert ExcessiveFee(requiredFee, msg.value);
         }
+
+        // The whole msg.value is kept as fee; record it in the cumulative counter.
+        accumulatedFees += msg.value;
 
         // Emit event for consensus engine to monitor
         // Nonce is extracted as indexed param for efficient consensus filtering
@@ -117,16 +138,41 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
 
     /// @inheritdoc IGravityPortal
     function withdrawFees() external onlyOwner {
-        uint256 balance = address(this).balance;
-        if (balance == 0) revert NoFeesToWithdraw();
+        _withdrawFees(address(this).balance);
+    }
 
-        address recipient = feeRecipient;
+    /// @inheritdoc IGravityPortal
+    function withdrawFees(
+        uint256 amount
+    ) external onlyOwner {
+        _withdrawFees(amount);
+    }
 
-        // Transfer fees to recipient
-        (bool success,) = recipient.call{ value: balance }("");
-        if (!success) revert TransferFailed();
+    /// @inheritdoc IGravityPortal
+    function recoverERC20(
+        address token,
+        address recipient,
+        uint256 amount
+    ) external onlyOwner {
+        if (recipient == address(0)) revert ZeroAddress();
 
-        emit FeesWithdrawn(recipient, balance);
+        IERC20(token).safeTransfer(recipient, amount);
+
+        emit ERC20Recovered(token, recipient, amount);
+    }
+
+    // ========================================================================
+    // PAUSE (Owner Only)
+    // ========================================================================
+
+    /// @inheritdoc IGravityPortal
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @inheritdoc IGravityPortal
+    function unpause() external onlyOwner {
+        _unpause();
     }
 
     // ========================================================================
@@ -154,5 +200,25 @@ contract GravityPortal is IGravityPortal, Ownable2Step {
         uint256 payloadLength
     ) internal view returns (uint256) {
         return baseFee + (payloadLength * feePerByte);
+    }
+
+    /// @notice Withdraw `amount` of ETH from the contract balance to the fee recipient
+    /// @dev Sweeps from `address(this).balance` so any ETH (fees + anything force-sent)
+    ///      can always be recovered — nothing gets permanently stuck.
+    /// @param amount The amount to withdraw (must be > 0 and <= the contract balance)
+    function _withdrawFees(
+        uint256 amount
+    ) internal {
+        if (amount == 0) revert NoFeesToWithdraw();
+
+        uint256 balance = address(this).balance;
+        if (amount > balance) revert InsufficientBalance(amount, balance);
+
+        address recipient = feeRecipient;
+
+        (bool success,) = recipient.call{ value: amount }("");
+        if (!success) revert TransferFailed();
+
+        emit FeesWithdrawn(recipient, amount);
     }
 }
