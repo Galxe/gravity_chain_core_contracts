@@ -743,9 +743,12 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 perfLen = perfs.length;
 
         // Strict equality check: perf array length must match active validator count.
+        // Silently skipping would let underperforming validators ride epoch after epoch
+        // whenever the upstream tracker drifts. Reverting forces governance to
+        // investigate (and disable autoEvictEnabled if they need to bypass eviction
+        // while the tracker is fixed — that switch short-circuits Phase 2 above).
         if (activeLen != perfLen) {
-            emit PerformanceLengthMismatch(activeLen, perfLen);
-            return;
+            revert Errors.PerformanceTrackerMisaligned(activeLen, perfLen);
         }
 
         // Note: remainingActive counter is shared and correctly reflects remaining ACTIVE validators after Phase 1

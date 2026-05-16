@@ -2751,5 +2751,76 @@ contract ValidatorManagementTest is Test {
         assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.INACTIVE));
         assertEq(uint8(validatorManager.getValidatorStatus(charliePool)), uint8(ValidatorStatus.ACTIVE));
     }
+
+    /// @notice Performance-tracker length drift must revert, not silently skip Phase 2.
+    /// Silent skip would let underperforming validators ride epoch after epoch if the
+    /// tracker ever desynchronises with ValidatorManagement's active set.
+    function test_evictUnderperforming_revertsOnPerfLengthMismatch() public {
+        _createRegisterAndJoin(alice, 50 ether, "alice");
+        _createRegisterAndJoin(bob, 50 ether, "bob");
+        _createRegisterAndJoin(charlie, 50 ether, "charlie");
+        _processEpoch();
+        _processEpoch(); // Advance past epoch 1 (eviction skipped before)
+
+        // Enable auto-evict so Phase 2 (the length check) is reached.
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, true, 10
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        uint256 activeLen = validatorManager.getActiveValidatorCount();
+        assertEq(activeLen, 3, "expected 3 active validators");
+
+        // Return a deliberately short perf array — wrong length triggers the check.
+        IValidatorPerformanceTracker.IndividualPerformance[] memory shortPerfs =
+            new IValidatorPerformanceTracker.IndividualPerformance[](activeLen - 1);
+        for (uint256 i = 0; i < shortPerfs.length; i++) {
+            shortPerfs[i] = IValidatorPerformanceTracker.IndividualPerformance(10, 0);
+        }
+        vm.mockCall(
+            SystemAddresses.PERFORMANCE_TRACKER,
+            abi.encodeWithSelector(IValidatorPerformanceTracker.getAllPerformances.selector),
+            abi.encode(shortPerfs)
+        );
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        vm.expectRevert(
+            abi.encodeWithSelector(Errors.PerformanceTrackerMisaligned.selector, activeLen, shortPerfs.length)
+        );
+        validatorManager.evictUnderperformingValidators();
+    }
+
+    /// @notice Sanity: governance can bypass the strict length check by disabling
+    /// autoEvictEnabled, which short-circuits Phase 2 before the length comparison.
+    /// This is the documented recovery path if the perf tracker drifts.
+    function test_evictUnderperforming_autoEvictDisabledBypassesPerfCheck() public {
+        _createRegisterAndJoin(alice, 50 ether, "alice");
+        _createRegisterAndJoin(bob, 50 ether, "bob");
+        _processEpoch();
+        _processEpoch();
+
+        // Auto-evict disabled (last arg false).
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND, MAX_BOND, UNBONDING_DELAY, true, VOTING_POWER_INCREASE_LIMIT, MAX_VALIDATOR_SET_SIZE, false, 10
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Even with a wrong-length perf array, Phase 2 is short-circuited at the
+        // enabled check above the length comparison, so this must NOT revert.
+        IValidatorPerformanceTracker.IndividualPerformance[] memory shortPerfs =
+            new IValidatorPerformanceTracker.IndividualPerformance[](0);
+        vm.mockCall(
+            SystemAddresses.PERFORMANCE_TRACKER,
+            abi.encodeWithSelector(IValidatorPerformanceTracker.getAllPerformances.selector),
+            abi.encode(shortPerfs)
+        );
+
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+    }
 }
 

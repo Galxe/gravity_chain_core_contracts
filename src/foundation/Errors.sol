@@ -163,6 +163,13 @@ library Errors {
     /// @param actual Actual increase amount
     error VotingPowerIncreaseLimitExceeded(uint256 limit, uint256 actual);
 
+    /// @notice Performance tracker returned an array whose length does not match the
+    ///         active validator count. Indicates upstream state drift; auto-eviction
+    ///         cannot be evaluated safely.
+    /// @param activeCount Active validator count seen by ValidatorManagement
+    /// @param perfCount Length of the performance array returned by the tracker
+    error PerformanceTrackerMisaligned(uint256 activeCount, uint256 perfCount);
+
     /// @notice Moniker exceeds maximum length
     /// @param maxLength Maximum allowed length
     /// @param actualLength Actual moniker length

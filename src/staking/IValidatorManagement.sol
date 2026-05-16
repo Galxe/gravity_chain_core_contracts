@@ -73,9 +73,6 @@ interface IValidatorManagement {
     /// @param minimumBond The expected minimum bond threshold
     event ValidatorUnderbondedEvicted(address indexed stakePool, uint256 votingPower, uint256 minimumBond);
 
-    /// @notice Emitted when performance data array length doesn't match active validator count
-    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
-
     /// @notice Emitted when a validator's consensus key is rotated
     /// @param stakePool Address of the validator's stake pool
     /// @param newPubkey New BLS public key

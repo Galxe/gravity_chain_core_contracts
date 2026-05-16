@@ -340,7 +340,6 @@ interface IValidatorManagement {
     event ValidatorAutoEvicted(address indexed stakePool, uint256 successfulProposals);
     event ValidatorUnderbondedEvicted(address indexed stakePool, uint256 votingPower, uint256 minimumBond);
     event ValidatorRevertedInactive(address indexed stakePool);
-    event PerformanceLengthMismatch(uint256 activeCount, uint256 perfCount);
     event ConsensusKeyRotated(address indexed stakePool, bytes newPubkey);
     event FeeRecipientUpdated(address indexed stakePool, address newRecipient);
     event FeeRecipientApplied(address indexed stakePool, address oldRecipient, address newRecipient);
@@ -577,8 +576,11 @@ auto-eviction is disabled, to enforce the minimum-bond invariant at epoch bounda
 Runs only when `autoEvictEnabled == true`. Reads per-validator success counts from the
 `ValidatorPerformanceTracker`. For each still-ACTIVE validator:
 
-- If the active-set count vs. performance-array length disagrees, emit `PerformanceLengthMismatch`
-  and skip Phase 2 (defensive).
+- If the active-set count vs. performance-array length disagrees, revert with
+  `PerformanceTrackerMisaligned(activeCount, perfCount)`. Silent skipping would let
+  underperforming validators ride epoch after epoch whenever the upstream tracker drifts.
+  Governance can bypass Phase 2 entirely by setting `autoEvictEnabled = false`, which
+  short-circuits this code path before the length check.
 - Compute `successPct = successfulProposals * 100 / totalProposals` (0 if `totalProposals == 0`).
   When `successPct < autoEvictThresholdPct` (0-100), mark the validator PENDING_INACTIVE and emit
   `ValidatorAutoEvicted(pool, successfulProposals)`.
