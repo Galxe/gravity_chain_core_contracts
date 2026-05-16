@@ -158,4 +158,16 @@ contract StakerSeparationTest is Test {
         IStakePool(pool).acceptOperator();
         assertEq(IStakePool(pool).getOperator(), newOperator, "proposeOperator did not apply");
     }
+
+    function test_renounceOwnership_Reverts() public {
+        address pool = _createDistinctPool();
+
+        // Owner cannot brick the pool by renouncing — would otherwise permanently
+        // disable proposeStaker/proposeOperator/proposeVoter and their cancel/delay setters.
+        vm.prank(ownerAddr);
+        vm.expectRevert(Errors.OperationNotSupported.selector);
+        Ownable(pool).renounceOwnership();
+
+        assertEq(Ownable(pool).owner(), ownerAddr, "owner should be unchanged after revert");
+    }
 }

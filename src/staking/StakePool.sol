@@ -365,6 +365,18 @@ contract StakePool is IStakePool, Ownable2Step, ReentrancyGuard {
         emit RoleChangeCancelled(address(this), Role.Voter);
     }
 
+    // ── Ownership overrides ─────────────────────────────────────────────
+
+    /// @notice Disable ownership renunciation.
+    /// @dev OZ `Ownable.renounceOwnership()` is public by default; if the owner
+    ///      ever called it, every `onlyOwner` path (propose/cancel role changes,
+    ///      role-change delay setters) would be permanently dead and the pool
+    ///      would be frozen at whichever staker/operator/voter is current —
+    ///      including a malicious one. No governance recovery exists.
+    function renounceOwnership() public pure override {
+        revert Errors.OperationNotSupported();
+    }
+
     // ── Role change delay configuration ─────────────────────────────────
 
     /// @inheritdoc IStakePool
