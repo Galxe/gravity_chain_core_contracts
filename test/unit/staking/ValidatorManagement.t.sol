@@ -2700,6 +2700,50 @@ contract ValidatorManagementTest is Test {
         assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.ACTIVE));
     }
 
+    /// @notice A single pool whose getVotingPower reverts must NOT halt the eviction
+    /// loop (which would halt epoch transitions and the whole chain). The reverting
+    /// pool should be treated as having zero voting power — evicted by Phase 1's
+    /// underbonded check — while the other validators continue normally.
+    function test_eviction_toleratesPoolRevert() public {
+        // Three validators so the last-validator liveness guard doesn't fire when
+        // Alice gets evicted.
+        address alicePool = _createRegisterAndJoin(alice, MIN_BOND, "alice");
+        address bobPool = _createRegisterAndJoin(bob, MIN_BOND * 2, "bob");
+        address charliePool = _createRegisterAndJoin(charlie, MIN_BOND * 2, "charlie");
+        _processEpoch();
+        _processEpoch(); // advance past epoch 1 (eviction is skipped on epoch <= 1)
+
+        // Simulate a malfunctioning pool: every getPoolVotingPower(alicePool, *)
+        // call reverts. Partial-match means any timestamp arg matches.
+        vm.mockCallRevert(
+            SystemAddresses.STAKING,
+            abi.encodeWithSelector(IStaking.getPoolVotingPower.selector, alicePool),
+            bytes("pool storage corrupted")
+        );
+
+        // Phase 1 reads voting power for every active validator. Without the
+        // try/catch in _getValidatorVotingPower, Alice's revert would propagate
+        // out of evictUnderperformingValidators and halt the epoch transition.
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorManager.evictUnderperformingValidators();
+
+        // Alice's pool reported 0 voting power (via catch), so the underbonded
+        // check evicted her into PENDING_INACTIVE.
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(alicePool)),
+            uint8(ValidatorStatus.PENDING_INACTIVE),
+            "reverting pool should be evicted as underbonded"
+        );
+
+        // Bob and Charlie are untouched.
+        assertEq(uint8(validatorManager.getValidatorStatus(bobPool)), uint8(ValidatorStatus.ACTIVE), "bob still ACTIVE");
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(charliePool)),
+            uint8(ValidatorStatus.ACTIVE),
+            "charlie still ACTIVE"
+        );
+    }
+
     /// @notice Test that both underbonded and underperforming validators are evicted
     function test_d3_2_underbondedAndUnderperforming_bothEvicted() public {
         address alicePool = _createRegisterAndJoin(alice, 20 ether, "alice");

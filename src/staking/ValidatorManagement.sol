@@ -996,15 +996,25 @@ contract ValidatorManagement is IValidatorManagement {
 
     /// @notice Get validator's voting power (capped at maximumBond)
     /// @dev The call chain (Staking.getPoolVotingPower → StakePool.getVotingPower → _getEffectiveStakeAt)
-    ///      is entirely pure view functions with safe arithmetic. For factory-created StakePools,
-    ///      this call cannot revert. No try/catch is needed.
+    ///      is entirely pure view over factory-created storage with checked arithmetic,
+    ///      so the call SHOULD not revert today. The try/catch is defense-in-depth: this
+    ///      function is invoked inside unbounded loops during epoch transition (eviction,
+    ///      bond sync, next-set computation). If any future regression — corrupted bucket
+    ///      array, division-by-zero in a config tweak, panic in a binary-search update —
+    ///      introduces a revert path, the chain would halt at every epoch boundary until a
+    ///      contract upgrade ships. Returning 0 instead drops that one validator out of
+    ///      the set on the next pass, which is the correct disposition for a pool whose
+    ///      bookkeeping is broken.
     function _getValidatorVotingPower(
         address stakePool
     ) internal view returns (uint256) {
         uint64 now_ = ITimestamp(SystemAddresses.TIMESTAMP).nowMicroseconds();
-        uint256 power = IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_);
         uint256 maxBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).maximumBond();
-        return power > maxBond ? maxBond : power;
+        try IStaking(SystemAddresses.STAKING).getPoolVotingPower(stakePool, now_) returns (uint256 power) {
+            return power > maxBond ? maxBond : power;
+        } catch {
+            return 0;
+        }
     }
 
     /// @notice Compute the complete next epoch validator set
