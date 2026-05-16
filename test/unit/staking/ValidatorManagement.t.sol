@@ -875,6 +875,66 @@ contract ValidatorManagementTest is Test {
         assertEq(bobRecord.consensusPubkey, aliceOldPubkey, "Bob should have Alice's old pubkey");
     }
 
+    /// @notice Pending consensus-key reservations must be released when a validator
+    /// deactivates without ever applying the rotation. Without this cleanup, the
+    /// reservation in _pubkeyToValidator would bind that pubkey to a defunct pool
+    /// forever, blocking any future validator from using it.
+    function test_deactivation_releasesPendingConsensusKey() public {
+        // Charlie is the "other" active validator so the chain doesn't reject
+        // Alice's leave with CannotRemoveLastValidator.
+        _createRegisterAndJoin(charlie, MIN_BOND, "charlie");
+
+        // Alice registers, joins, becomes active.
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory aliceOldPubkey =
+            hex"a1cecafe0000000100000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        _processEpoch();
+
+        // Alice queues a rotation (pending) but never applies it.
+        bytes memory alicePendingPubkey =
+            hex"deadbeef0000000700000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(alicePool, alicePendingPubkey, hex"abcd1234");
+
+        // While the pending key is reserved, Bob cannot use it.
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, alicePendingPubkey));
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePendingPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice leaves before the rotation can apply, then the epoch boundary
+        // moves her PENDING_INACTIVE → INACTIVE via _applyDeactivations.
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(alicePool);
+        _processEpoch();
+
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(alicePool)), uint8(ValidatorStatus.INACTIVE), "alice deactivated"
+        );
+
+        // After deactivation, the pending pubkey reservation should be released.
+        // Bob can now register with that pubkey without DuplicateConsensusPubkey.
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePendingPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(bobPool);
+        assertEq(bobRecord.consensusPubkey, alicePendingPubkey, "bob now owns the freed pubkey");
+
+        // Alice's pending-key fields must also be cleared on her record.
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
+        assertEq(aliceRecord.pendingConsensusPubkey.length, 0, "pending pubkey cleared on alice");
+        assertEq(aliceRecord.pendingConsensusPop.length, 0, "pending pop cleared on alice");
+    }
+
     /// @notice Test that a validator can rotate to a new key while other validators have different keys
     function test_rotateConsensusKey_uniqueKeySuccess() public {
         // Alice and Bob both register with different pubkeys

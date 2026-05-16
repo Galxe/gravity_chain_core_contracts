@@ -810,6 +810,13 @@ contract ValidatorManagement is IValidatorManagement {
             // silently activate when the pool later rejoins the validator set.
             validator.pendingFeeRecipient = address(0);
 
+            // Symmetric cleanup for any pending consensus-key rotation. Without this,
+            // the reservation in _pubkeyToValidator (set by rotateConsensusKey) is
+            // never released — the hash stays bound to this deactivated pool forever,
+            // polluting the keyspace so nobody can register that pubkey, even though
+            // the rotation was never applied.
+            _clearPendingConsensusKey(validator);
+
             emit ValidatorDeactivated(pool);
         }
         delete _pendingInactive;
@@ -840,8 +847,30 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 count
     ) internal {
         for (uint256 i = 0; i < count; i++) {
-            _validators[validators[i]].status = ValidatorStatus.INACTIVE;
+            ValidatorRecord storage validator = _validators[validators[i]];
+            validator.status = ValidatorStatus.INACTIVE;
+            // Same defensive cleanup as _applyDeactivations — a PENDING_ACTIVE
+            // validator that fails the activation bond check may still carry a
+            // queued rotation, which must release its _pubkeyToValidator slot.
+            validator.pendingFeeRecipient = address(0);
+            _clearPendingConsensusKey(validator);
             emit ValidatorRevertedInactive(validators[i]);
+        }
+    }
+
+    /// @notice Release any pending consensus-key reservation on a validator.
+    /// @dev Pairs with rotateConsensusKey, which reserves `keccak256(newPubkey)` in
+    ///      `_pubkeyToValidator` immediately, before the rotation is applied at the
+    ///      next epoch boundary. If the validator leaves the active set before then,
+    ///      the reservation must be released or the pubkey is bound to a defunct
+    ///      pool forever.
+    function _clearPendingConsensusKey(
+        ValidatorRecord storage validator
+    ) internal {
+        if (validator.pendingConsensusPubkey.length > 0) {
+            delete _pubkeyToValidator[keccak256(validator.pendingConsensusPubkey)];
+            delete validator.pendingConsensusPubkey;
+            delete validator.pendingConsensusPop;
         }
     }
 
