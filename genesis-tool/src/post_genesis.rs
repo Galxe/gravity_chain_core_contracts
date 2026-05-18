@@ -14,9 +14,15 @@ use crate::{
 ///
 /// This function provides a common structure for all print_* functions,
 /// reducing code duplication and making the codebase more maintainable.
+///
+/// The `success_handler` returns `Result<(), String>` so that semantic
+/// failures discovered during decoding (e.g. validator-count mismatch
+/// against the input config) propagate as `Err` rather than silently
+/// logging — otherwise `run_generate` would exit 0 on a broken artifact
+/// and ship it through CI.
 pub fn handle_execution_result<F>(result: &ExecutionResult, function_name: &str, success_handler: F) -> Result<(), String>
 where
-    F: FnOnce(&[u8]),
+    F: FnOnce(&[u8]) -> Result<(), String>,
 {
     match result {
         ExecutionResult::Success { output, .. } => {
@@ -33,8 +39,7 @@ where
                 info!("Raw output (truncated): 0x{}...", hex::encode(&output_bytes[..64]));
             }
 
-            success_handler(output_bytes);
-            Ok(())
+            success_handler(output_bytes)
         }
         ExecutionResult::Revert { output, .. } => {
             error!("{} call reverted", function_name);
@@ -88,10 +93,7 @@ fn verify_active_validators(db: impl DatabaseRef, bundle_state: BundleState, con
         "active validators",
         config.chain_id,
         resolve_block_timestamp(config),
-        |result| {
-            print_active_validators_result(result, config);
-            Ok(())
-        },
+        |result| print_active_validators_result(result, config),
     )
 }
 
@@ -99,12 +101,12 @@ pub fn verify_result(
     db: InMemoryDB,
     bundle_state: BundleState,
     config: &GenesisConfig,
-) {
-    verify_active_validators(db.clone(), bundle_state.clone(), config)
-        .expect("Genesis verification: active validators check FAILED");
+) -> Result<(), String> {
+    verify_active_validators(db.clone(), bundle_state.clone(), config)?;
     // Add more verification steps as needed:
     // - verify_jwks()
     // - verify_epoch_config()
     // - verify_randomness_config()
     // etc.
+    Ok(())
 }

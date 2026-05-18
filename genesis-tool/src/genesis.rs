@@ -507,21 +507,38 @@ pub fn convert_config_to_sol(config: &GenesisConfig) -> SolGenesisInitParams {
     };
 
     // Convert Validators
+    //
+    // Invariant: at genesis, a validator's voting power MUST equal its staked
+    // bond. `ValidatorManagement.initialize` deliberately bypasses
+    // `_validateRegistration` (no PoP / minimumBond check), so this tool is
+    // the only line of defense against an initial set whose consensus weight
+    // is decoupled from economic backing. Reject any config where the two
+    // fields disagree rather than silently shipping a divergent genesis.
     let validators: Vec<SolInitialValidator> = config
         .validators
         .iter()
-        .map(|v| SolInitialValidator {
-            operator: parse_address(&v.operator),
-            owner: parse_address(&v.owner),
-            staker: parse_address(&v.staker),
-            stakeAmount: parse_u256(&v.stake_amount),
-            moniker: v.moniker.clone(),
-            consensusPubkey: parse_hex_bytes(&v.consensus_pubkey).into(),
-            consensusPop: parse_hex_bytes(&v.consensus_pop).into(),
-            // BCS encode network addresses from human-readable format
-            networkAddresses: bcs_encode_string(&v.network_addresses).into(),
-            fullnodeAddresses: bcs_encode_string(&v.fullnode_addresses).into(),
-            votingPower: parse_u256(&v.voting_power),
+        .map(|v| {
+            let stake_amount = parse_u256(&v.stake_amount);
+            let voting_power = parse_u256(&v.voting_power);
+            assert!(
+                stake_amount == voting_power,
+                "validator {:?} (operator {}): votingPower ({}) must equal stakeAmount ({}) at genesis — \
+                 voting weight cannot be decoupled from staked bond",
+                v.moniker, v.operator, voting_power, stake_amount,
+            );
+            SolInitialValidator {
+                operator: parse_address(&v.operator),
+                owner: parse_address(&v.owner),
+                staker: parse_address(&v.staker),
+                stakeAmount: stake_amount,
+                moniker: v.moniker.clone(),
+                consensusPubkey: parse_hex_bytes(&v.consensus_pubkey).into(),
+                consensusPop: parse_hex_bytes(&v.consensus_pop).into(),
+                // BCS encode network addresses from human-readable format
+                networkAddresses: bcs_encode_string(&v.network_addresses).into(),
+                fullnodeAddresses: bcs_encode_string(&v.fullnode_addresses).into(),
+                votingPower: voting_power,
+            }
         })
         .collect();
 
@@ -620,23 +637,30 @@ pub fn call_get_active_validators() -> TxEnv {
     new_system_call_txn(VALIDATOR_MANAGER_ADDR, call_data.into())
 }
 
-pub fn print_active_validators_result(result: &ExecutionResult, config: &GenesisConfig) {
-    let _ = handle_execution_result(result, "getActiveValidators", |output_bytes| {
+pub fn print_active_validators_result(
+    result: &ExecutionResult,
+    config: &GenesisConfig,
+) -> Result<(), String> {
+    handle_execution_result(result, "getActiveValidators", |output_bytes| {
         let decoded =
             IValidatorManagement::getActiveValidatorsCall::abi_decode_returns(output_bytes, false)
-                .expect("Failed to decode getActiveValidators result");
+                .map_err(|e| format!("Failed to decode getActiveValidators result: {:?}", e))?;
 
         let validators = &decoded._0;
         info!("Active validators count: {}", validators.len());
 
-        // Validate against config
+        // A count mismatch means the on-chain initialize silently dropped
+        // (or duplicated) a validator versus the input config. Fail loudly
+        // so CI pipelines that gate releases on `genesis-tool generate`
+        // cannot ship a divergent artifact behind a buried error log.
         if validators.len() != config.validators.len() {
-            error!(
-                "❌ Validator count mismatch! Expected: {}, Actual: {}",
+            let msg = format!(
+                "validator count mismatch: config has {}, on-chain getActiveValidators returned {}",
                 config.validators.len(),
                 validators.len()
             );
-            return;
+            error!("❌ {}", msg);
+            return Err(msg);
         }
 
         for (i, validator) in validators.iter().enumerate() {
@@ -662,5 +686,6 @@ pub fn print_active_validators_result(result: &ExecutionResult, config: &Genesis
             "🎉 All {} validators initialized successfully!",
             validators.len()
         );
-    });
+        Ok(())
+    })
 }
