@@ -1093,8 +1093,19 @@ contract ValidatorManagement is IValidatorManagement {
         uint256 addedPower = 0;
 
         uint256 minimumBond = IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).minimumBond();
+        // Audit #447: mirror evictUnderperformingValidators — no validator-set churn under freeze.
+        // joinValidatorSet already rejects new joins once the storage flag flips to false, but
+        // `_pendingActive` may still hold (a) race-window joins from the same epoch as the
+        // setForNextEpoch call and (b) carry-overs deferred by votingPowerIncreaseLimitPct.
+        // Defer the whole queue so the freeze invariant holds.
+        bool freeze = !IValidatorConfig(SystemAddresses.VALIDATOR_CONFIG).allowValidatorSetChange();
         for (uint256 i = 0; i < pendingActiveLen; i++) {
             address pool = _pendingActive[i];
+            if (freeze) {
+                result.toKeepPending[result.keepPendingCount] = pool;
+                result.keepPendingCount++;
+                continue;
+            }
             uint256 power = _getValidatorVotingPower(pool);
 
             // Check minimum bond requirement
