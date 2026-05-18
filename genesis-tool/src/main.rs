@@ -177,7 +177,8 @@ async fn run_generate(byte_code_dir: &str, config_file: &str, output: &str) -> R
         db,
         bundle_state,
         &config,
-    );
+    )
+    .map_err(|e| anyhow::anyhow!("Genesis post-generation verification failed: {}", e))?;
 
     info!("Gravity Genesis Generate completed successfully");
     Ok(())

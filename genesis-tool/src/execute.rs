@@ -32,8 +32,7 @@ fn deploy_bsc_style(byte_code_dir: &str, total_stake: U256) -> InMemoryDB {
         let hex_path = format!("{}/{}.hex", byte_code_dir, contract_name);
         let bytecode_hex = read_hex_from_file(&hex_path);
 
-        // For BSC style, we need to extract runtime bytecode from constructor bytecode
-        let runtime_bytecode = extract_runtime_bytecode(&bytecode_hex);
+        let runtime_bytecode = decode_runtime_bytecode(&bytecode_hex);
 
         // Set balance for Genesis contract (needs to fund validator stake pools)
         let balance = if contract_name == "Genesis" {
@@ -69,10 +68,20 @@ fn deploy_bsc_style(byte_code_dir: &str, total_stake: U256) -> InMemoryDB {
     db
 }
 
-/// Extract runtime bytecode from constructor bytecode
-/// This is a simplified implementation - the bytecode should already be runtime bytecode
-fn extract_runtime_bytecode(constructor_bytecode: &str) -> Vec<u8> {
-    let trimmed = constructor_bytecode.trim();
+/// Decode a `.hex` file's contents into runtime bytecode bytes.
+///
+/// The caller's contract is: the input MUST already be runtime bytecode
+/// (i.e. Forge `deployedBytecode.object`, as produced by
+/// `scripts/helpers/extract_bytecode.py`). Constructor bytecode here would
+/// be deployed verbatim and brick every call into the predeploy.
+///
+/// We do not try to detect constructor-vs-runtime from the first byte:
+/// both shapes start with `60 80 60 40` (the Solidity free-memory-pointer
+/// prologue), so any such heuristic is noise, not signal. Pipelines are
+/// responsible for selecting `deployedBytecode`; this function only
+/// validates that what it receives is non-empty, well-formed hex.
+fn decode_runtime_bytecode(hex_str: &str) -> Vec<u8> {
+    let trimmed = hex_str.trim();
     let bytes = hex::decode(trimmed).unwrap_or_else(|e| {
         panic!(
             "FATAL: Failed to decode hex bytecode: {}. Input (first 100 chars): {}",
@@ -86,18 +95,7 @@ fn extract_runtime_bytecode(constructor_bytecode: &str) -> Vec<u8> {
         panic!("FATAL: Decoded bytecode is empty — possible corrupted or empty hex file");
     }
 
-    // Simple heuristic: if the bytecode starts with typical constructor patterns,
-    // we need to extract the runtime part
-    if bytes.len() > 100 && (bytes[0] == 0x60 || bytes[0] == 0x61) {
-        // This looks like constructor bytecode
-        // For now, we'll use a simplified approach and return the original bytecode
-        // In a real implementation, we'd execute the constructor and extract the returned bytecode
-        warn!("   [!] Warning: Using constructor bytecode as runtime bytecode");
-        bytes
-    } else {
-        // This looks like runtime bytecode already
-        bytes
-    }
+    bytes
 }
 
 pub fn prepare_env(chain_id: u64, block_timestamp_secs: u64) -> Env {
@@ -214,7 +212,7 @@ pub fn genesis_generate(
     for (contract_name, contract_address) in CONTRACTS {
         let hex_path = format!("{}/{}.hex", byte_code_dir, contract_name);
         let bytecode_hex = read_hex_from_file(&hex_path);
-        let runtime_bytecode = extract_runtime_bytecode(&bytecode_hex);
+        let runtime_bytecode = decode_runtime_bytecode(&bytecode_hex);
 
         genesis_state.insert(
             contract_address,

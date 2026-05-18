@@ -108,6 +108,8 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
             .balance
             .as_ref()
             .map(|b| parse_u256_hex(b))
+            .transpose()
+            .with_context(|| format!("Failed to parse balance for account {}", addr_str))?
             .unwrap_or(U256::ZERO);
 
         let nonce = entry.nonce.unwrap_or(0);
@@ -141,8 +143,15 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
         // Insert storage
         if let Some(storage) = &entry.storage {
             for (key_str, value_str) in storage {
-                let key = parse_u256_hex(key_str);
-                let value = parse_u256_hex(value_str);
+                let key = parse_u256_hex(key_str).with_context(|| {
+                    format!("Failed to parse storage key for account {}", addr_str)
+                })?;
+                let value = parse_u256_hex(value_str).with_context(|| {
+                    format!(
+                        "Failed to parse storage value for account {} key {}",
+                        addr_str, key_str
+                    )
+                })?;
                 db.insert_account_storage(addr, key, value)
                     .expect("Failed to insert storage");
             }
@@ -347,12 +356,20 @@ fn process_execution_result(
     }
 }
 
-fn parse_u256_hex(s: &str) -> U256 {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    if s.is_empty() {
-        return U256::ZERO;
+/// Parse a 0x-prefixed (or bare) hex string into a U256.
+///
+/// Returns `Err` on malformed input rather than silently defaulting to zero.
+/// The `verify` subcommand is the independent release-gate check, so a
+/// trivially malformed balance/storage value (e.g. a decimal string) must
+/// surface as a verification failure — not a silent zero that lets a
+/// corrupted alloc pass review.
+fn parse_u256_hex(s: &str) -> Result<U256> {
+    let stripped = s.strip_prefix("0x").unwrap_or(s);
+    if stripped.is_empty() {
+        return Ok(U256::ZERO);
     }
-    U256::from_str_radix(s, 16).unwrap_or(U256::ZERO)
+    U256::from_str_radix(stripped, 16)
+        .map_err(|e| anyhow!("invalid hex U256 value {:?}: {}", s, e))
 }
 
 /// Print verification summary
