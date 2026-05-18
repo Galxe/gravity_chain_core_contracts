@@ -423,6 +423,92 @@ contract ValidatorManagementTest is Test {
         assertEq(stillActive, 1, "Without freeze, eviction must run and leave exactly 1 validator");
     }
 
+    /// @notice Audit #447: a join landed in the race window between
+    ///         setForNextEpoch(allowValidatorSetChange=false) and the epoch boundary must
+    ///         NOT be promoted to ACTIVE at the boundary on which the freeze takes effect.
+    ///         Before the fix, `_computeNextEpochValidatorSet` did not read the freeze flag,
+    ///         so any pool already in `_pendingActive` was promoted regardless — silently
+    ///         defeating governance's incident-response freeze.
+    function test_audit447_freezeBlocksPendingActiveActivation() public {
+        // Seed the active set so currentTotal > 0 (otherwise the increase-limit branch
+        // is a no-op and the test would still pass without the fix).
+        address seedPool = _createRegisterAndJoin(alice, MIN_BOND * 10, "alice");
+        _processEpoch(); // seed becomes ACTIVE
+        assertEq(
+            uint8(validatorManager.getValidator(seedPool).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "seed must be ACTIVE before the race"
+        );
+
+        // The attacker registers and joins while the flag is still TRUE (race window).
+        address attackerPool = _createRegisterAndJoin(bob, MIN_BOND, "bob");
+        assertEq(
+            uint8(validatorManager.getValidator(attackerPool).status),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "attacker landed in _pendingActive during the race window"
+        );
+
+        // Governance applies the freeze (mirrors the apply step that
+        // Reconfiguration._applyReconfiguration runs before onNewEpoch).
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND,
+            MAX_BOND,
+            UNBONDING_DELAY,
+            false, // allowValidatorSetChange = false  (FREEZE takes effect now)
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        // Process the boundary on which the freeze first applies. The attacker MUST stay
+        // in PENDING_ACTIVE — promotion would defeat the freeze.
+        _processEpoch();
+
+        assertEq(
+            uint8(validatorManager.getValidator(attackerPool).status),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "attacker must remain PENDING_ACTIVE under freeze"
+        );
+        assertEq(validatorManager.getActiveValidatorCount(), 1, "active set must not grow under freeze");
+
+        // The freeze must hold across subsequent boundaries too — the queue is not drained
+        // by repeated reconfiguration while the flag is false.
+        _processEpoch();
+        _processEpoch();
+        assertEq(
+            uint8(validatorManager.getValidator(attackerPool).status),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "attacker must still be PENDING_ACTIVE after additional frozen boundaries"
+        );
+
+        // Un-freeze and process one more boundary — now the queue drains.
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorConfig.setForNextEpoch(
+            MIN_BOND,
+            MAX_BOND,
+            UNBONDING_DELAY,
+            true, // un-freeze
+            VOTING_POWER_INCREASE_LIMIT,
+            MAX_VALIDATOR_SET_SIZE,
+            false,
+            0
+        );
+        vm.prank(SystemAddresses.RECONFIGURATION);
+        validatorConfig.applyPendingConfig();
+
+        _processEpoch();
+        assertEq(
+            uint8(validatorManager.getValidator(attackerPool).status),
+            uint8(ValidatorStatus.ACTIVE),
+            "attacker activates normally once freeze is lifted"
+        );
+        assertEq(validatorManager.getActiveValidatorCount(), 2, "active set grows after un-freeze");
+    }
+
     /// @notice Audit #187: registerValidator must be blocked during reconfiguration
     ///         to prevent consensus pubkey writes from interleaving with a live DKG session,
     ///         which would produce nondeterministic DKG reads across validators.
