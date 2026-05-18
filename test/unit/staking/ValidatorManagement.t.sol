@@ -935,6 +935,102 @@ contract ValidatorManagementTest is Test {
         assertEq(aliceRecord.pendingConsensusPop.length, 0, "pending pop cleared on alice");
     }
 
+    /// @notice Fast-path PENDING_ACTIVE → INACTIVE via leaveValidatorSet (immediate
+    /// transition, no epoch boundary). Pending consensus-key reservations queued
+    /// while PENDING_ACTIVE must be released here too — otherwise the reservation
+    /// in _pubkeyToValidator binds that pubkey to a now-INACTIVE pool forever.
+    function test_immediateLeaveFromPendingActive_releasesPendingConsensusKey() public {
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory aliceOldPubkey =
+            hex"a1cecafe0000000200000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(alicePool)),
+            uint8(ValidatorStatus.PENDING_ACTIVE),
+            "alice should be PENDING_ACTIVE before leaving"
+        );
+
+        // While PENDING_ACTIVE, Alice queues a key rotation.
+        bytes memory alicePendingPubkey =
+            hex"deadbeef0000000800000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(alicePool, alicePendingPubkey, hex"abcd1234");
+
+        // Sanity: pending reservation blocks Bob.
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Errors.DuplicateConsensusPubkey.selector, alicePendingPubkey));
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePendingPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        // Alice leaves while still PENDING_ACTIVE — fast-path branch flips status
+        // to INACTIVE immediately, no _processEpoch needed.
+        vm.prank(alice);
+        validatorManager.leaveValidatorSet(alicePool);
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(alicePool)),
+            uint8(ValidatorStatus.INACTIVE),
+            "alice should be immediately INACTIVE"
+        );
+
+        // Pending pubkey reservation must be released — Bob can now register.
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePendingPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        ValidatorRecord memory bobRecord = validatorManager.getValidator(bobPool);
+        assertEq(bobRecord.consensusPubkey, alicePendingPubkey, "bob now owns the freed pubkey");
+
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
+        assertEq(aliceRecord.pendingConsensusPubkey.length, 0, "pending pubkey cleared on alice");
+        assertEq(aliceRecord.pendingConsensusPop.length, 0, "pending pop cleared on alice");
+    }
+
+    /// @notice Same as the leaveValidatorSet fast-path test, but via the
+    /// GOVERNANCE-only forceLeaveValidatorSet PENDING_ACTIVE branch.
+    function test_immediateForceLeaveFromPendingActive_releasesPendingConsensusKey() public {
+        address alicePool = _createStakePool(alice, MIN_BOND);
+        bytes memory aliceOldPubkey =
+            hex"a1cecafe0000000300000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.registerValidator(
+            alicePool, "alice", aliceOldPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+        vm.prank(alice);
+        validatorManager.joinValidatorSet(alicePool);
+
+        bytes memory alicePendingPubkey =
+            hex"deadbeef0000000900000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        vm.prank(alice);
+        validatorManager.rotateConsensusKey(alicePool, alicePendingPubkey, hex"abcd1234");
+
+        // Governance force-leaves Alice while still PENDING_ACTIVE.
+        vm.prank(SystemAddresses.GOVERNANCE);
+        validatorManager.forceLeaveValidatorSet(alicePool);
+        assertEq(
+            uint8(validatorManager.getValidatorStatus(alicePool)),
+            uint8(ValidatorStatus.INACTIVE),
+            "alice should be immediately INACTIVE after force-leave"
+        );
+
+        // Bob can now register with the freed pubkey.
+        address bobPool = _createStakePool(bob, MIN_BOND);
+        vm.prank(bob);
+        validatorManager.registerValidator(
+            bobPool, "bob", alicePendingPubkey, CONSENSUS_POP, NETWORK_ADDRESSES, FULLNODE_ADDRESSES
+        );
+
+        ValidatorRecord memory aliceRecord = validatorManager.getValidator(alicePool);
+        assertEq(aliceRecord.pendingConsensusPubkey.length, 0, "pending pubkey cleared on alice");
+        assertEq(aliceRecord.pendingConsensusPop.length, 0, "pending pop cleared on alice");
+    }
+
     /// @notice Test that a validator can rotate to a new key while other validators have different keys
     function test_rotateConsensusKey_uniqueKeySuccess() public {
         // Alice and Bob both register with different pubkeys

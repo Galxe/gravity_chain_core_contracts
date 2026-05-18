@@ -423,10 +423,17 @@ contract ValidatorManagement is IValidatorManagement {
             revert Errors.ValidatorSetChangesDisabled();
         }
 
-        // Handle leaving from PENDING_ACTIVE state (Aptos-style: remove from queue, revert to INACTIVE)
+        // Handle leaving from PENDING_ACTIVE state (Aptos-style: remove from queue, revert to INACTIVE).
+        // This is an immediate transition (no epoch boundary), so it must perform the same
+        // pending-slot cleanup that _applyDeactivations / _applyRevertInactive do at the boundary:
+        // any queued consensus-key rotation or fee-recipient change must be released here, or
+        // the reservation in _pubkeyToValidator (and the stale pendingFeeRecipient) would leak
+        // and pollute the keyspace / silently re-apply on a future re-join.
         if (validator.status == ValidatorStatus.PENDING_ACTIVE) {
             _removeFromPendingActive(stakePool);
             validator.status = ValidatorStatus.INACTIVE;
+            validator.pendingFeeRecipient = address(0);
+            _clearPendingConsensusKey(validator);
             emit ValidatorLeaveRequested(stakePool);
             return;
         }
@@ -458,10 +465,15 @@ contract ValidatorManagement is IValidatorManagement {
 
         ValidatorRecord storage validator = _validators[stakePool];
 
-        // Handle from PENDING_ACTIVE: remove from queue, revert to INACTIVE
+        // Handle from PENDING_ACTIVE: remove from queue, revert to INACTIVE.
+        // Same immediate-transition cleanup as leaveValidatorSet — release any queued
+        // consensus-key reservation and pendingFeeRecipient so they don't leak past
+        // the INACTIVE transition.
         if (validator.status == ValidatorStatus.PENDING_ACTIVE) {
             _removeFromPendingActive(stakePool);
             validator.status = ValidatorStatus.INACTIVE;
+            validator.pendingFeeRecipient = address(0);
+            _clearPendingConsensusKey(validator);
             emit ValidatorForceLeaveRequested(stakePool);
             return;
         }
