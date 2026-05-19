@@ -72,6 +72,13 @@ enum Commands {
         /// Path to the genesis.json file to verify
         #[arg(short, long)]
         genesis_file: String,
+
+        /// Optional path to the genesis config used to produce the artifact.
+        /// When provided, `Governance.owner()` must equal the config's
+        /// `governanceOwner`. Without it we only check the on-chain owner is
+        /// non-zero and `isInitialized()` is true.
+        #[arg(short, long)]
+        config_file: Option<String>,
     },
 }
 
@@ -132,8 +139,8 @@ async fn main() -> Result<()> {
         Commands::Generate { byte_code_dir, config_file, output } => {
             run_generate(byte_code_dir, config_file, output).await
         }
-        Commands::Verify { genesis_file } => {
-            run_verify(genesis_file)
+        Commands::Verify { genesis_file, config_file } => {
+            run_verify(genesis_file, config_file.as_deref())
         }
     };
 
@@ -184,10 +191,10 @@ async fn run_generate(byte_code_dir: &str, config_file: &str, output: &str) -> R
     Ok(())
 }
 
-fn run_verify(genesis_file: &str) -> Result<()> {
+fn run_verify(genesis_file: &str, config_file: Option<&str>) -> Result<()> {
     info!("Starting Gravity Genesis Verify");
-    
-    let result = verify::verify_genesis_file(genesis_file)?;
+
+    let result = verify::verify_genesis_file(genesis_file, config_file)?;
     verify::print_verify_summary(&result);
     
     if result.success {

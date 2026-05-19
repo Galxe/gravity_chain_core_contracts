@@ -16,8 +16,8 @@ use tracing::{error, info, warn};
 
 use crate::execute::prepare_env;
 use crate::utils::{
-    execute_revm_sequential, new_system_call_txn, EPOCH_CONFIG_ADDR, SYSTEM_CALLER,
-    VALIDATOR_MANAGER_ADDR,
+    execute_revm_sequential, new_system_call_txn, EPOCH_CONFIG_ADDR, GOVERNANCE_ADDR,
+    SYSTEM_CALLER, VALIDATOR_MANAGER_ADDR,
 };
 
 // ============================================================================
@@ -58,6 +58,11 @@ sol! {
 
     // EpochConfig.epochIntervalMicros()
     function epochIntervalMicros() external view returns (uint64);
+
+    interface IGovernance {
+        function owner() external view returns (address);
+        function isInitialized() external view returns (bool);
+    }
 }
 
 /// Result of genesis verification
@@ -79,10 +84,42 @@ pub struct ValidatorInfo {
     pub has_fullnode_addresses: bool,
 }
 
-/// Verify an existing genesis.json file
-pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
+/// Verify an existing genesis.json file. If `config_path` is provided, also
+/// asserts that `Governance.owner()` equals the config's `governanceOwner`
+/// — without that field we can only check the on-chain owner is non-zero and
+/// `isInitialized()` is true.
+pub fn verify_genesis_file(
+    genesis_path: &str,
+    config_path: Option<&str>,
+) -> Result<VerifyResult> {
     info!("=== Genesis Verification ===");
     info!("Loading genesis file: {}", genesis_path);
+
+    // Load expected governance owner from config if a config path was given.
+    // Parse loosely (as serde_json::Value) so this code stays decoupled from
+    // GenesisConfig's full schema — verify must keep working even if config
+    // adds new required fields.
+    let expected_governance_owner: Option<Address> = match config_path {
+        Some(path) => {
+            let content = fs::read_to_string(path)
+                .context(format!("Failed to read config file: {}", path))?;
+            let v: serde_json::Value = serde_json::from_str(&content)
+                .context("Failed to parse config JSON")?;
+            let owner_str = v
+                .get("governanceOwner")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Config missing 'governanceOwner' field"))?;
+            let parsed: Address = owner_str
+                .parse()
+                .map_err(|e| anyhow!("Invalid governanceOwner in config {:?}: {}", owner_str, e))?;
+            info!("Loaded expected Governance owner from config: {:?}", parsed);
+            Some(parsed)
+        }
+        None => {
+            info!("No --config-file provided; will only check non-zero owner + isInitialized");
+            None
+        }
+    };
 
     // 1. Load genesis.json
     let genesis_content = fs::read_to_string(genesis_path)
@@ -181,6 +218,13 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
 
     info!("ValidatorManagement contract found at {:?}", vm_addr);
 
+    // 3a. Verify Governance state. Collected separately and merged into the
+    // final result so a governance failure doesn't short-circuit the
+    // validator/epoch checks — we want a single comprehensive failure report
+    // out of one verify run, not the first-failure-wins.
+    info!("Verifying Governance state...");
+    let governance_errors = verify_governance(&db, expected_governance_owner);
+
     // 3. First verify epoch interval from EpochConfig
     info!("Verifying epoch interval from EpochConfig...");
     let epoch_interval = verify_epoch_interval(&db);
@@ -214,12 +258,142 @@ pub fn verify_genesis_file(genesis_path: &str) -> Result<VerifyResult> {
     match result {
         Ok((results, _)) => {
             if let Some(exec_result) = results.first() {
-                return process_execution_result(exec_result, epoch_interval);
+                let mut result = process_execution_result(exec_result, epoch_interval)?;
+                if !governance_errors.is_empty() {
+                    result.success = false;
+                    result.errors.extend(governance_errors);
+                }
+                return Ok(result);
             }
             Err(anyhow!("No execution result returned"))
         }
         Err(e) => Err(anyhow!("EVM execution failed: {:?}", e)),
     }
+}
+
+/// Inspect the planted Governance contract. Always asserts the contract is
+/// initialized and its `owner()` is non-zero; if `expected_owner` is provided
+/// (because the caller passed `--config-file`), also asserts strict equality.
+///
+/// Returns a list of human-readable error strings — empty if all checks pass.
+/// This shape mirrors the way other accumulating checks in this module work:
+/// one verify invocation should surface every problem, not just the first.
+fn verify_governance(
+    db: &revm::InMemoryDB,
+    expected_owner: Option<Address>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+
+    // --- isInitialized() ---
+    let init_call = IGovernance::isInitializedCall {};
+    let init_input: Bytes = init_call.abi_encode().into();
+    let init_tx = new_system_call_txn(GOVERNANCE_ADDR, init_input);
+    // See note above on the getActiveValidators call site: block.timestamp = 0
+    // is safe for these view-call ABI probes.
+    let env = prepare_env(1337, 0);
+    match execute_revm_sequential(db.clone(), SpecId::LATEST, env, &[init_tx], None) {
+        Ok((results, _)) => match results.first() {
+            Some(ExecutionResult::Success { output, .. }) => {
+                let bytes = match output {
+                    revm_primitives::Output::Call(b) => b,
+                    revm_primitives::Output::Create(b, _) => b,
+                };
+                match IGovernance::isInitializedCall::abi_decode_returns(bytes, false) {
+                    Ok(d) if d._0 => info!("✅ Governance.isInitialized() = true"),
+                    Ok(_) => {
+                        let msg = "Governance.isInitialized() returned false — Genesis.initialize did not run".to_string();
+                        error!("❌ {}", msg);
+                        errors.push(msg);
+                    }
+                    Err(e) => {
+                        let msg = format!("Failed to decode Governance.isInitialized(): {:?}", e);
+                        error!("❌ {}", msg);
+                        errors.push(msg);
+                    }
+                }
+            }
+            Some(other) => {
+                let msg = format!("Governance.isInitialized() did not succeed: {:?}", other);
+                error!("❌ {}", msg);
+                errors.push(msg);
+            }
+            None => {
+                let msg = "Governance.isInitialized() returned no execution result".to_string();
+                error!("❌ {}", msg);
+                errors.push(msg);
+            }
+        },
+        Err(e) => {
+            let msg = format!("Governance.isInitialized() EVM error: {:?}", e);
+            error!("❌ {}", msg);
+            errors.push(msg);
+        }
+    }
+
+    // --- owner() ---
+    let owner_call = IGovernance::ownerCall {};
+    let owner_input: Bytes = owner_call.abi_encode().into();
+    let owner_tx = new_system_call_txn(GOVERNANCE_ADDR, owner_input);
+    let env = prepare_env(1337, 0);
+    match execute_revm_sequential(db.clone(), SpecId::LATEST, env, &[owner_tx], None) {
+        Ok((results, _)) => match results.first() {
+            Some(ExecutionResult::Success { output, .. }) => {
+                let bytes = match output {
+                    revm_primitives::Output::Call(b) => b,
+                    revm_primitives::Output::Create(b, _) => b,
+                };
+                match IGovernance::ownerCall::abi_decode_returns(bytes, false) {
+                    Ok(decoded) => {
+                        let actual = decoded._0;
+                        if actual == Address::ZERO {
+                            // owner = 0 is structurally invalid: Governance.initialize
+                            // rejects address(0), and renounceOwnership reverts. If we
+                            // see it here, the artifact is broken regardless of config.
+                            let msg = "Governance.owner() = address(0) — Governance is unmanageable".to_string();
+                            error!("❌ {}", msg);
+                            errors.push(msg);
+                        } else {
+                            info!("Governance.owner() = {:?}", actual);
+                        }
+                        if let Some(expected) = expected_owner {
+                            if actual != expected {
+                                let msg = format!(
+                                    "Governance owner mismatch: config governanceOwner={:?}, on-chain owner()={:?}",
+                                    expected, actual
+                                );
+                                error!("❌ {}", msg);
+                                errors.push(msg);
+                            } else {
+                                info!("✅ Governance.owner() matches config");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("Failed to decode Governance.owner(): {:?}", e);
+                        error!("❌ {}", msg);
+                        errors.push(msg);
+                    }
+                }
+            }
+            Some(other) => {
+                let msg = format!("Governance.owner() did not succeed: {:?}", other);
+                error!("❌ {}", msg);
+                errors.push(msg);
+            }
+            None => {
+                let msg = "Governance.owner() returned no execution result".to_string();
+                error!("❌ {}", msg);
+                errors.push(msg);
+            }
+        },
+        Err(e) => {
+            let msg = format!("Governance.owner() EVM error: {:?}", e);
+            error!("❌ {}", msg);
+            errors.push(msg);
+        }
+    }
+
+    errors
 }
 
 /// Verify epoch interval by calling EpochConfig.epochIntervalMicros()
