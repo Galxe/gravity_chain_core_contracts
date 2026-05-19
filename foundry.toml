@@ -6,6 +6,11 @@ out = "out"
 test = "test"
 libs = ["lib"]
 solc = "0.8.30"
+# Strip the CBOR metadata footer (IPFS source hash + solc version marker) from
+# emitted bytecode so genesis-baked contracts are byte-identical across clones,
+# dependency layouts, and machines. Compiler pin above is what's load-bearing;
+# the in-bytecode version marker is just an artifact.
+bytecode_hash = "none"
 cache = true
 cache_path = 'cache'
 optimizer = true
