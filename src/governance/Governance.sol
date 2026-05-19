@@ -203,10 +203,10 @@ contract Governance is IGovernance, Ownable2Step {
 
     /// @notice Compute Aptos-style default early resolution threshold.
     /// @dev Uses current active validator total voting power as the voting-power supply.
-    ///      The threshold is 50% + 1, matching Aptos Governance.
+    ///      The threshold is 2/3 + 1.
     function _defaultEarlyResolutionVoteThreshold() internal view returns (uint128) {
         uint256 totalVotingPower = _validatorManager().getTotalVotingPower();
-        uint256 threshold = totalVotingPower / 2 + 1;
+        uint256 threshold = (totalVotingPower / 3) * 2 + ((totalVotingPower % 3) * 2) / 3 + 1;
         if (threshold > type(uint128).max) {
             threshold = type(uint128).max;
         }

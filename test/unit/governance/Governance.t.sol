@@ -232,8 +232,8 @@ contract GovernanceTest is Test {
         assertEq(proposal.id, proposalId);
         assertEq(proposal.proposer, alice);
         assertEq(proposal.executionHash, executionHash);
-        assertEq(proposal.earlyResolutionVoteThreshold, 150 ether + 1);
-        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 150 ether + 1);
+        assertEq(proposal.earlyResolutionVoteThreshold, 200 ether + 1);
+        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 200 ether + 1);
         assertEq(proposal.yesVotes, 0);
         assertEq(proposal.noVotes, 0);
         assertEq(proposal.isResolved, false);
@@ -254,7 +254,7 @@ contract GovernanceTest is Test {
         MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setTotalVotingPower(100 ether);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
-        uint128 earlyResolutionVoteThreshold = 50 ether + 1;
+        uint128 earlyResolutionVoteThreshold = 66 ether + 666666666666666667;
 
         vm.prank(alice);
         vm.expectRevert(
@@ -570,15 +570,15 @@ contract GovernanceTest is Test {
         governance.resolve(proposalId);
     }
 
-    function test_EarlyResolveRequiresValidatorMajorityThreshold() public {
-        address pool = _createStakePool(alice, 200 ether);
+    function test_EarlyResolveRequiresValidatorTwoThirdsThreshold() public {
+        address pool = _createStakePool(alice, 250 ether);
 
         (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
 
         vm.prank(alice);
         uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
 
-        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 150 ether + 1);
+        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 200 ether + 1);
 
         vm.prank(alice);
         governance.vote(pool, proposalId, MIN_VOTING_THRESHOLD, true);
@@ -587,7 +587,7 @@ contract GovernanceTest is Test {
         assertFalse(governance.canResolve(proposalId));
 
         vm.prank(alice);
-        governance.vote(pool, proposalId, 50 ether + 1, true);
+        governance.vote(pool, proposalId, 100 ether + 1, true);
 
         assertEq(uint8(governance.getProposalState(proposalId)), uint8(ProposalState.SUCCEEDED));
 
