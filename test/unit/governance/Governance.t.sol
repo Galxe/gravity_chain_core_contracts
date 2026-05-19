@@ -17,6 +17,8 @@ import { Ownable } from "@openzeppelin/access/Ownable.sol";
 
 /// @notice Mock ValidatorManagement for testing - all pools are non-validators
 contract MockValidatorManagement {
+    uint256 public totalVotingPower = 300 ether;
+
     function isValidator(
         address
     ) external pure returns (bool) {
@@ -27,6 +29,16 @@ contract MockValidatorManagement {
         address
     ) external pure returns (ValidatorStatus) {
         return ValidatorStatus.INACTIVE;
+    }
+
+    function getTotalVotingPower() external view returns (uint256) {
+        return totalVotingPower;
+    }
+
+    function setTotalVotingPower(
+        uint256 newTotalVotingPower
+    ) external {
+        totalVotingPower = newTotalVotingPower;
     }
 }
 
@@ -93,6 +105,7 @@ contract GovernanceTest is Test {
 
         // Deploy mock ValidatorManagement - returns false for isValidator()
         vm.etch(SystemAddresses.VALIDATOR_MANAGER, address(new MockValidatorManagement()).code);
+        MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setTotalVotingPower(300 ether);
 
         // Deploy mock Reconfiguration - returns false for isTransitionInProgress()
         // Staking.createPool now checks reconfiguration status
@@ -219,6 +232,8 @@ contract GovernanceTest is Test {
         assertEq(proposal.id, proposalId);
         assertEq(proposal.proposer, alice);
         assertEq(proposal.executionHash, executionHash);
+        assertEq(proposal.earlyResolutionVoteThreshold, 150 ether + 1);
+        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 150 ether + 1);
         assertEq(proposal.yesVotes, 0);
         assertEq(proposal.noVotes, 0);
         assertEq(proposal.isResolved, false);
@@ -232,6 +247,22 @@ contract GovernanceTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPool.selector, invalidPool));
         governance.createProposal(invalidPool, targets, datas, "ipfs://test");
+    }
+
+    function test_RevertWhen_CreateProposalEarlyResolutionThresholdBelowMinThreshold() public {
+        address pool = _createStakePool(alice, 100 ether);
+        MockValidatorManagement(SystemAddresses.VALIDATOR_MANAGER).setTotalVotingPower(100 ether);
+
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+        uint128 earlyResolutionVoteThreshold = 50 ether + 1;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.InvalidEarlyResolutionVoteThreshold.selector, MIN_VOTING_THRESHOLD, earlyResolutionVoteThreshold
+            )
+        );
+        governance.createProposal(pool, targets, datas, "ipfs://test");
     }
 
     function test_RevertWhen_CreateProposalNotVoter() public {
@@ -537,6 +568,36 @@ contract GovernanceTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Errors.VotingPeriodNotEnded.selector, proposal.expirationTime));
         governance.resolve(proposalId);
+    }
+
+    function test_EarlyResolveRequiresValidatorMajorityThreshold() public {
+        address pool = _createStakePool(alice, 200 ether);
+
+        (address[] memory targets, bytes[] memory datas) = _toArrays(address(mockTarget), "");
+
+        vm.prank(alice);
+        uint64 proposalId = governance.createProposal(pool, targets, datas, "ipfs://test");
+
+        assertEq(governance.getEarlyResolutionVoteThreshold(proposalId), 150 ether + 1);
+
+        vm.prank(alice);
+        governance.vote(pool, proposalId, MIN_VOTING_THRESHOLD, true);
+
+        assertEq(uint8(governance.getProposalState(proposalId)), uint8(ProposalState.PENDING));
+        assertFalse(governance.canResolve(proposalId));
+
+        vm.prank(alice);
+        governance.vote(pool, proposalId, 50 ether + 1, true);
+
+        assertEq(uint8(governance.getProposalState(proposalId)), uint8(ProposalState.SUCCEEDED));
+
+        _advanceTime(1);
+        assertTrue(governance.canResolve(proposalId));
+
+        governance.resolve(proposalId);
+        Proposal memory proposal = governance.getProposal(proposalId);
+        assertTrue(proposal.isResolved);
+        assertEq(uint8(governance.getProposalState(proposalId)), uint8(ProposalState.SUCCEEDED));
     }
 
     // ========================================================================
@@ -1689,4 +1750,3 @@ contract MockTarget {
         revert("MockTarget: always reverts");
     }
 }
-

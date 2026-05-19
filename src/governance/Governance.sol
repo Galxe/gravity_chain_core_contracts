@@ -7,6 +7,7 @@ import { Proposal, ProposalState } from "../foundation/Types.sol";
 import { SystemAddresses } from "../foundation/SystemAddresses.sol";
 import { Errors } from "../foundation/Errors.sol";
 import { IStaking } from "../staking/IStaking.sol";
+import { IValidatorManagement } from "../staking/IValidatorManagement.sol";
 import { ITimestamp } from "../runtime/ITimestamp.sol";
 import { requireAllowed } from "../foundation/SystemAccessControl.sol";
 import { Ownable2Step, Ownable } from "@openzeppelin/access/Ownable2Step.sol";
@@ -154,6 +155,11 @@ contract Governance is IGovernance, Ownable2Step {
         return IStaking(SystemAddresses.STAKING);
     }
 
+    /// @notice Get validator manager contract
+    function _validatorManager() internal pure returns (IValidatorManagement) {
+        return IValidatorManagement(SystemAddresses.VALIDATOR_MANAGER);
+    }
+
     /// @notice Verify caller is the pool's voter
     function _requireVoter(
         address stakePool
@@ -171,6 +177,40 @@ contract Governance is IGovernance, Ownable2Step {
         if (!_staking().isPool(stakePool)) {
             revert Errors.InvalidPool(stakePool);
         }
+    }
+
+    /// @notice Return true if either side has reached the proposal's early resolution threshold.
+    function _canBeResolvedEarly(
+        Proposal storage p
+    ) internal view returns (bool) {
+        uint128 threshold = p.earlyResolutionVoteThreshold;
+        return threshold > 0 && (p.yesVotes >= threshold || p.noVotes >= threshold);
+    }
+
+    /// @notice Return true when no more votes are needed for state evaluation.
+    function _isVotingClosed(
+        Proposal storage p
+    ) internal view returns (bool) {
+        return _now() >= p.expirationTime || _canBeResolvedEarly(p);
+    }
+
+    /// @notice Return true if the current vote totals satisfy the passing condition.
+    function _hasSucceeded(
+        Proposal storage p
+    ) internal view returns (bool) {
+        return p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold;
+    }
+
+    /// @notice Compute Aptos-style default early resolution threshold.
+    /// @dev Uses current active validator total voting power as the voting-power supply.
+    ///      The threshold is 50% + 1, matching Aptos Governance.
+    function _defaultEarlyResolutionVoteThreshold() internal view returns (uint128) {
+        uint256 totalVotingPower = _validatorManager().getTotalVotingPower();
+        uint256 threshold = totalVotingPower / 2 + 1;
+        if (threshold > type(uint128).max) {
+            threshold = type(uint128).max;
+        }
+        return uint128(threshold);
     }
 
     // ========================================================================
@@ -203,21 +243,17 @@ contract Governance is IGovernance, Ownable2Step {
 
         // Check if resolved
         if (p.isResolved) {
-            // Determine if it passed
-            if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) {
+            if (_hasSucceeded(p)) {
                 return ProposalState.SUCCEEDED;
             }
             return ProposalState.FAILED;
         }
 
-        // Not resolved yet
-        uint64 now_ = _now();
-        if (now_ < p.expirationTime) {
+        if (!_isVotingClosed(p)) {
             return ProposalState.PENDING;
         }
 
-        // Voting ended but not resolved - determine outcome
-        if (p.yesVotes > p.noVotes && p.yesVotes + p.noVotes >= p.minVoteThreshold) {
+        if (_hasSucceeded(p)) {
             return ProposalState.SUCCEEDED;
         }
         return ProposalState.FAILED;
@@ -254,16 +290,14 @@ contract Governance is IGovernance, Ownable2Step {
             return false;
         }
 
-        uint64 now_ = _now();
-
-        // Can resolve if voting period ended
-        if (now_ < p.expirationTime) {
+        if (!_isVotingClosed(p)) {
             return false;
         }
 
         // Atomicity guard: resolution must happen strictly after the last vote
         // This prevents flash loan attacks where someone borrows tokens, votes, and resolves in the same tx
         uint64 lastVote = lastVoteTime[proposalId];
+        uint64 now_ = _now();
         if (lastVote > 0 && now_ <= lastVote) {
             return false;
         }
@@ -317,6 +351,17 @@ contract Governance is IGovernance, Ownable2Step {
         return lastVoteTime[proposalId];
     }
 
+    /// @inheritdoc IGovernance
+    function getEarlyResolutionVoteThreshold(
+        uint64 proposalId
+    ) external view returns (uint128) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) {
+            revert Errors.ProposalNotFound(proposalId);
+        }
+        return p.earlyResolutionVoteThreshold;
+    }
+
     // ========================================================================
     // PROPOSAL MANAGEMENT
     // ========================================================================
@@ -368,6 +413,12 @@ contract Governance is IGovernance, Ownable2Step {
         // Create proposal
         proposalId = nextProposalId++;
 
+        uint128 minVoteThreshold = _config().minVotingThreshold();
+        uint128 earlyResolutionVoteThreshold = _defaultEarlyResolutionVoteThreshold();
+        if (earlyResolutionVoteThreshold < minVoteThreshold) {
+            revert Errors.InvalidEarlyResolutionVoteThreshold(minVoteThreshold, earlyResolutionVoteThreshold);
+        }
+
         _proposals[proposalId] = Proposal({
             id: proposalId,
             proposer: msg.sender,
@@ -375,11 +426,12 @@ contract Governance is IGovernance, Ownable2Step {
             metadataUri: metadataUri,
             creationTime: now_,
             expirationTime: expirationTime,
-            minVoteThreshold: _config().minVotingThreshold(),
+            minVoteThreshold: minVoteThreshold,
             yesVotes: 0,
             noVotes: 0,
             isResolved: false,
-            resolutionTime: 0
+            resolutionTime: 0,
+            earlyResolutionVoteThreshold: earlyResolutionVoteThreshold
         });
 
         emit ProposalCreated(proposalId, msg.sender, stakePool, executionHash, metadataUri);
@@ -506,8 +558,7 @@ contract Governance is IGovernance, Ownable2Step {
 
         uint64 now_ = _now();
 
-        // Check voting period has ended
-        if (now_ < p.expirationTime) {
+        if (!_isVotingClosed(p)) {
             revert Errors.VotingPeriodNotEnded(p.expirationTime);
         }
 
@@ -625,4 +676,3 @@ contract Governance is IGovernance, Ownable2Step {
         }
     }
 }
-

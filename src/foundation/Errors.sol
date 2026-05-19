@@ -279,6 +279,11 @@ library Errors {
     /// @notice Minimum voting threshold must be greater than zero
     error InvalidVotingThreshold();
 
+    /// @notice Early resolution threshold must be greater than or equal to the minimum voting threshold
+    /// @param minVotingThreshold Minimum votes required for quorum
+    /// @param earlyResolutionVoteThreshold Votes required to close voting early
+    error InvalidEarlyResolutionVoteThreshold(uint128 minVotingThreshold, uint128 earlyResolutionVoteThreshold);
+
     /// @notice Required proposer stake must be greater than zero
     error InvalidProposerStake();
 
@@ -584,4 +589,3 @@ library Errors {
     /// @notice Operation is not supported
     error OperationNotSupported();
 }
-

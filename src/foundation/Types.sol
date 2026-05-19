@@ -132,4 +132,7 @@ struct Proposal {
     bool isResolved;
     /// @notice When proposal was resolved (microseconds)
     uint64 resolutionTime;
+    /// @notice Optional early resolution vote threshold. Zero disables early resolution.
+    /// @dev If yesVotes or noVotes reaches this threshold, voting closes before expiration.
+    uint128 earlyResolutionVoteThreshold;
 }

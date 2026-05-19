@@ -171,6 +171,7 @@ contract TypesTest is Test {
             creationTime: creationTime,
             expirationTime: expirationTime,
             minVoteThreshold: 1000 ether,
+            earlyResolutionVoteThreshold: 1000 ether,
             yesVotes: 0,
             noVotes: 0,
             isResolved: false,
@@ -184,6 +185,7 @@ contract TypesTest is Test {
         assertEq(prop.creationTime, creationTime);
         assertEq(prop.expirationTime, expirationTime);
         assertEq(prop.minVoteThreshold, 1000 ether);
+        assertEq(prop.earlyResolutionVoteThreshold, 1000 ether);
         assertEq(prop.yesVotes, 0);
         assertEq(prop.noVotes, 0);
         assertEq(prop.isResolved, false);
@@ -264,6 +266,7 @@ contract TypesTest is Test {
             creationTime: TIMESTAMP_NOV_2023,
             expirationTime: TIMESTAMP_NOV_2023 + ONE_DAY_MICROS,
             minVoteThreshold: 1000 ether,
+            earlyResolutionVoteThreshold: 1000 ether,
             yesVotes: 0,
             noVotes: 0,
             isResolved: false,
@@ -271,4 +274,3 @@ contract TypesTest is Test {
         });
     }
 }
-

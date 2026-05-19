@@ -124,6 +124,14 @@ interface IGovernance {
         uint64 proposalId
     ) external view returns (uint64);
 
+    /// @notice Get the early resolution vote threshold for a proposal
+    /// @dev Returns 0 if early resolution is disabled for the proposal
+    /// @param proposalId ID of the proposal
+    /// @return Early resolution vote threshold
+    function getEarlyResolutionVoteThreshold(
+        uint64 proposalId
+    ) external view returns (uint128);
+
     /// @notice Get all authorized executors
     /// @return Array of executor addresses
     function getExecutors() external view returns (address[] memory);
@@ -241,4 +249,3 @@ interface IGovernance {
         address executor
     ) external;
 }
-
