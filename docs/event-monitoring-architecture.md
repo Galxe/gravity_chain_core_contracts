@@ -20,15 +20,15 @@ Use two complementary systems:
 1. `P0 Watchtower`: a small, independent, reorg-aware monitoring service that reads chain data directly and emits alerts quickly.
 2. `Analytics Indexer`: a richer event indexer for historical queries, dashboards, investigations, and product-facing observability.
 
-The Watchtower should be boring, deterministic, and easy to replay. The analytics indexer can be more flexible and query-oriented.
+For the first production version, prioritize the `P0 Watchtower` and run it inside the operator network, close to the Gravity RPC endpoint. The Watchtower should be boring, deterministic, and easy to replay. The analytics indexer can be added later for richer historical queries.
 
 ```
-Gravity RPC / Archive RPC / External Chain RPC
+Internal Gravity RPC / Archive RPC / External Chain RPC
         |
         v
   P0 Watchtower  -----> Prometheus metrics -----> Alertmanager -----> Pager / Slack
         |
-        +-----------> PostgreSQL or ClickHouse raw event store
+        +-----------> PostgreSQL state and event store
         |
         +-----------> Rule engine and cross-chain correlator
 
@@ -39,11 +39,72 @@ Analytics Indexer
         +-----------> ad hoc investigations and reporting
 ```
 
+## Recommended Internal MVP Deployment
+
+Assume the monitoring host is deployed inside the internal network and can directly access the Gravity RPC endpoint, for example `https://mainnet-rpc.gravity.xyz`. In that setup, the recommended first version is:
+
+```
+Internal RPC endpoint
+        |
+        v
+gravity-watchtower
+        |
+        +--> PostgreSQL
+        |       - checkpoints
+        |       - raw logs
+        |       - decoded events
+        |       - alert state
+        |       - governance and bridge correlation state
+        |
+        +--> Prometheus metrics endpoint
+                |
+                v
+          Prometheus
+                |
+                v
+          Alertmanager -----> Slack / PagerDuty / internal webhook
+                |
+                v
+             Grafana
+```
+
+This should run well as a single-host deployment for the initial system:
+
+- `gravity-watchtower`: custom scanner, decoder, rule engine, and metrics exporter.
+- `postgres`: primary state database.
+- `prometheus`: metrics collection.
+- `alertmanager`: alert grouping, dedupe, silencing, and notification routing.
+- `grafana`: dashboards for operators.
+
+Use Docker Compose for the first deployment unless there is already an internal Kubernetes or Nomad standard. A simple layout is enough:
+
+```
+/opt/gravity-watchtower/
+  docker-compose.yml
+  config/
+    mainnet.yaml
+    alert-rules.yaml
+    addresses.yaml
+  abis/
+    Reconfiguration.json
+    DKG.json
+    Governance.json
+    ValidatorManagement.json
+    NativeOracle.json
+    ...
+  data/
+    postgres/
+    prometheus/
+    grafana/
+```
+
+The first version should not require ClickHouse, Kafka, or a general-purpose indexer. Those can be added when the operator team needs long-term analytics, full transfer indexing, or many downstream consumers.
+
 ## P0 Watchtower
 
 ### Responsibilities
 
-- Subscribe to or poll new blocks.
+- Poll new blocks from the internal RPC endpoint. WebSocket subscriptions can be used as an optimization, but checkpointed polling should remain the recovery path.
 - Pull logs for selected contract addresses and event topics.
 - Pull transactions, receipts, and traces when needed for native value transfers.
 - Decode governance calldata and bridge payloads.
@@ -74,6 +135,106 @@ The P0 Watchtower should not depend on a complex GraphQL layer, hosted indexing 
 - Did bridge minting fail or mismatch?
 - Did a large transfer happen?
 
+### Recommended Implementation Language
+
+Go or Rust are the best default choices for the Watchtower. Go is likely the fastest path for an internal service because the ecosystem for JSON-RPC, PostgreSQL, Prometheus metrics, YAML config, and operational tooling is mature. Rust is also a good fit if the team wants stronger type safety or expects deeper integration with node/client code.
+
+TypeScript is acceptable for an analytics indexer, especially if using Ponder or Envio. For P0 alerting, prefer Go or Rust unless the team already operates TypeScript services with strong production discipline.
+
+### Scanning Strategy
+
+The scanner should be deterministic and replayable:
+
+- Poll the latest head every 2 to 5 seconds.
+- For normal event processing, scan from `last_scanned_block + 1` to `head - confirmations`.
+- Start with `confirmations = 6` or `12` for finalized event processing, depending on chain finality behavior.
+- For liveness checks such as block production stall, use the hot head directly and do not wait for confirmations.
+- Store `block_number`, `block_hash`, and `parent_hash` for every scanned block.
+- If the stored parent hash does not match the canonical chain, mark affected blocks as removed or roll back derived state, then rescan.
+- Use bounded block ranges for `eth_getLogs` so RPC failures are retryable.
+- Store raw logs before decoding so bugs in decoders can be fixed by replaying from the database.
+
+The Watchtower should support explicit backfill commands, for example:
+
+```
+gravity-watchtower backfill --from-block 1000000 --to-block 1100000 --config config/mainnet.yaml
+```
+
+### Configuration Model
+
+Use version-controlled YAML for chain endpoints, contract addresses, ABI paths, event selections, and alert rules.
+
+Example:
+
+```yaml
+chains:
+  gravity-mainnet:
+    rpc_url: https://mainnet-rpc.gravity.xyz
+    confirmations: 12
+    poll_interval: 3s
+
+contracts:
+  Reconfiguration:
+    chain: gravity-mainnet
+    address: "0x0000000000000000000000000001625F2003"
+    abi: abis/Reconfiguration.json
+    events:
+      - EpochTransitionStarted
+      - EpochTransitioned
+      - NewEpochEvent
+
+  DKG:
+    chain: gravity-mainnet
+    address: "0x0000000000000000000000000001625F2002"
+    abi: abis/DKG.json
+    events:
+      - DKGStartEvent
+      - DKGCompleted
+      - DKGSessionCleared
+
+rules:
+  - name: dkg_stuck
+    severity: P0
+    after_event: DKGStartEvent
+    expect_event: DKGCompleted
+    within: 10m
+
+  - name: unexpected_dkg_clear
+    severity: P0
+    event: DKGSessionCleared
+
+  - name: large_native_mint
+    severity: P1
+    event: NativeMinted
+    condition: "amount >= 1000000e18"
+```
+
+Hard-code as little as possible, but keep a small built-in registry for Gravity system addresses so misconfigured YAML is easier to catch at startup.
+
+### Alerting Model
+
+Use two layers:
+
+1. Event alerts: a single high-risk event should alert immediately.
+2. State alerts: an expected sequence or health condition is violated over time.
+
+Examples of event alerts:
+
+- Any `DKGSessionCleared`.
+- Any `EmergencyWithdrawRequested` or `EmergencyWithdraw`.
+- Any `ExecutorAdded`.
+- Any `PermissionlessJoinEnabledUpdated(true)` if permissionless joining is not expected.
+- Any bridge receiver `CallbackFailed`.
+
+Examples of state alerts:
+
+- `DKGStartEvent` is not followed by `DKGCompleted` within the DKG SLA.
+- `EpochTransitionStarted` is not followed by `NewEpochEvent`.
+- `TokensLocked` is not followed by `NativeMinted`.
+- `BlockStarted` stops advancing.
+- NIL block ratio exceeds threshold.
+- Active validator count or total voting power drops below policy.
+
 ## Analytics Indexer Options
 
 Several indexer families are viable:
@@ -87,6 +248,48 @@ For chain-operator monitoring, the recommended split is:
 
 - Use Watchtower for paging and security-critical checks.
 - Use Envio, SQD, The Graph, or a custom ETL for dashboards and historical analytics.
+- Use Blockscout separately as the chain explorer and manual investigation surface, not as the paging system.
+
+## Database Recommendation
+
+### First Choice: PostgreSQL
+
+Use PostgreSQL as the first production database. It is the right default for this monitoring system because the hard parts are state machines and correlation, not only append-only event storage.
+
+PostgreSQL is a good fit for:
+
+- Atomic checkpoint updates.
+- `UPSERT`-based idempotent ingestion.
+- Unique constraints for `(chain_id, block_number, tx_hash, log_index)`.
+- JSONB storage for decoded event arguments.
+- Bridge lifecycle state such as `locked`, `oracle_recorded`, `minted`, `expired`, and `mismatch`.
+- Governance lifecycle state such as `created`, `resolved`, `executed`, and manifest verification.
+- Alert dedupe state and silence windows.
+
+Do not skip raw log storage. Store both:
+
+- `raw_logs`: exact topics and data returned by RPC.
+- `decoded_events`: decoded arguments and derived risk labels.
+
+This makes the system replayable after ABI decoder fixes.
+
+### When to Add ClickHouse
+
+Add ClickHouse only when one of these becomes true:
+
+- You index all ERC20 `Transfer` logs at high volume.
+- You index native transfers from traces or balance diffs.
+- You need long-retention, high-cardinality operational analytics.
+- Grafana dashboards begin running expensive long-window aggregations against PostgreSQL.
+- Multiple downstream teams want ad hoc event analytics.
+
+ClickHouse should be the analytics warehouse, not the P0 state machine. Keep PostgreSQL as the source of truth for checkpointing, correlation, and alert state.
+
+### Redis, Kafka, and Queues
+
+- Redis can be useful for short-lived caches and rate-limiting, but should not be the source of truth.
+- Kafka, Redpanda, or NATS can be added later if many consumers need the decoded event stream.
+- The MVP does not need a queue. Direct RPC -> Watchtower -> PostgreSQL is simpler and safer.
 
 ## Data Model
 
@@ -449,7 +652,28 @@ Recommended HA setup:
 
 ## Deployment Topology
 
-### Minimal Production Setup
+### Internal Single-Host MVP
+
+For the first internal deployment, use one host with Docker Compose:
+
+- One `gravity-watchtower` container.
+- One PostgreSQL container or managed internal PostgreSQL instance.
+- One Prometheus container.
+- One Alertmanager container.
+- One Grafana container.
+- Host-level systemd unit that starts Docker Compose.
+- Daily PostgreSQL backups.
+- Health checks for RPC connectivity, database connectivity, scanner lag, and alert delivery.
+
+Suggested minimum host size when only monitoring system contracts:
+
+- 4 vCPU.
+- 8 to 16 GB RAM.
+- 100 to 200 GB SSD.
+
+This is enough if the Watchtower only scans selected system contracts and high-value token contracts. It is not enough for full-chain trace indexing or all-token transfer analytics at scale.
+
+### Minimal HA Production Setup
 
 - Two Watchtower instances.
 - One PostgreSQL instance with backups.
@@ -471,12 +695,17 @@ Recommended HA setup:
 
 ### Phase 1: P0 Watchtower
 
+- Deploy the internal single-host Docker Compose stack.
+- Configure direct access to the internal Gravity RPC endpoint.
 - Decode core consensus, epoch, DKG, governance, validator, oracle, and bridge events.
+- Persist raw logs, decoded events, and checkpoints in PostgreSQL.
 - Implement liveness checks.
 - Implement DKG and epoch SLA checks.
 - Implement bridge lock/mint correlation.
 - Implement large staking and bridge value alerts.
 - Export Prometheus metrics.
+- Add Alertmanager routes for P0/P1/P2.
+- Add initial Grafana dashboards.
 
 ### Phase 2: Governance and Config Intelligence
 
@@ -488,6 +717,7 @@ Recommended HA setup:
 
 ### Phase 3: Analytics Indexer
 
+- Add ClickHouse if PostgreSQL dashboard queries or event volume become heavy.
 - Backfill all historical events.
 - Build dashboards for validator performance, governance activity, oracle health, and bridge volume.
 - Add long-window anomaly detection.
