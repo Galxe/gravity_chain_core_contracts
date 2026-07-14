@@ -32,6 +32,9 @@ interface INativeOracle {
     //   1 = JWK (JSON Web Keys from OAuth providers)
     //   2 = DNS (DNS records for zkEmail, etc.)
     //   3 = PRICE_FEED (price data from oracles)
+    //   4 = reserved (no runtime adapter in this branch)
+    //   5 = reserved (no runtime adapter in this branch)
+    //   6 = POLYMARKET_SETTLEMENT (Polygon CTF settlement mirror)
     // New types can be added without contract upgrades.
 
     // ========================================================================
