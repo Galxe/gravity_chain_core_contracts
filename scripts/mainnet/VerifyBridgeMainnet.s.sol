@@ -25,22 +25,18 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 ///           suffix is stripped before comparison so IPFS-hash differences
 ///           between build environments do not produce a false negative.
 ///
-/// @dev    OWNERSHIP MODELS — both deploy paths in scripts/mainnet/ are supported:
+/// @dev    PRODUCTION OWNERSHIP MODEL — DeployBridgeKeystore.s.sol transfers
+///         ownership of both contracts to a multisig via Ownable2Step. Set
+///         MULTISIG_ADDRESS (the final owner) and, optionally, DEPLOYER_ADDRESS
+///         (the temporary owner during handoff) and FEE_RECIPIENT_ADDRESS. The
+///         verifier accepts either:
+///           - FINALIZED : owner == multisig && pendingOwner == 0
+///           - PENDING   : pendingOwner == multisig (acceptOwnership() not yet
+///                         called) — reported as a loud WARNING, not a failure.
 ///
-///         (a) Single-EOA path (DeployBridgeMainnet.s.sol, deploy_mainnet.sh):
-///             the EOA is the permanent owner and the portal feeRecipient.
-///             Set GRAVITY_CORE_CONTRACT_EOA_OWNER; leave MULTISIG_ADDRESS unset.
-///
-///         (b) Keystore + multisig-handoff path (DeployBridgeKeystore.s.sol):
-///             ownership of both contracts is transferred to a multisig via
-///             Ownable2Step. Set MULTISIG_ADDRESS (the final owner) and,
-///             optionally, DEPLOYER_ADDRESS (the temporary owner during handoff)
-///             and FEE_RECIPIENT_ADDRESS. The verifier accepts either:
-///               - FINALIZED : owner == multisig && pendingOwner == 0
-///               - PENDING   : pendingOwner == multisig (acceptOwnership() not
-///                             yet called) — reported as a loud WARNING, not a
-///                             failure, so the verifier can run between deploy
-///                             and the multisig accepting.
+///         Read-only verification of already-deployed legacy single-EOA instances
+///         remains supported via GRAVITY_CORE_CONTRACT_EOA_OWNER. No production
+///         deployment script for that ownership model is provided.
 ///
 /// @dev    Any revert = VERIFICATION FAILED. Exit code will be non-zero.
 contract VerifyBridgeMainnet is Script {
@@ -60,8 +56,8 @@ contract VerifyBridgeMainnet is Script {
     uint256 internal constant DEFAULT_BASE_FEE_WEI = 50_000_000_000_000; // ≈ $0.10 at ETH = $2000
 
     struct Expected {
-        address owner; // intended FINAL owner (multisig, or the EOA in path (a))
-        address deployer; // temporary owner during an Ownable2Step handoff (path (b)); 0 if unknown
+        address owner; // intended FINAL owner (multisig, or EOA for a legacy deployment)
+        address deployer; // temporary owner during an Ownable2Step handoff; 0 if unknown
         address feeRecipient; // portal fee recipient (defaults to `owner`)
         address gToken;
         uint256 baseFee;
@@ -102,19 +98,18 @@ contract VerifyBridgeMainnet is Script {
     // ========================================================================
 
     function _loadExpected() internal view returns (Expected memory e) {
-        // Final intended owner: an explicit MULTISIG_ADDRESS, else the single-EOA
-        // owner (back-compat with deploy_mainnet.sh), else the verified production
-        // Safe baked in as DEFAULT_MULTISIG.
+        // Final intended owner: an explicit MULTISIG_ADDRESS, else a legacy EOA
+        // owner supplied for read-only verification, else the production Safe.
         e.owner = _envAddressOr("MULTISIG_ADDRESS", _envAddressOr("GRAVITY_CORE_CONTRACT_EOA_OWNER", DEFAULT_MULTISIG));
-        // Temporary owner during an Ownable2Step handoff (keystore path only).
+        // Temporary owner during an Ownable2Step handoff.
         e.deployer = _envAddressOr("DEPLOYER_ADDRESS", address(0));
         // Portal fee recipient: explicit env, else defaults to the final owner.
         e.feeRecipient = _envAddressOr("FEE_RECIPIENT_ADDRESS", e.owner);
         e.gToken = _envAddressOr("G_TOKEN_ADDRESS", DEFAULT_G_TOKEN);
         e.baseFee = _envUintOr("BASE_FEE_WEI", DEFAULT_BASE_FEE_WEI);
 
-        // feePerByte: an explicit FEE_PER_BYTE_WEI (keystore path) takes
-        // precedence; otherwise derive it from the USD target (EOA path).
+        // An explicit FEE_PER_BYTE_WEI takes precedence. Otherwise derive the
+        // expected value for compatibility with historical deployment artifacts.
         uint256 explicitFeePerByte = _envUintOr("FEE_PER_BYTE_WEI", 0);
         if (explicitFeePerByte > 0) {
             e.feePerByte = explicitFeePerByte;
@@ -124,7 +119,7 @@ contract VerifyBridgeMainnet is Script {
             e.feePerByte = (centsPer32B * 1e16) / (32 * ethPriceUsd);
         }
 
-        require(e.owner != address(0), "expected owner unset (set MULTISIG_ADDRESS or GRAVITY_CORE_CONTRACT_EOA_OWNER)");
+        require(e.owner != address(0), "expected owner unset");
         require(e.feeRecipient != address(0), "feeRecipient unset");
         require(e.gToken != address(0), "gToken unset");
         require(e.gToken.code.length > 0, "gToken has no code on mainnet");

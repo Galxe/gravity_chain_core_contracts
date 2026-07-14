@@ -9,14 +9,15 @@
 #    2. Deploys MockGToken on the Ethereum anvil  (SetupEthereumTestnet.s.sol)
 #    3. Etches every Gravity system contract onto the Gravity anvil
 #       (etch_gravity_system.sh -> anvil_setCode)
-#    4. Runs DeployBridgeMainnet.s.sol against the Ethereum anvil
+#    4. Runs DeployBridgeKeystore.s.sol against the Ethereum anvil
 #       with the just-deployed MockGToken as G_TOKEN_ADDRESS
 #    5. Reads the resulting GBridgeSender address from deployments/mainnet.json
 #       and deploys GBridgeReceiver on the Gravity anvil (SetupGravityTestnet.s.sol)
 #    6. Runs scripts/mainnet/verify_deployment.sh against BOTH anvils
 #
-#  This exercises exactly the same deploy + verify code path the operator
-#  will use against real mainnet — only the RPC URLs and G token differ.
+#  This exercises the same keystore/CreateX + multisig deploy and verify code
+#  path the operator will use against real mainnet. The well-known Anvil key is
+#  public test data and is used only to sign transactions on the local node.
 #
 #  Usage:
 #    ./scripts/testnet/run_full_test.sh
@@ -48,6 +49,8 @@ GRAV_PID_FILE="${REPO_ROOT}/deployments/.anvil_grav.pid"
 # Well-known default anvil account (index 0). Safe: local only.
 ANVIL_ADDR="0xf39Fd6e51aad88F6F4ce6aB8827279cfFFb92266"
 ANVIL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+ANVIL_MULTISIG="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+CREATEX="0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed"
 
 mkdir -p "${REPO_ROOT}/deployments"
 
@@ -106,6 +109,13 @@ wait_ready() {
 wait_ready "${ETH_RPC}"  || die "Ethereum anvil did not come up; see ${ETH_LOG}"
 wait_ready "${GRAV_RPC}" || die "Gravity  anvil did not come up; see ${GRAV_LOG}"
 
+# Etch the pinned canonical CreateX runtime into the local Ethereum anvil. The
+# production script requires this factory at its canonical address.
+CREATEX_CODE="$(sed -n 's/.*return hex"\([0-9a-fA-F]*\)";.*/0x\1/p' test/utils/CreateXFixture.sol)"
+[[ "${CREATEX_CODE}" != "0x" ]] || die "could not extract pinned CreateX runtime code"
+cast rpc --rpc-url "${ETH_RPC}" anvil_setCode "${CREATEX}" "${CREATEX_CODE}" >/dev/null
+[[ "$(cast code "${CREATEX}" --rpc-url "${ETH_RPC}")" != "0x" ]] || die "failed to etch CreateX on Ethereum anvil"
+
 ETH_CID="$(cast chain-id --rpc-url "${ETH_RPC}")"
 GRAV_CID="$(cast chain-id --rpc-url "${GRAV_RPC}")"
 [[ "${ETH_CID}" == "1" ]] || die "Ethereum anvil reports chainId ${ETH_CID}, expected 1"
@@ -130,10 +140,12 @@ GRAVITY_RPC_URL="${GRAV_RPC}" bash "${SCRIPT_DIR}/etch_gravity_system.sh"
 
 # -- step 4: deploy GravityPortal + GBridgeSender on Ethereum anvil -----------
 green "[4/6] deploying GravityPortal + GBridgeSender on Ethereum anvil"
-GRAVITY_CORE_CONTRACT_EOA_OWNER="${ANVIL_ADDR}" \
-GRAVITY_CORE_CONTRACT_EOA_OWNER_PRIVATE_KEY="${ANVIL_PK}" \
+DEPLOYER_ADDRESS="${ANVIL_ADDR}" \
+MULTISIG_ADDRESS="${ANVIL_MULTISIG}" \
+FEE_RECIPIENT_ADDRESS="${ANVIL_MULTISIG}" \
 G_TOKEN_ADDRESS="${G_TOKEN_ADDRESS}" \
-    forge script scripts/mainnet/DeployBridgeMainnet.s.sol:DeployBridgeMainnet \
+ALLOW_NON_MAINNET=1 \
+    forge script scripts/mainnet/DeployBridgeKeystore.s.sol:DeployBridgeKeystore \
         --rpc-url "${ETH_RPC}" \
         --private-key "${ANVIL_PK}" \
         --broadcast \
@@ -164,7 +176,9 @@ green "      GBridgeReceiver : ${GRECEIVER}"
 green "[6/6] running scripts/mainnet/verify_deployment.sh against both anvils"
 MAINNET_RPC_URL="${ETH_RPC}" \
 GRAVITY_RPC_URL="${GRAV_RPC}" \
-GRAVITY_CORE_CONTRACT_EOA_OWNER="${ANVIL_ADDR}" \
+DEPLOYER_ADDRESS="${ANVIL_ADDR}" \
+MULTISIG_ADDRESS="${ANVIL_MULTISIG}" \
+FEE_RECIPIENT_ADDRESS="${ANVIL_MULTISIG}" \
 GRAVITY_PORTAL_ADDRESS="${GPORTAL}" \
 GBRIDGE_SENDER_ADDRESS="${GSENDER}" \
 GBRIDGE_RECEIVER_ADDRESS="${GRECEIVER}" \
