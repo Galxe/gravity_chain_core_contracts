@@ -8,8 +8,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use anyhow::{anyhow, Context, Result};
-use revm::{db::BundleState, DatabaseCommit, EvmBuilder, StateBuilder};
-use revm_primitives::{hex, AccountInfo, Bytecode, ExecutionResult, SpecId, TxEnv};
+use revm_primitives::{hex, AccountInfo, Bytecode, ExecutionResult, SpecId};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs};
 use tracing::{error, info, warn};
@@ -17,7 +16,7 @@ use tracing::{error, info, warn};
 use crate::execute::prepare_env;
 use crate::utils::{
     execute_revm_sequential, new_system_call_txn, EPOCH_CONFIG_ADDR, GOVERNANCE_ADDR,
-    SYSTEM_CALLER, VALIDATOR_MANAGER_ADDR,
+    VALIDATOR_MANAGER_ADDR,
 };
 
 // ============================================================================
@@ -56,8 +55,10 @@ sol! {
 
     function getActiveValidators() external view returns (ValidatorConsensusInfo[] memory);
 
-    // EpochConfig.epochIntervalMicros()
-    function epochIntervalMicros() external view returns (uint64);
+    interface IEpochConfig {
+        function epochIntervalMicros() external view returns (uint64);
+        function isInitialized() external view returns (bool);
+    }
 
     interface IGovernance {
         function owner() external view returns (address);
@@ -227,16 +228,17 @@ pub fn verify_genesis_file(
 
     // 3. First verify epoch interval from EpochConfig
     info!("Verifying epoch interval from EpochConfig...");
-    let epoch_interval = verify_epoch_interval(&db);
-    match &epoch_interval {
-        Some(micros) => {
-            let hours = *micros as f64 / 3_600_000_000.0;
+    let (epoch_interval, epoch_errors) = match verify_epoch_interval(&db) {
+        Ok(micros) => {
+            let hours = micros as f64 / 3_600_000_000.0;
             info!("✅ Epoch interval: {} micros ({:.4} hours)", micros, hours);
+            (Some(micros), Vec::new())
         }
-        None => {
-            warn!("⚠️ Could not read epoch interval from EpochConfig");
+        Err(err) => {
+            error!("❌ {}", err);
+            (None, vec![err])
         }
-    }
+    };
 
     // 4. Simulate getActiveValidators() call
     info!("Simulating getActiveValidators() call...");
@@ -259,10 +261,8 @@ pub fn verify_genesis_file(
         Ok((results, _)) => {
             if let Some(exec_result) = results.first() {
                 let mut result = process_execution_result(exec_result, epoch_interval)?;
-                if !governance_errors.is_empty() {
-                    result.success = false;
-                    result.errors.extend(governance_errors);
-                }
+                append_verification_errors(&mut result, governance_errors);
+                append_verification_errors(&mut result, epoch_errors);
                 return Ok(result);
             }
             Err(anyhow!("No execution result returned"))
@@ -397,9 +397,47 @@ fn verify_governance(
 }
 
 /// Verify epoch interval by calling EpochConfig.epochIntervalMicros()
-fn verify_epoch_interval(db: &revm::InMemoryDB) -> Option<u64> {
-    let call = epochIntervalMicrosCall {};
+fn verify_epoch_interval(db: &revm::InMemoryDB) -> std::result::Result<u64, String> {
+    let call = IEpochConfig::epochIntervalMicrosCall {};
     let input: Bytes = call.abi_encode().into();
+    let output_bytes = execute_epoch_config_probe(db, input, "EpochConfig.epochIntervalMicros()")?;
+
+    let decoded = IEpochConfig::epochIntervalMicrosCall::abi_decode_returns(&output_bytes, false)
+        .map_err(|err| {
+        format!(
+            "Failed to decode EpochConfig.epochIntervalMicros(): {:?}",
+            err
+        )
+    })?;
+    let epoch_interval = decoded._0;
+    if epoch_interval == 0 {
+        return Err(
+            "EpochConfig.epochIntervalMicros() returned zero; EpochConfig is invalid or uninitialized"
+                .to_string(),
+        );
+    }
+
+    let call = IEpochConfig::isInitializedCall {};
+    let input: Bytes = call.abi_encode().into();
+    let output_bytes = execute_epoch_config_probe(db, input, "EpochConfig.isInitialized()")?;
+    let decoded = IEpochConfig::isInitializedCall::abi_decode_returns(&output_bytes, false)
+        .map_err(|err| format!("Failed to decode EpochConfig.isInitialized(): {:?}", err))?;
+
+    if !decoded._0 {
+        return Err(
+            "EpochConfig.isInitialized() returned false; Genesis.initialize did not run"
+                .to_string(),
+        );
+    }
+
+    Ok(epoch_interval)
+}
+
+fn execute_epoch_config_probe(
+    db: &revm::InMemoryDB,
+    input: Bytes,
+    function_name: &str,
+) -> std::result::Result<Bytes, String> {
     let tx = new_system_call_txn(EPOCH_CONFIG_ADDR, input);
 
     // See note above on the getActiveValidators call site: block.timestamp = 0
@@ -408,22 +446,36 @@ fn verify_epoch_interval(db: &revm::InMemoryDB) -> Option<u64> {
     let result = execute_revm_sequential(db.clone(), SpecId::LATEST, env, &[tx], None);
 
     match result {
-        Ok((results, _)) => {
-            if let Some(ExecutionResult::Success { output, .. }) = results.first() {
+        Ok((results, _)) => match results.first() {
+            Some(ExecutionResult::Success { output, .. }) => {
                 let output_bytes = match output {
-                    revm_primitives::Output::Call(bytes) => bytes,
-                    revm_primitives::Output::Create(bytes, _) => bytes,
+                    revm_primitives::Output::Call(bytes) => bytes.clone(),
+                    revm_primitives::Output::Create(bytes, _) => bytes.clone(),
                 };
-
-                if let Ok(decoded) =
-                    epochIntervalMicrosCall::abi_decode_returns(output_bytes, false)
-                {
-                    return Some(decoded._0);
-                }
+                Ok(output_bytes)
             }
-            None
-        }
-        Err(_) => None,
+            Some(ExecutionResult::Revert { output, .. }) => Err(format!(
+                "{} reverted: 0x{}",
+                function_name,
+                hex::encode(output)
+            )),
+            Some(ExecutionResult::Halt { reason, .. }) => {
+                Err(format!("{} halted: {:?}", function_name, reason))
+            }
+            None => Err(format!("{} returned no execution result", function_name)),
+        },
+        Err(err) => Err(format!("{} EVM error: {:?}", function_name, err)),
+    }
+}
+
+/// Merge independent probe failures into the final verification result.
+///
+/// Verification intentionally runs every probe so one invocation reports all
+/// problems, but any failed required probe must make the release gate fail.
+fn append_verification_errors(result: &mut VerifyResult, errors: Vec<String>) {
+    if !errors.is_empty() {
+        result.success = false;
+        result.errors.extend(errors);
     }
 }
 
@@ -597,4 +649,132 @@ pub fn print_verify_summary(result: &VerifyResult) {
     }
 
     println!("\n========================================\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::{SYSTEM_ACCOUNT_INFO, SYSTEM_CALLER};
+
+    fn test_db() -> revm::InMemoryDB {
+        let mut db = revm::InMemoryDB::default();
+        db.insert_account_info(SYSTEM_CALLER, SYSTEM_ACCOUNT_INFO.clone());
+        db
+    }
+
+    fn plant_code(db: &mut revm::InMemoryDB, address: Address, code: Vec<u8>) {
+        let bytecode = Bytecode::new_raw(Bytes::from(code));
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                balance: U256::ZERO,
+                nonce: 1,
+                code_hash: bytecode.hash_slow(),
+                code: Some(bytecode),
+            },
+        );
+    }
+
+    /// Runtime bytecode that returns `interval` for epochIntervalMicros() and
+    /// `initialized` for isInitialized().
+    fn epoch_config_stub(interval: u8, initialized: bool) -> Vec<u8> {
+        let mut code = vec![0x60, 0x00, 0x35, 0x60, 0xe0, 0x1c, 0x63];
+        code.extend_from_slice(&IEpochConfig::epochIntervalMicrosCall::SELECTOR);
+        code.extend_from_slice(&[
+            0x14,
+            0x60,
+            0x19,
+            0x57, // jump to the interval branch on selector match
+            0x60,
+            initialized as u8,
+            0x60,
+            0x00,
+            0x52,
+            0x60,
+            0x20,
+            0x60,
+            0x00,
+            0xf3,
+            0x5b, // interval branch
+            0x60,
+            interval,
+            0x60,
+            0x00,
+            0x52,
+            0x60,
+            0x20,
+            0x60,
+            0x00,
+            0xf3,
+        ]);
+        code
+    }
+
+    #[test]
+    fn epoch_interval_probe_succeeds_for_valid_contract_output() {
+        let mut db = test_db();
+        plant_code(&mut db, EPOCH_CONFIG_ADDR, epoch_config_stub(42, true));
+
+        assert_eq!(verify_epoch_interval(&db), Ok(42));
+    }
+
+    #[test]
+    fn epoch_interval_probe_fails_for_uninitialized_state() {
+        let mut db = test_db();
+        plant_code(&mut db, EPOCH_CONFIG_ADDR, epoch_config_stub(42, false));
+
+        let err = verify_epoch_interval(&db)
+            .expect_err("an uninitialized EpochConfig must fail verification");
+        assert!(
+            err.contains("isInitialized") || err.contains("initialize did not run"),
+            "error should explain the invalid state, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn epoch_interval_probe_fails_for_zero_interval() {
+        let mut db = test_db();
+        plant_code(&mut db, EPOCH_CONFIG_ADDR, epoch_config_stub(0, true));
+
+        let err =
+            verify_epoch_interval(&db).expect_err("a zero epoch interval must fail verification");
+        assert!(
+            err.contains("zero"),
+            "error should explain the invalid interval, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn epoch_interval_probe_fails_when_contract_is_missing() {
+        let db = test_db();
+
+        let err = verify_epoch_interval(&db)
+            .expect_err("a missing EpochConfig must fail the required verification probe");
+        assert!(
+            err.contains("decode"),
+            "missing code should produce a diagnostic decode failure, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn required_probe_error_marks_overall_verification_failed() {
+        let mut result = VerifyResult {
+            success: true,
+            validator_count: 1,
+            validators: Vec::new(),
+            epoch_interval_micros: None,
+            errors: Vec::new(),
+        };
+
+        append_verification_errors(
+            &mut result,
+            vec!["Failed to decode EpochConfig.epochIntervalMicros()".to_string()],
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.errors.len(), 1);
+    }
 }
