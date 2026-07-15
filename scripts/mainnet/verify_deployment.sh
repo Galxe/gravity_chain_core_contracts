@@ -48,7 +48,6 @@ if [[ "${SKIP_MAINNET:-0}" != "1" ]]; then
     green "=== Verifying Ethereum mainnet ==="
 
     : "${MAINNET_RPC_URL:?MAINNET_RPC_URL is required}"
-    : "${GRAVITY_CORE_CONTRACT_EOA_OWNER:?GRAVITY_CORE_CONTRACT_EOA_OWNER is required}"
 
     CHAIN_HEX="$(cast chain-id --rpc-url "${MAINNET_RPC_URL}" 2>/dev/null || echo "")"
     if [[ "${CHAIN_HEX}" != "1" ]]; then

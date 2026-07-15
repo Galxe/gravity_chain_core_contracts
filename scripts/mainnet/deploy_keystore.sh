@@ -4,8 +4,8 @@
 # =============================================================================
 #  One command:  ./scripts/mainnet/deploy_keystore.sh
 #
-#  Counterpart to deploy_mainnet.sh, but signs with an ENCRYPTED FOUNDRY
-#  KEYSTORE (`forge`/`cast` --account) instead of a plaintext private key.
+#  The production mainnet deployment path. It signs with an ENCRYPTED FOUNDRY
+#  KEYSTORE (`forge`/`cast` --account), never a plaintext private key.
 #  No private key ever touches the environment, the shell history, or disk
 #  in cleartext.
 #
