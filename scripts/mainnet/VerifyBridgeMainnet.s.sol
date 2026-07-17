@@ -27,9 +27,9 @@ import { GBridgeSender } from "src/oracle/evm/native_token_bridge/GBridgeSender.
 ///
 /// @dev    PRODUCTION OWNERSHIP MODEL — DeployBridgeKeystore.s.sol transfers
 ///         ownership of both contracts to a multisig via Ownable2Step. Set
-///         MULTISIG_ADDRESS (the final owner) and, optionally, DEPLOYER_ADDRESS
-///         (the temporary owner during handoff) and FEE_RECIPIENT_ADDRESS. The
-///         verifier accepts either:
+///         MULTISIG_ADDRESS (the final owner), DEPLOYER_ADDRESS (the temporary
+///         owner, required while the handoff is pending), and optionally
+///         FEE_RECIPIENT_ADDRESS. The verifier accepts either:
 ///           - FINALIZED : owner == multisig && pendingOwner == 0
 ///           - PENDING   : pendingOwner == multisig (acceptOwnership() not yet
 ///                         called) — reported as a loud WARNING, not a failure.
@@ -57,7 +57,7 @@ contract VerifyBridgeMainnet is Script {
 
     struct Expected {
         address owner; // intended FINAL owner (multisig, or EOA for a legacy deployment)
-        address deployer; // temporary owner during an Ownable2Step handoff; 0 if unknown
+        address deployer; // expected temporary owner during an Ownable2Step handoff
         address feeRecipient; // portal fee recipient (defaults to `owner`)
         address gToken;
         uint256 baseFee;
@@ -185,10 +185,10 @@ contract VerifyBridgeMainnet is Script {
     /// @notice Verify an Ownable2Step contract's owner against the intended final owner.
     /// @dev Accepts two valid states; reverts on anything else:
     ///        - FINALIZED : owner == e.owner && pendingOwner == 0
-    ///        - PENDING   : pendingOwner == e.owner  (handoff initiated, not yet
-    ///                      accepted; loud WARNING but not a failure). When
-    ///                      DEPLOYER_ADDRESS is provided, the current owner must
-    ///                      additionally equal it for the PENDING state to hold.
+    ///        - PENDING   : pendingOwner == e.owner and currentOwner == e.deployer
+    ///                      (handoff initiated, not yet accepted; loud WARNING but
+    ///                      not a failure). DEPLOYER_ADDRESS must be explicitly
+    ///                      provided for the PENDING state to hold.
     function _verifyOwnership(
         string memory label,
         address currentOwner,
@@ -200,7 +200,7 @@ contract VerifyBridgeMainnet is Script {
             return;
         }
         bool pendingToFinalOwner = pendingOwner == e.owner;
-        bool deployerOk = e.deployer == address(0) || currentOwner == e.deployer;
+        bool deployerOk = e.deployer != address(0) && currentOwner == e.deployer;
         if (pendingToFinalOwner && deployerOk) {
             // PENDING — handoff initiated but acceptOwnership() not yet called.
             console.log("   WARNING:", label, "ownership handoff is PENDING");
@@ -212,6 +212,7 @@ contract VerifyBridgeMainnet is Script {
         console.log("   ", label, "current owner :", currentOwner);
         console.log("   ", label, "pendingOwner  :", pendingOwner);
         console.log("   ", label, "expected owner:", e.owner);
+        console.log("   ", label, "expected deployer:", e.deployer);
         revert(string.concat("ownership mismatch: ", label));
     }
 
