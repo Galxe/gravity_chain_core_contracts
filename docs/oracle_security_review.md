@@ -16,15 +16,18 @@ It is not a whole-protocol audit and is not approval for a real-money launch.
 
 ## Result
 
-No critical or high-severity issue remains in the reviewed scope after the
-hardening changes on this branch.
+The contract-level finding that allowed betting after a mirrored settlement was
+already available is fixed on this branch. This does not clear the cross-layer
+Oracle path for production: two consensus-sensitive blockers remain outside the
+market contracts.
 
-| Severity | Open count |
-| --- | ---: |
-| Critical | 0 |
-| High | 0 |
-| Medium | 0 |
-| Low / product decision | 3 |
+| Cross-layer blocker | Status |
+| --- | --- |
+| JWK QC aggregate signature is not verified at the Gravity execution boundary | Known / open |
+| New source routing and callback-gas semantics need coordinated activation | Open |
+
+The PoC remains suitable for deterministic local testing, not a real-money
+launch.
 
 ## Hardening Completed
 
@@ -66,6 +69,8 @@ Contracts and SDK:
   deposits and payouts
 - use pull claims with `SafeERC20`, `ReentrancyGuard`, and effects before token
   transfers
+- reject market creation and new bets after the configured resolver exposes a
+  settlement for the condition
 - use `Math.mulDiv` for proportional payouts
 - reject unknown markets, duplicate source ids, split payouts, stale rounds,
   future observations, and arithmetic bounds violations

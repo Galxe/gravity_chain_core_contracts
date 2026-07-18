@@ -97,6 +97,12 @@ slotToOutcome
 Compute a `specHash` from the frozen Gravity semantics and reviewed Polymarket
 snapshot. Do not depend on mutable UI text after market creation.
 
+`closesAt` must be no later than the point at which the external result can
+reasonably become known. Do not use the later Polygon settlement transaction as
+the betting cutoff. The market contracts reject creation and new bets once the
+configured resolver already contains a settlement, but they cannot detect a
+source-chain result that has not reached Gravity yet.
+
 ### Polymarket Metadata Snapshot
 
 Capture and review:
@@ -219,6 +225,8 @@ needed by the Gravity market.
 
 Checklist:
 
+- the condition is unresolved in the Gravity resolver immediately before market creation
+- `closesAt` precedes the expected real-world result and Polymarket resolution
 - `outcomeSlotCount == 3`
 - `payoutNumerators.length == 3`
 - exactly one payout numerator is positive

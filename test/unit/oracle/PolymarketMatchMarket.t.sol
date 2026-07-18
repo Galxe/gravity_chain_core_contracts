@@ -196,6 +196,29 @@ contract PolymarketMatchMarketTest is Test {
         market.createMarket(params);
     }
 
+    function test_RevertWhenCreatingMarketForResolvedCondition() public {
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 3, 1);
+        PolymarketMatchMarket.CreateMarketParams memory params = _createParams(address(mockResolver));
+
+        vm.expectRevert(PolymarketMatchMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(governance);
+        market.createMarket(params);
+    }
+
+    function test_RevertWhenBettingAfterSettlementBecomesAvailable() public {
+        uint256 marketId = _createMarket(address(mockResolver));
+        _placeBet(alice, marketId, uint8(PolymarketMatchMarket.MatchOutcome.Draw), 100 ether);
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 3, 1);
+
+        vm.expectRevert(PolymarketMatchMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(bob);
+        market.placeBet(marketId, uint8(PolymarketMatchMarket.MatchOutcome.HomeWin), 1 ether);
+
+        PolymarketMatchMarket.Market memory stored = market.getMarket(marketId);
+        assertEq(stored.totalPool, 100 ether);
+        assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
+    }
+
     function test_PlaceBetUpdatesEscrowAndRejectsAfterClose() public {
         uint256 marketId = _createMarket(address(mockResolver));
 
@@ -234,8 +257,9 @@ contract PolymarketMatchMarketTest is Test {
         ];
 
         for (uint8 slot; slot < 3;) {
-            uint256 marketId = _createFundedLockedMarket(address(mockResolver));
-            _mockSettlement(_singleWinningPayout(slot), POLYGON_CHAIN_ID, CTF, 3, 1);
+            MockPolymarketSettlementResolver slotResolver = new MockPolymarketSettlementResolver();
+            uint256 marketId = _createFundedLockedMarket(address(slotResolver));
+            slotResolver.setSettlement(MIRROR_ID, CONDITION_ID, POLYGON_CHAIN_ID, CTF, 3, 1, _singleWinningPayout(slot));
 
             market.settleMarket(marketId);
 
@@ -271,8 +295,11 @@ contract PolymarketMatchMarketTest is Test {
         vm.expectRevert(PolymarketMatchMarket.SettlementMismatch.selector);
         market.settleMarket(marketId);
 
-        marketId = _createFundedLockedMarket(address(mockResolver));
-        _mockSettlement(_singleWinningPayout(1), POLYGON_CHAIN_ID, address(0xBEEF), 3, 1);
+        MockPolymarketSettlementResolver ctfMismatchResolver = new MockPolymarketSettlementResolver();
+        marketId = _createFundedLockedMarket(address(ctfMismatchResolver));
+        ctfMismatchResolver.setSettlement(
+            MIRROR_ID, CONDITION_ID, POLYGON_CHAIN_ID, address(0xBEEF), 3, 1, _singleWinningPayout(1)
+        );
 
         vm.expectRevert(PolymarketMatchMarket.SettlementMismatch.selector);
         market.settleMarket(marketId);

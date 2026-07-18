@@ -100,6 +100,7 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
     error MarketNotSettled();
     error MarketAlreadyFinalized();
     error SettlementUnavailable();
+    error SettlementAlreadyAvailable();
     error SettlementMismatch();
     error AmbiguousPayout();
     error OracleDeadlineNotReached();
@@ -156,6 +157,7 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         Market storage market = _markets[marketId];
         _requireMarketExists(marketId, market);
         _requireOpenForBetting(market);
+        _requireSettlementUnavailable(_settlementRefs[marketId]);
         if (outcome >= BINARY_OUTCOME_COUNT) revert InvalidOutcome();
         if (amount == 0) revert InvalidAmount();
 
@@ -323,6 +325,18 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
                 ++i;
             }
         }
+
+        (bool settlementExists,,,,,,,,,) =
+            IPolymarketSettlementResolver(ref.resolver).getSettlement(ref.mirrorId, ref.conditionId);
+        if (settlementExists) revert SettlementAlreadyAvailable();
+    }
+
+    function _requireSettlementUnavailable(
+        SettlementRef storage ref
+    ) internal view {
+        (bool settlementExists,,,,,,,,,) =
+            IPolymarketSettlementResolver(ref.resolver).getSettlement(ref.mirrorId, ref.conditionId);
+        if (settlementExists) revert SettlementAlreadyAvailable();
     }
 
     function _requireOpenForBetting(

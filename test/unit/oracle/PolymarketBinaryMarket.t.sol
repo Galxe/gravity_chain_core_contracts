@@ -190,6 +190,29 @@ contract PolymarketBinaryMarketTest is Test {
         market.createMarket(params);
     }
 
+    function test_RevertWhenCreatingMarketForResolvedCondition() public {
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
+        PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(mockResolver), _yesNoSlotMap());
+
+        vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(governance);
+        market.createMarket(params);
+    }
+
+    function test_RevertWhenBettingAfterSettlementBecomesAvailable() public {
+        uint256 marketId = _createMarket(address(mockResolver), _yesNoSlotMap());
+        _placeBet(alice, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.No), 100 ether);
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
+
+        vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(bob);
+        market.placeBet(marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 1 ether);
+
+        PolymarketBinaryMarket.Market memory stored = market.getMarket(marketId);
+        assertEq(stored.totalPool, 100 ether);
+        assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
+    }
+
     function test_SettleMarketMapsReviewedSlotToYesNoOutcome() public {
         uint8[] memory slotMap = _noYesSlotMap();
         uint256 marketId = _createFundedLockedMarket(address(mockResolver), slotMap);
@@ -303,8 +326,9 @@ contract PolymarketBinaryMarketTest is Test {
         vm.expectRevert(PolymarketBinaryMarket.AmbiguousPayout.selector);
         market.settleMarket(ambiguousMarketId);
 
-        uint256 mismatchMarketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
-        _mockSettlement(_singleWinningPayout(0), 1, CTF, 2, 1);
+        MockBinaryPolymarketResolver mismatchResolver = new MockBinaryPolymarketResolver();
+        uint256 mismatchMarketId = _createFundedLockedMarket(address(mismatchResolver), _yesNoSlotMap());
+        mismatchResolver.setSettlement(MIRROR_ID, CONDITION_ID, 1, CTF, 2, 1, _singleWinningPayout(0));
 
         vm.expectRevert(PolymarketBinaryMarket.SettlementMismatch.selector);
         market.settleMarket(mismatchMarketId);
