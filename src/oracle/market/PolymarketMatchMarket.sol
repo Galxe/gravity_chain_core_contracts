@@ -330,17 +330,17 @@ contract PolymarketMatchMarket is ReentrancyGuard {
             }
         }
 
-        (bool settlementExists,,,,,,,,,) =
-            IPolymarketSettlementResolver(ref.resolver).getSettlement(ref.mirrorId, ref.conditionId);
-        if (settlementExists) revert SettlementAlreadyAvailable();
+        if (IPolymarketSettlementResolver(ref.resolver).isSettlementObserved(ref.mirrorId, ref.conditionId)) {
+            revert SettlementAlreadyAvailable();
+        }
     }
 
     function _requireSettlementUnavailable(
         SettlementRef storage ref
     ) internal view {
-        (bool settlementExists,,,,,,,,,) =
-            IPolymarketSettlementResolver(ref.resolver).getSettlement(ref.mirrorId, ref.conditionId);
-        if (settlementExists) revert SettlementAlreadyAvailable();
+        if (IPolymarketSettlementResolver(ref.resolver).isSettlementObserved(ref.mirrorId, ref.conditionId)) {
+            revert SettlementAlreadyAvailable();
+        }
     }
 
     function _requireOpenForBetting(

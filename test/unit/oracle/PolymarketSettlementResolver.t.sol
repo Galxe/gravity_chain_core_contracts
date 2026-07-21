@@ -89,6 +89,7 @@ contract PolymarketSettlementResolverTest is Test {
         oracle.record(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, 1);
         (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
         assertFalse(exists);
+        assertTrue(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
 
         resolver.replaySettlement(DRAW_MARKET_ID, 1);
         uint128 nonce;
@@ -123,6 +124,7 @@ contract PolymarketSettlementResolverTest is Test {
 
         (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
         assertFalse(exists);
+        assertTrue(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1);
         assertEq(record.data, payload);

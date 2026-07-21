@@ -21,6 +21,8 @@ contract OracleTaskConfigTest is Test {
     uint32 public constant SOURCE_TYPE_BLOCKCHAIN = 0;
     uint32 public constant SOURCE_TYPE_JWK = 1;
     uint32 public constant SOURCE_TYPE_DNS = 2;
+    uint32 public constant SOURCE_TYPE_PRICE_FEED = 3;
+    uint32 public constant SOURCE_TYPE_POLYMARKET_SETTLEMENT = 6;
     uint256 public constant ETHEREUM_SOURCE_ID = 1;
     uint256 public constant ARBITRUM_SOURCE_ID = 42161;
 
@@ -95,30 +97,34 @@ contract OracleTaskConfigTest is Test {
         taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
     }
 
-    function test_SetTask_MultipleTasksPerSource() public {
+    function test_SetTask_MultipleTasksPerNonRelayerSource() public {
         bytes memory eventsConfig = abi.encode("events config");
         bytes memory stateRootsConfig = abi.encode("state roots config");
         bytes memory receiptsConfig = abi.encode("receipts config");
 
         vm.startPrank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, eventsConfig);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, stateRootsConfig);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_RECEIPTS, receiptsConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, eventsConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, stateRootsConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_RECEIPTS, receiptsConfig);
         vm.stopPrank();
 
         // Verify all tasks exist
-        assertEq(taskConfig.getTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS).config, eventsConfig);
-        assertEq(
-            taskConfig.getTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS).config, stateRootsConfig
-        );
-        assertEq(taskConfig.getTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_RECEIPTS).config, receiptsConfig);
+        assertEq(taskConfig.getTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS).config, eventsConfig);
+        assertEq(taskConfig.getTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS).config, stateRootsConfig);
+        assertEq(taskConfig.getTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_RECEIPTS).config, receiptsConfig);
 
         // Verify task count
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 3);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 3);
 
         // Verify task names are enumerable
-        bytes32[] memory taskNames = taskConfig.getTaskNames(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
+        bytes32[] memory taskNames = taskConfig.getTaskNames(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID);
         assertEq(taskNames.length, 3);
+    }
+
+    function test_SetTask_RejectsSecondRelayerTaskForSameSource() public {
+        _assertSecondRelayerTaskRejected(SOURCE_TYPE_BLOCKCHAIN, 1);
+        _assertSecondRelayerTaskRejected(SOURCE_TYPE_PRICE_FEED, 2);
+        _assertSecondRelayerTaskRejected(SOURCE_TYPE_POLYMARKET_SETTLEMENT, 3);
     }
 
     function test_SetTask_MultipleSources() public {
@@ -186,21 +192,19 @@ contract OracleTaskConfigTest is Test {
         bytes memory stateRootsConfig = abi.encode("state roots config");
 
         vm.startPrank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, eventsConfig);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, stateRootsConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, eventsConfig);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, stateRootsConfig);
         vm.stopPrank();
 
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 2);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 2);
 
         vm.prank(governance);
-        taskConfig.removeTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS);
+        taskConfig.removeTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS);
 
-        assertFalse(taskConfig.hasTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS));
-        assertTrue(taskConfig.hasTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS));
-        assertEq(
-            taskConfig.getTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS).config, stateRootsConfig
-        );
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertFalse(taskConfig.hasTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS));
+        assertTrue(taskConfig.hasTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS));
+        assertEq(taskConfig.getTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS).config, stateRootsConfig);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 1);
     }
 
     function test_RemoveTask_DoesNotAffectOtherSources() public {
@@ -246,11 +250,11 @@ contract OracleTaskConfigTest is Test {
         bytes memory config2 = abi.encode("config2");
 
         vm.startPrank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config1);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config2);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, config1);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config2);
         vm.stopPrank();
 
-        bytes32[] memory taskNames = taskConfig.getTaskNames(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID);
+        bytes32[] memory taskNames = taskConfig.getTaskNames(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID);
         assertEq(taskNames.length, 2);
 
         // Check that both task names are in the array
@@ -265,30 +269,30 @@ contract OracleTaskConfigTest is Test {
     }
 
     function test_GetTaskCount() public {
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 0);
 
         bytes memory config = abi.encode("config");
         vm.prank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
 
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 1);
 
         vm.prank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
 
-        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 2);
+        assertEq(taskConfig.getTaskCount(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID), 2);
     }
 
     function test_GetTaskNameAt() public {
         bytes memory config = abi.encode("config");
 
         vm.startPrank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
         vm.stopPrank();
 
-        bytes32 name0 = taskConfig.getTaskNameAt(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 0);
-        bytes32 name1 = taskConfig.getTaskNameAt(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1);
+        bytes32 name0 = taskConfig.getTaskNameAt(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, 0);
+        bytes32 name1 = taskConfig.getTaskNameAt(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, 1);
 
         // Both should be valid task names
         assertTrue(name0 == TASK_EVENTS || name0 == TASK_STATE_ROOTS);
@@ -372,6 +376,10 @@ contract OracleTaskConfigTest is Test {
         bytes32 taskName2
     ) public {
         vm.assume(taskName1 != taskName2);
+        vm.assume(
+            sourceType != SOURCE_TYPE_BLOCKCHAIN && sourceType != SOURCE_TYPE_PRICE_FEED
+                && sourceType != SOURCE_TYPE_POLYMARKET_SETTLEMENT
+        );
 
         bytes memory config1 = abi.encode("config1");
         bytes memory config2 = abi.encode("config2");
@@ -529,33 +537,53 @@ contract OracleTaskConfigTest is Test {
 
         // Add two tasks to same source
         vm.startPrank(governance);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
-        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS, config);
         vm.stopPrank();
 
         // Verify source is registered
         uint32[] memory sourceTypes = taskConfig.getSourceTypes();
         assertEq(sourceTypes.length, 1);
-        uint256[] memory sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        uint256[] memory sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_JWK);
         assertEq(sourceIds.length, 1);
 
         // Remove first task - source should still be registered
         vm.prank(governance);
-        taskConfig.removeTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS);
+        taskConfig.removeTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_EVENTS);
 
         sourceTypes = taskConfig.getSourceTypes();
         assertEq(sourceTypes.length, 1);
-        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_JWK);
         assertEq(sourceIds.length, 1);
 
         // Remove second task - source should be cleaned up
         vm.prank(governance);
-        taskConfig.removeTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS);
+        taskConfig.removeTask(SOURCE_TYPE_JWK, ETHEREUM_SOURCE_ID, TASK_STATE_ROOTS);
 
         sourceTypes = taskConfig.getSourceTypes();
         assertEq(sourceTypes.length, 0);
-        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_BLOCKCHAIN);
+        sourceIds = taskConfig.getSourceIds(SOURCE_TYPE_JWK);
         assertEq(sourceIds.length, 0);
+    }
+
+    function _assertSecondRelayerTaskRejected(
+        uint32 sourceType,
+        uint256 sourceId
+    ) internal {
+        vm.prank(governance);
+        taskConfig.setTask(sourceType, sourceId, TASK_EVENTS, abi.encode("events config"));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleTaskConfig.RelayerTaskAlreadyConfigured.selector,
+                sourceType,
+                sourceId,
+                TASK_EVENTS,
+                TASK_STATE_ROOTS
+            )
+        );
+        vm.prank(governance);
+        taskConfig.setTask(sourceType, sourceId, TASK_STATE_ROOTS, abi.encode("state roots config"));
     }
 
     function test_SourceEnumeration_MultipleSourceTypes() public {
@@ -583,4 +611,3 @@ contract OracleTaskConfigTest is Test {
         }
     }
 }
-

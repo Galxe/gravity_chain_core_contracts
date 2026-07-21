@@ -93,6 +93,13 @@ contract MockPolymarketSettlementResolver is IPolymarketSettlementResolver {
         );
     }
 
+    function isSettlementObserved(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view returns (bool observed) {
+        return _settlements[mirrorId][conditionId].exists;
+    }
+
     function getPayoutNumerators(
         uint256 mirrorId,
         bytes32 conditionId
@@ -216,6 +223,28 @@ contract PolymarketMatchMarketTest is Test {
 
         PolymarketMatchMarket.Market memory stored = market.getMarket(marketId);
         assertEq(stored.totalPool, 100 ether);
+        assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
+    }
+
+    function test_RevertWhenBettingAfterSettlementPayloadIsStored() public {
+        NativeOracle oracle = _installNativeOracle();
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+
+        vm.prank(governance);
+        resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 3);
+
+        uint256 marketId = _createMarket(address(resolver));
+        _placeBet(alice, marketId, uint8(PolymarketMatchMarket.MatchOutcome.Draw), 100 ether);
+
+        vm.prank(systemCaller);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 0);
+
+        assertTrue(resolver.isSettlementObserved(MIRROR_ID, CONDITION_ID));
+        vm.expectRevert(PolymarketMatchMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(bob);
+        market.placeBet(marketId, uint8(PolymarketMatchMarket.MatchOutcome.HomeWin), 1 ether);
+
+        assertEq(market.getMarket(marketId).totalPool, 100 ether);
         assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
     }
 

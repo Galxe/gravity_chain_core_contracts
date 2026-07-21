@@ -11,11 +11,20 @@ import { EnumerableSet } from "@openzeppelin/utils/structs/EnumerableSet.sol";
 /// @author Gravity Team
 /// @notice Stores configuration for continuous oracle tasks that validators actively monitor
 /// @dev Tasks are keyed by (sourceType, sourceId, taskName) tuple.
-///      Multiple tasks can exist for the same (sourceType, sourceId) pair.
+///      Relayer-backed sources allow one task per (sourceType, sourceId) because NativeOracle uses
+///      one nonce stream for that pair. Other source types may register multiple named tasks.
 ///      Only GOVERNANCE can create, update, or remove tasks.
 contract OracleTaskConfig is IOracleTaskConfig {
     using EnumerableSet for EnumerableSet.Bytes32Set;
     using EnumerableSet for EnumerableSet.UintSet;
+
+    uint32 private constant SOURCE_TYPE_BLOCKCHAIN = 0;
+    uint32 private constant SOURCE_TYPE_PRICE_FEED = 3;
+    uint32 private constant SOURCE_TYPE_POLYMARKET_SETTLEMENT = 6;
+
+    error RelayerTaskAlreadyConfigured(
+        uint32 sourceType, uint256 sourceId, bytes32 existingTaskName, bytes32 requestedTaskName
+    );
 
     // ========================================================================
     // STATE
@@ -50,6 +59,11 @@ contract OracleTaskConfig is IOracleTaskConfig {
             revert Errors.EmptyConfig();
         }
 
+        EnumerableSet.Bytes32Set storage taskNames = _taskNames[sourceType][sourceId];
+        if (_isRelayerBackedSourceType(sourceType) && !taskNames.contains(taskName) && taskNames.length() != 0) {
+            revert RelayerTaskAlreadyConfigured(sourceType, sourceId, taskNames.at(0), taskName);
+        }
+
         // Register source type and source ID for enumeration (no-op if already exists)
         _registeredSourceTypes.add(sourceType);
         _registeredSourceIds[sourceType].add(sourceId);
@@ -61,6 +75,13 @@ contract OracleTaskConfig is IOracleTaskConfig {
         _tasks[sourceType][sourceId][taskName] = OracleTask({ config: config, updatedAt: uint64(block.timestamp) });
 
         emit TaskSet(sourceType, sourceId, taskName, config);
+    }
+
+    function _isRelayerBackedSourceType(
+        uint32 sourceType
+    ) private pure returns (bool) {
+        return sourceType == SOURCE_TYPE_BLOCKCHAIN || sourceType == SOURCE_TYPE_PRICE_FEED
+            || sourceType == SOURCE_TYPE_POLYMARKET_SETTLEMENT;
     }
 
     /// @inheritdoc IOracleTaskConfig

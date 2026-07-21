@@ -493,7 +493,7 @@ error OracleBatchArrayLengthMismatch(
 
 ## Contract: OracleTaskConfig
 
-Stores configuration for **continuous** oracle tasks that validators actively monitor off-chain. Tasks are keyed by `(sourceType, sourceId, taskName)`, allowing multiple tasks per source (e.g., an Ethereum chain can have a JWK-sync task, a block-header task, and a price-feed task simultaneously).
+Stores configuration for **continuous** oracle tasks that validators actively monitor off-chain. Tasks are keyed by `(sourceType, sourceId, taskName)`. Relayer-backed sources (`sourceType` 0, 3, and 6) allow one task per `(sourceType, sourceId)` because `NativeOracle` maintains one nonce stream for that pair. Other source types may register multiple named tasks.
 
 ### System Address
 

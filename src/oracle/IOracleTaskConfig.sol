@@ -6,7 +6,8 @@ pragma solidity ^0.8.30;
 /// @notice Interface for the Oracle Task Configuration contract
 /// @dev Stores configuration for continuous oracle tasks that validators actively monitor.
 ///      Tasks are keyed by (sourceType, sourceId, taskName) tuple.
-///      Multiple tasks can exist for the same (sourceType, sourceId) pair.
+///      Multiple tasks can exist for the same (sourceType, sourceId) pair except for relayer-backed
+///      sources, whose NativeOracle nonce stream is keyed only by that pair.
 interface IOracleTaskConfig {
     // ========================================================================
     // DATA STRUCTURES

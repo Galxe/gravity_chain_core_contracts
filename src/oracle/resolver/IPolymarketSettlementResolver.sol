@@ -4,6 +4,13 @@ pragma solidity ^0.8.30;
 /// @title IPolymarketSettlementResolver
 /// @notice Read interface used by match markets that settle from mirrored Polymarket CTF resolutions.
 interface IPolymarketSettlementResolver {
+    /// @notice Returns true once a settlement is resolved or its consensus payload is pending replay.
+    /// @dev Markets use this fail-closed predicate to stop accepting stake as soon as the result is public.
+    function isSettlementObserved(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view returns (bool observed);
+
     function getSettlement(
         uint256 mirrorId,
         bytes32 conditionId

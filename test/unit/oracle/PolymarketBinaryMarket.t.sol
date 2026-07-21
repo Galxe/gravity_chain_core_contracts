@@ -89,6 +89,13 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
         );
     }
 
+    function isSettlementObserved(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view returns (bool observed) {
+        return _settlements[mirrorId][conditionId].exists;
+    }
+
     function getPayoutNumerators(
         uint256 mirrorId,
         bytes32 conditionId
@@ -210,6 +217,44 @@ contract PolymarketBinaryMarketTest is Test {
 
         PolymarketBinaryMarket.Market memory stored = market.getMarket(marketId);
         assertEq(stored.totalPool, 100 ether);
+        assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
+    }
+
+    function test_RevertWhenCreatingMarketAfterSettlementPayloadIsStored() public {
+        NativeOracle oracle = _installNativeOracle();
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+
+        vm.prank(governance);
+        resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+
+        vm.prank(systemCaller);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 0);
+
+        PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(resolver), _yesNoSlotMap());
+        vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(governance);
+        market.createMarket(params);
+    }
+
+    function test_RevertWhenBettingAfterSettlementPayloadIsStored() public {
+        NativeOracle oracle = _installNativeOracle();
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+
+        vm.prank(governance);
+        resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+
+        uint256 marketId = _createMarket(address(resolver), _yesNoSlotMap());
+        _placeBet(alice, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.No), 100 ether);
+
+        vm.prank(systemCaller);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 0);
+
+        assertTrue(resolver.isSettlementObserved(MIRROR_ID, CONDITION_ID));
+        vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
+        vm.prank(bob);
+        market.placeBet(marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 1 ether);
+
+        assertEq(market.getMarket(marketId).totalPool, 100 ether);
         assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
     }
 

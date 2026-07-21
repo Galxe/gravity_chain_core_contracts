@@ -2,13 +2,14 @@
 pragma solidity ^0.8.30;
 
 import { INativeOracle, IOracleCallback } from "../INativeOracle.sol";
+import { IPolymarketSettlementResolver } from "./IPolymarketSettlementResolver.sol";
 import { SystemAddresses } from "../../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../../foundation/SystemAccessControl.sol";
 
 /// @title PolymarketSettlementResolver
 /// @notice Callback for finalized Polymarket CTF settlement events mirrored from Polygon.
 /// @dev NativeOracle keeps the raw payload. This resolver stores application-ready settlement state.
-contract PolymarketSettlementResolver is IOracleCallback {
+contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementResolver {
     uint32 public constant SOURCE_TYPE_POLYMARKET_SETTLEMENT = 6;
     uint256 public constant POLYGON_CHAIN_ID = 137;
     uint8 public constant SETTLEMENT_KIND_CTF_CONDITION_RESOLUTION = 1;
@@ -145,12 +146,26 @@ contract PolymarketSettlementResolver is IOracleCallback {
         _resolve(mirrorId, nonce, abi.decode(record.data, (PolymarketSettlementPayload)));
     }
 
+    /// @inheritdoc IPolymarketSettlementResolver
+    function isSettlementObserved(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view override returns (bool observed) {
+        if (_settlements[mirrorId][conditionId].exists) return true;
+
+        return
+            INativeOracle(SystemAddresses.NATIVE_ORACLE).getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId)
+                != 0;
+    }
+
+    /// @inheritdoc IPolymarketSettlementResolver
     function getSettlement(
         uint256 mirrorId,
         bytes32 conditionId
     )
         external
         view
+        override
         returns (
             bool exists,
             uint128 nonce,
@@ -179,10 +194,11 @@ contract PolymarketSettlementResolver is IOracleCallback {
         );
     }
 
+    /// @inheritdoc IPolymarketSettlementResolver
     function getPayoutNumerators(
         uint256 mirrorId,
         bytes32 conditionId
-    ) external view returns (uint256[] memory) {
+    ) external view override returns (uint256[] memory) {
         return _settlements[mirrorId][conditionId].payoutNumerators;
     }
 
