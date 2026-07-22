@@ -22,6 +22,10 @@ fs_permissions = [
     { access = "read", path = "./out" },
 ]
 
+[profile.default.invariant]
+runs = 128
+depth = 64
+
 [fmt]
 line_length = 120
 tab_width = 4
