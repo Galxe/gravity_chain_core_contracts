@@ -340,7 +340,12 @@ For the v1 single-condition 3-way market:
 11. Set market status to `Settled` and store `winningOutcome`.
 12. Emit `MarketSettled`.
 
-If any validation fails, `settleMarket` should revert. Governance or an authorized operator can void only after `oracleDeadline`, unless a manual emergency path is explicitly added.
+If any validation fails, `settleMarket` should revert. Settlement timing uses
+the consensus record timestamp: `recordedAt < oracleDeadline` is timely, while
+equality is late. A timely valid payload pending resolver replay blocks void and
+may settle after replay using its original timestamp. After `oracleDeadline`,
+governance may void only when there is no timely valid pending or resolved
+observation, unless a manual emergency path is explicitly added.
 
 ## Payout Algorithm
 

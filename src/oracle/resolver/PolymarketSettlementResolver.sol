@@ -14,6 +14,7 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
     uint256 public constant POLYGON_CHAIN_ID = 137;
     uint8 public constant SETTLEMENT_KIND_CTF_CONDITION_RESOLUTION = 1;
     uint256 public constant MAX_OUTCOME_SLOT_COUNT = 32;
+    uint256 private constant ENCODED_PAYLOAD_BASE_WORDS = 13;
 
     struct MirrorConfig {
         bool exists;
@@ -159,6 +160,51 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
     }
 
     /// @inheritdoc IPolymarketSettlementResolver
+    function getSettlementObservation(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view override returns (ObservationStatus status, uint128 nonce, uint64 recordedAt) {
+        Settlement storage settlement = _settlements[mirrorId][conditionId];
+        if (settlement.exists) {
+            nonce = settlement.nonce;
+            INativeOracle.DataRecord memory resolvedRecord = INativeOracle(SystemAddresses.NATIVE_ORACLE)
+                .getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
+            if (resolvedRecord.recordedAt == 0) return (ObservationStatus.Invalid, nonce, 0);
+            return (ObservationStatus.ResolvedValid, nonce, resolvedRecord.recordedAt);
+        }
+
+        nonce = INativeOracle(SystemAddresses.NATIVE_ORACLE).getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId);
+        if (nonce == 0) return (ObservationStatus.None, 0, 0);
+
+        INativeOracle.DataRecord memory pendingRecord =
+            INativeOracle(SystemAddresses.NATIVE_ORACLE).getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
+        if (pendingRecord.recordedAt == 0) return (ObservationStatus.Invalid, nonce, 0);
+
+        MirrorConfig storage config = mirrorConfigs[mirrorId];
+        // One top-level offset, eleven struct-head words, and one dynamic-array length word.
+        uint256 expectedPayloadLength = (ENCODED_PAYLOAD_BASE_WORDS + config.outcomeSlotCount) * 32;
+        if (!config.exists || pendingRecord.data.length != expectedPayloadLength) {
+            return (ObservationStatus.Invalid, nonce, pendingRecord.recordedAt);
+        }
+
+        try this.decodeSettlementPayload(pendingRecord.data) returns (PolymarketSettlementPayload memory payload) {
+            status = _isValidPendingPayload(mirrorId, conditionId, payload)
+                ? ObservationStatus.PendingValid
+                : ObservationStatus.Invalid;
+            return (status, nonce, pendingRecord.recordedAt);
+        } catch {
+            return (ObservationStatus.Invalid, nonce, pendingRecord.recordedAt);
+        }
+    }
+
+    /// @notice ABI decoder used by getSettlementObservation to classify malformed stored payloads.
+    function decodeSettlementPayload(
+        bytes calldata encoded
+    ) external pure returns (PolymarketSettlementPayload memory) {
+        return abi.decode(encoded, (PolymarketSettlementPayload));
+    }
+
+    /// @inheritdoc IPolymarketSettlementResolver
     function getSettlement(
         uint256 mirrorId,
         bytes32 conditionId
@@ -231,14 +277,14 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
             revert InvalidSettlementPayload();
         }
 
-        bool hasPayout;
+        uint256 positivePayoutCount;
         for (uint256 i; i < payload.payoutNumerators.length;) {
-            if (payload.payoutNumerators[i] > 0) hasPayout = true;
+            if (payload.payoutNumerators[i] > 0) ++positivePayoutCount;
             unchecked {
                 ++i;
             }
         }
-        if (!hasPayout) revert InvalidSettlementPayload();
+        if (positivePayoutCount != 1) revert InvalidSettlementPayload();
 
         Settlement storage stored = _settlements[payload.mirrorId][payload.conditionId];
         if (stored.exists) revert SettlementAlreadyResolved(payload.mirrorId, payload.conditionId);
@@ -265,5 +311,32 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
             payload.logIndex,
             payload.payoutNumerators
         );
+    }
+
+    function _isValidPendingPayload(
+        uint256 mirrorId,
+        bytes32 conditionId,
+        PolymarketSettlementPayload memory payload
+    ) internal view returns (bool) {
+        MirrorConfig memory config = mirrorConfigs[mirrorId];
+        if (
+            !config.exists || payload.mirrorId != mirrorId || payload.conditionId != conditionId
+                || payload.polygonChainId != config.polygonChainId || payload.ctf != config.ctf
+                || payload.conditionId != config.conditionId || payload.outcomeSlotCount != config.outcomeSlotCount
+                || payload.payoutNumerators.length != payload.outcomeSlotCount
+                || payload.settlementKind != SETTLEMENT_KIND_CTF_CONDITION_RESOLUTION || payload.oracle == address(0)
+                || payload.questionId == bytes32(0) || payload.txHash == bytes32(0)
+        ) {
+            return false;
+        }
+
+        uint256 positivePayoutCount;
+        for (uint256 i; i < payload.payoutNumerators.length;) {
+            if (payload.payoutNumerators[i] > 0) ++positivePayoutCount;
+            unchecked {
+                ++i;
+            }
+        }
+        return positivePayoutCount == 1;
     }
 }

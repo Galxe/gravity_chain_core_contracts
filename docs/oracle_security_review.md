@@ -91,10 +91,14 @@ deterministic but does not expose a sweep path.
 
 ### Void liveness
 
-`voidMarket` is governance-only after `oracleDeadline`. This supports manual
-review of cancelled or postponed events, but user refunds depend on governance
-liveness. Decide whether the final product keeps this policy or permits anyone
-to trigger a strictly deterministic void after the deadline.
+Settlement eligibility is fixed by the consensus record time: only a valid
+observation with `recordedAt < oracleDeadline` may settle. A timely payload that
+is pending resolver replay blocks `voidMarket`; after replay it can settle using
+the original record time. An observation at or after the deadline, no
+observation, or an invalid stored payload permits governance to void once the
+deadline is reached. `voidMarket` remains governance-only, so user refunds still
+depend on governance liveness. Decide whether the final product keeps this
+policy or permits anyone to trigger the same deterministic void rule.
 
 ### Challenge delay
 

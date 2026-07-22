@@ -21,6 +21,7 @@ contract MockPolymarketSettlementResolver is IPolymarketSettlementResolver {
 
     struct MockSettlement {
         bool exists;
+        uint64 recordedAt;
         uint256 polygonChainId;
         address ctf;
         uint256 outcomeSlotCount;
@@ -43,6 +44,7 @@ contract MockPolymarketSettlementResolver is IPolymarketSettlementResolver {
     ) external {
         MockSettlement storage settlement = _settlements[mirrorId][conditionId];
         settlement.exists = true;
+        settlement.recordedAt = uint64(block.timestamp);
         settlement.polygonChainId = polygonChainId;
         settlement.ctf = ctf;
         settlement.outcomeSlotCount = outcomeSlotCount;
@@ -57,6 +59,14 @@ contract MockPolymarketSettlementResolver is IPolymarketSettlementResolver {
                 ++i;
             }
         }
+    }
+
+    function setRecordedAt(
+        uint256 mirrorId,
+        bytes32 conditionId,
+        uint64 recordedAt
+    ) external {
+        _settlements[mirrorId][conditionId].recordedAt = recordedAt;
     }
 
     function getSettlement(
@@ -98,6 +108,15 @@ contract MockPolymarketSettlementResolver is IPolymarketSettlementResolver {
         bytes32 conditionId
     ) external view returns (bool observed) {
         return _settlements[mirrorId][conditionId].exists;
+    }
+
+    function getSettlementObservation(
+        uint256 mirrorId,
+        bytes32 conditionId
+    ) external view returns (IPolymarketSettlementResolver.ObservationStatus status, uint128 nonce, uint64 recordedAt) {
+        MockSettlement storage settlement = _settlements[mirrorId][conditionId];
+        if (!settlement.exists) return (IPolymarketSettlementResolver.ObservationStatus.None, 0, 0);
+        return (IPolymarketSettlementResolver.ObservationStatus.ResolvedValid, 1, settlement.recordedAt);
     }
 
     function getPayoutNumerators(
@@ -454,6 +473,37 @@ contract PolymarketMatchMarketTest is Test {
         vm.prank(alice);
         assertEq(market.refund(marketId), 100 ether);
         assertEq(collateral.balanceOf(alice), STARTING_BALANCE);
+    }
+
+    function test_TimelySettlementCanSettleAfterDeadlineAndBlocksVoid() public {
+        uint256 marketId = _createFundedLockedMarket(address(mockResolver));
+        uint64 deadline = market.getMarket(marketId).oracleDeadline;
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 3, 1);
+        (,, uint64 recordedAt) = mockResolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
+
+        vm.warp(deadline);
+        vm.expectRevert(abi.encodeWithSelector(PolymarketMatchMarket.TimelySettlementObserved.selector, recordedAt));
+        vm.prank(governance);
+        market.voidMarket(marketId);
+
+        market.settleMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketMatchMarket.MarketStatus.Settled));
+    }
+
+    function test_ObservationAtDeadlineIsLateAndMarketCanBeVoided() public {
+        uint256 marketId = _createFundedLockedMarket(address(mockResolver));
+        uint64 deadline = market.getMarket(marketId).oracleDeadline;
+        vm.warp(deadline);
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 3, 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(PolymarketMatchMarket.SettlementObservedAfterDeadline.selector, deadline, deadline)
+        );
+        market.settleMarket(marketId);
+
+        vm.prank(governance);
+        market.voidMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketMatchMarket.MarketStatus.Voided));
     }
 
     function test_IntegrationSettlesFromNativeOracleAndRealResolver() public {

@@ -5,6 +5,7 @@ import { Test } from "forge-std/Test.sol";
 import { NativeOracle } from "../../../src/oracle/NativeOracle.sol";
 import { INativeOracle } from "../../../src/oracle/INativeOracle.sol";
 import { PolymarketSettlementResolver } from "../../../src/oracle/resolver/PolymarketSettlementResolver.sol";
+import { IPolymarketSettlementResolver } from "../../../src/oracle/resolver/IPolymarketSettlementResolver.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 
@@ -80,6 +81,12 @@ contract PolymarketSettlementResolverTest is Test {
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1);
         assertEq(record.blockNumber, SOURCE_BLOCK);
         assertEq(record.data, payload);
+
+        (IPolymarketSettlementResolver.ObservationStatus status, uint128 observedNonce, uint64 recordedAt) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedValid));
+        assertEq(observedNonce, 1);
+        assertEq(recordedAt, record.recordedAt);
     }
 
     function test_ReplayStoredSettlementAfterCallbackGasFailure() public {
@@ -91,11 +98,22 @@ contract PolymarketSettlementResolverTest is Test {
         assertFalse(exists);
         assertTrue(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
 
+        (IPolymarketSettlementResolver.ObservationStatus status, uint128 observedNonce, uint64 recordedAt) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.PendingValid));
+        assertEq(observedNonce, 1);
+        assertEq(recordedAt, oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt);
+
         resolver.replaySettlement(DRAW_MARKET_ID, 1);
         uint128 nonce;
         (exists, nonce,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
         assertTrue(exists);
         assertEq(nonce, 1);
+
+        (status, observedNonce, recordedAt) = resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedValid));
+        assertEq(observedNonce, 1);
+        assertEq(recordedAt, oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt);
     }
 
     function test_RevertWhenRegisteringMirrorTwice() public {
@@ -109,11 +127,19 @@ contract PolymarketSettlementResolverTest is Test {
     function test_SecondSettlementCannotOverwriteResolvedCondition() public {
         bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
         _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
+        uint64 firstRecordedAt = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt;
+        vm.warp(block.timestamp + 1);
         _record(DRAW_MARKET_ID, 2, SOURCE_BLOCK + 1, payload);
 
         (, uint128 nonce,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
         assertEq(nonce, 1);
         assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 2).data, payload);
+
+        (IPolymarketSettlementResolver.ObservationStatus status, uint128 observedNonce, uint64 recordedAt) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedValid));
+        assertEq(observedNonce, 1);
+        assertEq(recordedAt, firstRecordedAt);
     }
 
     function test_MismatchedConditionFailsCallbackButStoresRawPayload() public {
@@ -128,6 +154,36 @@ contract PolymarketSettlementResolverTest is Test {
 
         INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1);
         assertEq(record.data, payload);
+
+        (IPolymarketSettlementResolver.ObservationStatus status, uint128 nonce, uint64 recordedAt) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
+        assertEq(nonce, 1);
+        assertEq(recordedAt, record.recordedAt);
+    }
+
+    function test_MalformedStoredPayloadIsInvalidObservation() public {
+        bytes memory malformed = hex"deadbeef";
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, malformed);
+
+        (IPolymarketSettlementResolver.ObservationStatus status, uint128 nonce, uint64 recordedAt) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
+        assertEq(nonce, 1);
+        assertGt(recordedAt, 0);
+    }
+
+    function test_SplitPayoutIsStoredAsInvalidObservation() public {
+        uint256[] memory payouts = new uint256[](2);
+        payouts[0] = 1;
+        payouts[1] = 1;
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts));
+
+        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertFalse(exists);
+        (IPolymarketSettlementResolver.ObservationStatus status,,) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
     }
 
     function test_RevertWhenCallbackCalledOutsideNativeOracle() public {
@@ -162,6 +218,14 @@ contract PolymarketSettlementResolverTest is Test {
         payouts[0] = 1;
         payouts[1] = 0;
 
+        return _settlementPayload(mirrorId, conditionId, payouts);
+    }
+
+    function _settlementPayload(
+        uint256 mirrorId,
+        bytes32 conditionId,
+        uint256[] memory payouts
+    ) internal view returns (bytes memory) {
         return abi.encode(
             PolymarketSettlementResolver.PolymarketSettlementPayload({
                 mirrorId: mirrorId,

@@ -620,7 +620,18 @@ If no resolver state exists yet:
 - wait for relayer/consensus or investigate `fromBlock`, RPC mapping, and
   provider range limits
 
-After `oracleDeadline`, governance may void and users refund.
+At `oracleDeadline`, inspect the resolver observation rather than transaction
+ordering:
+
+- `ResolvedValid` with `recordedAt < oracleDeadline` must settle, even if
+  `settleMarket` is called after the deadline.
+- `PendingValid` with `recordedAt < oracleDeadline` blocks void until
+  `replaySettlement` succeeds; it then settles using the original record time.
+- no observation, an invalid stored payload, or `recordedAt >= oracleDeadline`
+  allows governance to void and users to refund.
+
+Equality is late: an observation recorded exactly at `oracleDeadline` cannot
+settle.
 
 ### Ambiguous or Split Payout
 

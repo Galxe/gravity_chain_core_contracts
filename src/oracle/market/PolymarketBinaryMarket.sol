@@ -104,6 +104,8 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
     error SettlementMismatch();
     error AmbiguousPayout();
     error OracleDeadlineNotReached();
+    error SettlementObservedAfterDeadline(uint64 recordedAt, uint64 oracleDeadline);
+    error TimelySettlementObserved(uint64 recordedAt);
     error NothingToClaim();
     error NothingToRefund();
     error MarketNotFound(uint256 marketId);
@@ -198,6 +200,8 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         }
         if (market.status != MarketStatus.Locked) revert MarketNotLocked();
 
+        _requireTimelyResolvedSettlement(_settlementRefs[marketId], market.oracleDeadline);
+
         (uint8 winningOutcome, bytes32 txHash, uint256 logIndex) = _resolveWinningOutcome(marketId);
 
         if (outcomeTotal[marketId][winningOutcome] == 0) {
@@ -239,6 +243,8 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
             revert MarketAlreadyFinalized();
         }
         if (block.timestamp < market.oracleDeadline) revert OracleDeadlineNotReached();
+
+        _requireNoTimelySettlement(_settlementRefs[marketId], market.oracleDeadline);
 
         market.status = MarketStatus.Voided;
         emit MarketVoided(marketId, VOID_REASON_ORACLE_DEADLINE_EXPIRED);
@@ -336,6 +342,35 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
     ) internal view {
         if (IPolymarketSettlementResolver(ref.resolver).isSettlementObserved(ref.mirrorId, ref.conditionId)) {
             revert SettlementAlreadyAvailable();
+        }
+    }
+
+    function _requireTimelyResolvedSettlement(
+        SettlementRef storage ref,
+        uint64 oracleDeadline
+    ) internal view {
+        (IPolymarketSettlementResolver.ObservationStatus status,, uint64 recordedAt) =
+            IPolymarketSettlementResolver(ref.resolver).getSettlementObservation(ref.mirrorId, ref.conditionId);
+        if (status != IPolymarketSettlementResolver.ObservationStatus.ResolvedValid) {
+            revert SettlementUnavailable();
+        }
+        if (recordedAt >= oracleDeadline) {
+            revert SettlementObservedAfterDeadline(recordedAt, oracleDeadline);
+        }
+    }
+
+    function _requireNoTimelySettlement(
+        SettlementRef storage ref,
+        uint64 oracleDeadline
+    ) internal view {
+        (IPolymarketSettlementResolver.ObservationStatus status,, uint64 recordedAt) =
+            IPolymarketSettlementResolver(ref.resolver).getSettlementObservation(ref.mirrorId, ref.conditionId);
+        if (
+            recordedAt < oracleDeadline
+                && (status == IPolymarketSettlementResolver.ObservationStatus.PendingValid
+                    || status == IPolymarketSettlementResolver.ObservationStatus.ResolvedValid)
+        ) {
+            revert TimelySettlementObserved(recordedAt);
         }
     }
 
