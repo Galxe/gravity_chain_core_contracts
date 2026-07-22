@@ -89,6 +89,17 @@ contract PolymarketSettlementResolverTest is Test {
         assertEq(recordedAt, record.recordedAt);
     }
 
+    function test_GetMirrorConfigReturnsRegisteredCondition() public view {
+        (bool exists, uint256 polygonChainId, address ctf, bytes32 conditionId, uint256 outcomeSlotCount) =
+            resolver.getMirrorConfig(DRAW_MARKET_ID);
+
+        assertTrue(exists);
+        assertEq(polygonChainId, POLYGON_CHAIN_ID);
+        assertEq(ctf, CTF);
+        assertEq(conditionId, DRAW_CONDITION_ID);
+        assertEq(outcomeSlotCount, 2);
+    }
+
     function test_ReplayStoredSettlementAfterCallbackGasFailure() public {
         bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
 

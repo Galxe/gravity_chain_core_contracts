@@ -75,6 +75,7 @@ NativeOracle.record(6, mirrorId, nonce, abi.encode(PolymarketSettlementPayload),
 Current resolver responsibilities:
 
 - Registers a mirror config with `registerMirror(mirrorId, 137, ctf, conditionId, outcomeSlotCount)`.
+- Exposes that immutable config through `getMirrorConfig(mirrorId)` so a market can bind to it before accepting stake.
 - Accepts only `sourceType = 6`.
 - Decodes `PolymarketSettlementPayload`.
 - Validates mirror ID, Polygon chain ID, CTF address, condition ID, outcome slot count, settlement kind, and non-empty payout.
@@ -323,22 +324,23 @@ error NothingToRefund();
 
 For the v1 single-condition 3-way market:
 
-1. Load `Market` and require status is `Locked`.
-2. Load `SettlementRef` and require `sourceType == 6`.
-3. Call `PolymarketSettlementResolver.getSettlement(mirrorId, conditionId)`.
-4. Require `exists == true`.
-5. Validate returned fields:
+1. At market creation, load `getMirrorConfig(mirrorId)` and require its chain ID, CTF, condition ID, and outcome slot count exactly match `SettlementRef`.
+2. Load `Market` and require status is `Locked`.
+3. Load `SettlementRef` and require `sourceType == 6`.
+4. Call `PolymarketSettlementResolver.getSettlement(mirrorId, conditionId)`.
+5. Require `exists == true`.
+6. Validate returned fields:
    - `polygonChainId == 137`
    - `ctf == settlementRef.ctf`
    - `outcomeSlotCount == settlementRef.outcomeSlotCount`
    - `settlementKind == 1`
-6. Call `getPayoutNumerators(mirrorId, conditionId)`.
-7. Require length equals `outcomeSlotCount`.
-8. Count positive payout slots.
-9. Require exactly one positive slot.
-10. Map positive slot through `slotToOutcome`.
-11. Set market status to `Settled` and store `winningOutcome`.
-12. Emit `MarketSettled`.
+7. Call `getPayoutNumerators(mirrorId, conditionId)`.
+8. Require length equals `outcomeSlotCount`.
+9. Count positive payout slots.
+10. Require exactly one positive slot.
+11. Map positive slot through `slotToOutcome`.
+12. Set market status to `Settled` and store `winningOutcome`.
+13. Emit `MarketSettled`.
 
 If any validation fails, `settleMarket` should revert. Settlement timing uses
 the consensus record timestamp: `recordedAt < oracleDeadline` is timely, while
@@ -492,6 +494,7 @@ If the real Polymarket market is instead a binary "Will Portugal win?" market, i
 1. Market creation
    - accepts valid `SettlementRef`
    - rejects zero `specHash`, invalid times, non-137 chain ID, zero CTF, zero condition ID, wrong source type, empty slot mapping
+   - rejects an unregistered mirror or any `SettlementRef` that differs from the resolver's immutable mirror config
    - emits `MarketCreated`
 
 2. Betting

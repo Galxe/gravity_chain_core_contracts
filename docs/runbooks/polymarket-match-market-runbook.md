@@ -431,6 +431,10 @@ PolymarketSettlementResolver.registerMirror(
 
 The resolver will reject payloads with mismatched source id, chain id, CTF,
 condition id, outcome slot count, settlement kind, or empty payout vector.
+Register the mirror before creating the Gravity market. Market creation calls
+`getMirrorConfig(mirrorId)` and rejects any `SettlementRef` whose chain ID, CTF,
+condition ID, or outcome slot count differs from the registered config, before
+users can deposit collateral.
 
 ### 6. Configure Oracle Task
 

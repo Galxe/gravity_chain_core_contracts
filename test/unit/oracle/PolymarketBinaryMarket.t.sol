@@ -29,7 +29,33 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
         uint256[] payoutNumerators;
     }
 
+    struct MockMirrorConfig {
+        bool exists;
+        uint256 polygonChainId;
+        address ctf;
+        bytes32 conditionId;
+        uint256 outcomeSlotCount;
+    }
+
+    mapping(uint256 mirrorId => MockMirrorConfig config) private _mirrorConfigs;
     mapping(uint256 mirrorId => mapping(bytes32 conditionId => MockSettlement settlement)) private _settlements;
+
+    function setMirrorConfig(
+        uint256 mirrorId,
+        uint256 polygonChainId,
+        address ctf,
+        bytes32 conditionId,
+        uint256 outcomeSlotCount
+    ) external {
+        _mirrorConfigs[mirrorId] = MockMirrorConfig(true, polygonChainId, ctf, conditionId, outcomeSlotCount);
+    }
+
+    function getMirrorConfig(
+        uint256 mirrorId
+    ) external view returns (bool, uint256, address, bytes32, uint256) {
+        MockMirrorConfig storage config = _mirrorConfigs[mirrorId];
+        return (config.exists, config.polygonChainId, config.ctf, config.conditionId, config.outcomeSlotCount);
+    }
 
     function setSettlement(
         uint256 mirrorId,
@@ -155,6 +181,7 @@ contract PolymarketBinaryMarketTest is Test {
         market = new PolymarketBinaryMarket();
         mockResolver = new MockBinaryPolymarketResolver();
         collateral = new MockGToken();
+        mockResolver.setMirrorConfig(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
 
         _fundAndApprove(alice);
         _fundAndApprove(bob);
@@ -212,6 +239,28 @@ contract PolymarketBinaryMarketTest is Test {
         params.closesAt = params.opensAt;
 
         vm.expectRevert(PolymarketBinaryMarket.InvalidMarketTime.selector);
+        vm.prank(governance);
+        market.createMarket(params);
+    }
+
+    function test_RevertWhenSettlementRefDoesNotMatchRegisteredMirror() public {
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+        vm.prank(governance);
+        resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+
+        PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(resolver), _yesNoSlotMap());
+        params.settlementRef.ctf = address(0xBEEF);
+
+        vm.expectRevert(PolymarketBinaryMarket.InvalidSettlementRef.selector);
+        vm.prank(governance);
+        market.createMarket(params);
+    }
+
+    function test_RevertWhenResolverMirrorIsNotRegistered() public {
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+        PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(resolver), _yesNoSlotMap());
+
+        vm.expectRevert(PolymarketBinaryMarket.InvalidSettlementRef.selector);
         vm.prank(governance);
         market.createMarket(params);
     }
@@ -391,6 +440,7 @@ contract PolymarketBinaryMarketTest is Test {
         market.settleMarket(ambiguousMarketId);
 
         MockBinaryPolymarketResolver mismatchResolver = new MockBinaryPolymarketResolver();
+        mismatchResolver.setMirrorConfig(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
         uint256 mismatchMarketId = _createFundedLockedMarket(address(mismatchResolver), _yesNoSlotMap());
         mismatchResolver.setSettlement(MIRROR_ID, CONDITION_ID, 1, CTF, 2, 1, _singleWinningPayout(0));
 

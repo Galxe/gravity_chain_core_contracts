@@ -336,6 +336,15 @@ contract PolymarketMatchMarket is ReentrancyGuard {
             }
         }
 
+        (bool mirrorExists, uint256 polygonChainId, address ctf, bytes32 conditionId, uint256 outcomeSlotCount) =
+            IPolymarketSettlementResolver(ref.resolver).getMirrorConfig(ref.mirrorId);
+        if (
+            !mirrorExists || polygonChainId != ref.polygonChainId || ctf != ref.ctf || conditionId != ref.conditionId
+                || outcomeSlotCount != ref.outcomeSlotCount
+        ) {
+            revert InvalidSettlementRef();
+        }
+
         if (IPolymarketSettlementResolver(ref.resolver).isSettlementObserved(ref.mirrorId, ref.conditionId)) {
             revert SettlementAlreadyAvailable();
         }

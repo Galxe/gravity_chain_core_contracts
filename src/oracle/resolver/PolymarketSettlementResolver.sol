@@ -117,6 +117,19 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         emit MirrorRegistered(mirrorId, polygonChainId, ctf, conditionId, outcomeSlotCount);
     }
 
+    /// @inheritdoc IPolymarketSettlementResolver
+    function getMirrorConfig(
+        uint256 mirrorId
+    )
+        external
+        view
+        override
+        returns (bool exists, uint256 polygonChainId, address ctf, bytes32 conditionId, uint256 outcomeSlotCount)
+    {
+        MirrorConfig storage config = mirrorConfigs[mirrorId];
+        return (config.exists, config.polygonChainId, config.ctf, config.conditionId, config.outcomeSlotCount);
+    }
+
     /// @inheritdoc IOracleCallback
     function onOracleEvent(
         uint32 sourceType,

@@ -11,6 +11,14 @@ interface IPolymarketSettlementResolver {
         Invalid
     }
 
+    /// @notice Returns the immutable Polygon condition bound to a mirror ID.
+    function getMirrorConfig(
+        uint256 mirrorId
+    )
+        external
+        view
+        returns (bool exists, uint256 polygonChainId, address ctf, bytes32 conditionId, uint256 outcomeSlotCount);
+
     /// @notice Returns true once a settlement is resolved or its consensus payload is pending replay.
     /// @dev Markets use this fail-closed predicate to stop accepting stake as soon as the result is public.
     function isSettlementObserved(

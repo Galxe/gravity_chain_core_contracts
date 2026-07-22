@@ -62,6 +62,14 @@ interface IPolymarketMarketAccounting {
 }
 
 contract InvariantPolymarketResolver is IPolymarketSettlementResolver {
+    struct MirrorConfig {
+        bool exists;
+        uint256 polygonChainId;
+        address ctf;
+        bytes32 conditionId;
+        uint256 outcomeSlotCount;
+    }
+
     struct Settlement {
         bool exists;
         uint64 recordedAt;
@@ -75,7 +83,25 @@ contract InvariantPolymarketResolver is IPolymarketSettlementResolver {
     bytes32 internal constant QUESTION_ID = keccak256("invariant question");
     bytes32 internal constant SETTLEMENT_TX_HASH = keccak256("invariant settlement transaction");
 
+    mapping(uint256 mirrorId => MirrorConfig config) private _mirrorConfigs;
     mapping(uint256 mirrorId => mapping(bytes32 conditionId => Settlement settlement)) private _settlements;
+
+    function setMirrorConfig(
+        uint256 mirrorId,
+        uint256 polygonChainId,
+        address ctf,
+        bytes32 conditionId,
+        uint256 outcomeSlotCount
+    ) external {
+        _mirrorConfigs[mirrorId] = MirrorConfig(true, polygonChainId, ctf, conditionId, outcomeSlotCount);
+    }
+
+    function getMirrorConfig(
+        uint256 mirrorId
+    ) external view returns (bool, uint256, address, bytes32, uint256) {
+        MirrorConfig storage config = _mirrorConfigs[mirrorId];
+        return (config.exists, config.polygonChainId, config.ctf, config.conditionId, config.outcomeSlotCount);
+    }
 
     function setSettlement(
         uint256 mirrorId,
@@ -446,6 +472,7 @@ contract PolymarketBinaryMarketInvariantTest is PolymarketMarketInvariantTestBas
 
         uint64 closesAt = uint64(block.timestamp + 1 days);
         uint64 oracleDeadline = uint64(block.timestamp + 2 days);
+        resolver.setMirrorConfig(MIRROR_ID, 137, CTF, CONDITION_ID, outcomeCount);
         PolymarketBinaryMarket.CreateMarketParams memory params = PolymarketBinaryMarket.CreateMarketParams({
             specHash: SPEC_HASH,
             opensAt: uint64(block.timestamp),
@@ -512,6 +539,7 @@ contract PolymarketMatchMarketInvariantTest is PolymarketMarketInvariantTestBase
 
         uint64 closesAt = uint64(block.timestamp + 1 days);
         uint64 oracleDeadline = uint64(block.timestamp + 2 days);
+        resolver.setMirrorConfig(MIRROR_ID, 137, CTF, CONDITION_ID, outcomeCount);
         PolymarketMatchMarket.CreateMarketParams memory params = PolymarketMatchMarket.CreateMarketParams({
             specHash: SPEC_HASH,
             opensAt: uint64(block.timestamp),
