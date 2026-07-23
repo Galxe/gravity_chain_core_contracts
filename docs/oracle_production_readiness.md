@@ -14,7 +14,7 @@ flowchart LR
     Relayer["gravity-reth adapters\ncanonical bytes"]
     JWK["gravity-aptos JWK consensus\nvalidator quorum"]
     Native["NativeOracle\nnonce + raw record"]
-    Price["PriceFeedResolver\naggregate + rounds"]
+    Price["PriceFeedResolver\nBinance close + rounds"]
     Poly["PolymarketSettlementResolver\nimmutable settlement"]
     Market["Binary / three-way market\nsettle + claim"]
 

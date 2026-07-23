@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import { Test } from "forge-std/Test.sol";
 import { NativeOracle } from "../../../src/oracle/NativeOracle.sol";
 import { INativeOracle } from "../../../src/oracle/INativeOracle.sol";
-import { MultiSourceOracleResolver } from "../../../src/oracle/resolver/MultiSourceOracleResolver.sol";
 import { PriceFeedResolver } from "../../../src/oracle/resolver/PriceFeedResolver.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
@@ -17,10 +16,6 @@ contract PriceFeedResolverTest is Test {
     uint256 public constant FEED_ID = 1;
     uint256 public constant CALLBACK_GAS_LIMIT = 2_000_000;
 
-    bytes32 public constant SOURCE_A = keccak256("source-a");
-    bytes32 public constant SOURCE_B = keccak256("source-b");
-    bytes32 public constant SOURCE_C = keccak256("source-c");
-
     function setUp() public {
         vm.etch(SystemAddresses.NATIVE_ORACLE, address(new NativeOracle()).code);
         oracle = NativeOracle(SystemAddresses.NATIVE_ORACLE);
@@ -30,138 +25,116 @@ contract PriceFeedResolverTest is Test {
         oracle.setDefaultCallback(SOURCE_TYPE_PRICE_FEED, address(resolver));
     }
 
-    function test_WeightedMeanStoresLatestAndHistoricalRound() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](3);
-        observations[0] = _observation(SOURCE_A, 1_000, 100e8, 1);
-        observations[1] = _observation(SOURCE_B, 1_000, 102e8, 2);
-        observations[2] = _observation(SOURCE_C, 1_000, 98e8, 1);
+    function test_BinanceCloseStoresLatestHistoricalAndRawPayload() public {
+        bytes memory payload = _payload(1, 1_010, 196_12500000);
+        _record(FEED_ID, 1, payload, CALLBACK_GAS_LIMIT);
 
-        bytes memory payload = _payload(1, 1_010, resolver.PRICE_AGG_WEIGHTED_MEAN(), 3, 4, 60, observations);
-        _record(1, payload, CALLBACK_GAS_LIMIT);
-
-        (bool exists, uint64 roundId,,,, uint256 sourceCount, uint256 totalWeight, int256 price) =
-            resolver.latestPrice(FEED_ID);
+        (bool exists, uint64 roundId, uint64 resolvedAt, uint8 decimals, int256 price) = resolver.latestPrice(FEED_ID);
         assertTrue(exists);
         assertEq(roundId, 1);
-        assertEq(sourceCount, 3);
-        assertEq(totalWeight, 4);
-        assertEq(price, 100_50000000);
+        assertEq(resolvedAt, 1_010);
+        assertEq(decimals, 8);
+        assertEq(price, 196_12500000);
 
-        (bool historicalExists,,,,,,, int256 historicalPrice) = resolver.priceRounds(FEED_ID, 1);
+        (bool historicalExists, uint64 historicalRoundId,,, int256 historicalPrice) = resolver.priceRounds(FEED_ID, 1);
         assertTrue(historicalExists);
+        assertEq(historicalRoundId, 1);
         assertEq(historicalPrice, price);
         assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 1).data, payload);
     }
 
-    function test_WeightedMedianIgnoresLightOutlier() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](3);
-        observations[0] = _observation(SOURCE_A, 2_000, 100e8, 1);
-        observations[1] = _observation(SOURCE_B, 2_000, 101e8, 3);
-        observations[2] = _observation(SOURCE_C, 2_000, 110e8, 1);
-
-        _record(1, _payload(1, 2_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 3, 5, 60, observations), CALLBACK_GAS_LIMIT);
-
-        (,,,,,,, int256 price) = resolver.latestPrice(FEED_ID);
-        assertEq(price, 101e8);
-    }
-
-    function test_MaximumObservationSetFitsCallbackBudget() public {
-        uint256 count = resolver.MAX_PRICE_OBSERVATIONS();
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](count);
-        for (uint256 i; i < count; ++i) {
-            observations[i] = _observation(bytes32(i + 1), 2_000, int256(100e8 + i), 1);
-        }
-
-        _record(
-            1,
-            _payload(1, 2_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), count, count, 60, observations),
-            CALLBACK_GAS_LIMIT
-        );
-
-        (bool exists,,,,,,, int256 price) = resolver.latestPrice(FEED_ID);
-        assertTrue(exists);
-        assertEq(price, int256(100e8 + 7));
-    }
-
     function test_ReplayStoredPayloadAfterCallbackGasFailure() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](1);
-        observations[0] = _observation(SOURCE_A, 3_000, 100e8, 1);
-        bytes memory payload = _payload(1, 3_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations);
+        bytes memory payload = _payload(1, 2_010, 196_12500000);
 
-        _record(1, payload, 1);
-        (bool exists,,,,,,,) = resolver.latestPrice(FEED_ID);
+        _record(FEED_ID, 1, payload, 1);
+        (bool exists,,,,) = resolver.latestPrice(FEED_ID);
         assertFalse(exists);
 
         resolver.replayPrice(FEED_ID, 1);
         int256 price;
-        (exists,,,,,,, price) = resolver.latestPrice(FEED_ID);
+        (exists,,,, price) = resolver.latestPrice(FEED_ID);
         assertTrue(exists);
-        assertEq(price, 100e8);
+        assertEq(price, 196_12500000);
     }
 
     function test_ReplayBackfillsHistoricalRoundWithoutRewindingLatest() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](1);
-        observations[0] = _observation(SOURCE_A, 3_000, 100e8, 1);
-        _record(1, _payload(1, 3_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations), 1);
-
-        observations[0] = _observation(SOURCE_A, 4_000, 102e8, 1);
-        _record(2, _payload(2, 4_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations), CALLBACK_GAS_LIMIT);
-
-        (bool latestExists, uint64 latestRoundId,,,,,, int256 latestPrice) = resolver.latestPrice(FEED_ID);
-        assertTrue(latestExists);
-        assertEq(latestRoundId, 2);
-        assertEq(latestPrice, 102e8);
+        _record(FEED_ID, 1, _payload(1, 3_010, 196_12500000), 1);
+        _record(FEED_ID, 2, _payload(2, 4_010, 197_50000000), CALLBACK_GAS_LIMIT);
 
         resolver.replayPrice(FEED_ID, 1);
 
-        (bool historicalExists, uint64 historicalRoundId,,,,,, int256 historicalPrice) =
-            resolver.priceRounds(FEED_ID, 1);
+        (bool historicalExists, uint64 historicalRoundId,,, int256 historicalPrice) = resolver.priceRounds(FEED_ID, 1);
         assertTrue(historicalExists);
         assertEq(historicalRoundId, 1);
-        assertEq(historicalPrice, 100e8);
+        assertEq(historicalPrice, 196_12500000);
 
-        (, latestRoundId,,,,,, latestPrice) = resolver.latestPrice(FEED_ID);
+        (bool latestExists, uint64 latestRoundId,,, int256 latestPrice) = resolver.latestPrice(FEED_ID);
+        assertTrue(latestExists);
         assertEq(latestRoundId, 2);
-        assertEq(latestPrice, 102e8);
+        assertEq(latestPrice, 197_50000000);
     }
 
-    function test_FutureObservationFailsCallbackButRawPayloadRemains() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](1);
-        observations[0] = _observation(SOURCE_A, 4_011, 100e8, 1);
-        bytes memory payload = _payload(1, 4_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations);
+    function test_ZeroPriceFailsCallbackButRawPayloadRemains() public {
+        bytes memory payload = _payload(1, 5_010, 0);
+        _record(FEED_ID, 1, payload, CALLBACK_GAS_LIMIT);
 
-        _record(1, payload, CALLBACK_GAS_LIMIT);
-
-        (bool exists,,,,,,,) = resolver.latestPrice(FEED_ID);
+        (bool exists,,,,) = resolver.latestPrice(FEED_ID);
         assertFalse(exists);
         assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 1).data, payload);
     }
 
-    function test_RejectsMoreThanMaximumObservations() public {
-        uint256 count = resolver.MAX_PRICE_OBSERVATIONS() + 1;
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](count);
-        for (uint256 i; i < count; ++i) {
-            observations[i] = _observation(bytes32(i + 1), 5_000, 100e8, 1);
-        }
-        bytes memory payload = _payload(1, 5_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations);
+    function test_ExcessiveDecimalsFailCallbackButRawPayloadRemains() public {
+        bytes memory payload = abi.encode(
+            PriceFeedResolver.PricePayload({
+                feedId: FEED_ID,
+                roundId: 1,
+                resolvedAt: 6_010,
+                decimals: resolver.MAX_PRICE_DECIMALS() + 1,
+                price: 196_12500000
+            })
+        );
+        _record(FEED_ID, 1, payload, CALLBACK_GAS_LIMIT);
 
-        _record(1, payload, CALLBACK_GAS_LIMIT);
-
-        (bool exists,,,,,,,) = resolver.latestPrice(FEED_ID);
+        (bool exists,,,,) = resolver.latestPrice(FEED_ID);
         assertFalse(exists);
         assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 1).data, payload);
     }
 
-    function test_CompatibilityAliasRetainsPriceFeedAbi() public {
-        MultiSourceOracleResolver compatibilityResolver = new MultiSourceOracleResolver();
-        assertEq(compatibilityResolver.SOURCE_TYPE_PRICE_FEED(), SOURCE_TYPE_PRICE_FEED);
-        assertEq(compatibilityResolver.MAX_PRICE_OBSERVATIONS(), resolver.MAX_PRICE_OBSERVATIONS());
+    function test_StaleRoundFailsCallbackButRawPayloadRemains() public {
+        _record(FEED_ID, 1, _payload(2, 7_010, 197_50000000), CALLBACK_GAS_LIMIT);
+        bytes memory payload = _payload(1, 8_010, 196_12500000);
+        _record(FEED_ID, 2, payload, CALLBACK_GAS_LIMIT);
+
+        (, uint64 latestRoundId,,, int256 latestPrice) = resolver.latestPrice(FEED_ID);
+        assertEq(latestRoundId, 2);
+        assertEq(latestPrice, 197_50000000);
+        assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 2).data, payload);
+    }
+
+    function test_StaleResolvedAtFailsCallbackButRawPayloadRemains() public {
+        _record(FEED_ID, 1, _payload(1, 9_010, 196_12500000), CALLBACK_GAS_LIMIT);
+        bytes memory payload = _payload(2, 9_010, 197_50000000);
+        _record(FEED_ID, 2, payload, CALLBACK_GAS_LIMIT);
+
+        (, uint64 latestRoundId, uint64 resolvedAt,, int256 latestPrice) = resolver.latestPrice(FEED_ID);
+        assertEq(latestRoundId, 1);
+        assertEq(resolvedAt, 9_010);
+        assertEq(latestPrice, 196_12500000);
+        assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 2).data, payload);
+    }
+
+    function test_SourceIdMismatchFailsCallbackButRawPayloadRemains() public {
+        uint256 otherFeedId = FEED_ID + 1;
+        bytes memory payload = _payload(1, 10_010, 196_12500000);
+        _record(otherFeedId, 1, payload, CALLBACK_GAS_LIMIT);
+
+        (bool exists,,,,) = resolver.latestPrice(FEED_ID);
+        assertFalse(exists);
+        assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, otherFeedId, 1).data, payload);
     }
 
     function test_RevertWhenCallbackCalledOutsideNativeOracle() public {
-        PriceFeedResolver.PriceObservation[] memory observations = new PriceFeedResolver.PriceObservation[](1);
-        observations[0] = _observation(SOURCE_A, 6_000, 100e8, 1);
-        bytes memory payload = _payload(1, 6_010, resolver.PRICE_AGG_WEIGHTED_MEDIAN(), 1, 1, 60, observations);
+        bytes memory payload = _payload(1, 11_010, 196_12500000);
         address caller = makeAddr("caller");
 
         vm.expectRevert(abi.encodeWithSelector(NotAllowed.selector, caller, SystemAddresses.NATIVE_ORACLE));
@@ -169,47 +142,34 @@ contract PriceFeedResolverTest is Test {
         resolver.onOracleEvent(SOURCE_TYPE_PRICE_FEED, FEED_ID, 1, payload);
     }
 
+    function test_RevertWhenReplayingMissingRecord() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PriceFeedResolver.RecordUnavailable.selector, SOURCE_TYPE_PRICE_FEED, FEED_ID, uint128(1)
+            )
+        );
+        resolver.replayPrice(FEED_ID, 1);
+    }
+
     function _record(
+        uint256 sourceId,
         uint128 nonce,
         bytes memory payload,
         uint256 callbackGasLimit
     ) internal {
         vm.prank(SystemAddresses.SYSTEM_CALLER);
-        oracle.record(SOURCE_TYPE_PRICE_FEED, FEED_ID, nonce, 0, payload, callbackGasLimit);
+        oracle.record(SOURCE_TYPE_PRICE_FEED, sourceId, nonce, 0, payload, callbackGasLimit);
     }
 
     function _payload(
         uint64 roundId,
         uint64 resolvedAt,
-        uint8 aggregationMode,
-        uint256 minSourceCount,
-        uint256 minTotalWeight,
-        uint64 maxStaleness,
-        PriceFeedResolver.PriceObservation[] memory observations
+        int256 price
     ) internal pure returns (bytes memory) {
         return abi.encode(
             PriceFeedResolver.PricePayload({
-                feedId: FEED_ID,
-                roundId: roundId,
-                resolvedAt: resolvedAt,
-                decimals: 8,
-                aggregationMode: aggregationMode,
-                minSourceCount: minSourceCount,
-                minTotalWeight: minTotalWeight,
-                maxStaleness: maxStaleness,
-                observations: observations
+                feedId: FEED_ID, roundId: roundId, resolvedAt: resolvedAt, decimals: 8, price: price
             })
         );
-    }
-
-    function _observation(
-        bytes32 dataSourceId,
-        uint64 observedAt,
-        int256 price,
-        uint256 weight
-    ) internal pure returns (PriceFeedResolver.PriceObservation memory) {
-        return PriceFeedResolver.PriceObservation({
-            dataSourceId: dataSourceId, observedAt: observedAt, price: price, weight: weight
-        });
     }
 }

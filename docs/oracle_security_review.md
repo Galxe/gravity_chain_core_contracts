@@ -34,20 +34,21 @@ launch.
 Price feed:
 
 - removed the Hype adapter and direct sports/news runtime paths
-- made `provider` mandatory; inline observations require the explicit
-  `inline_fixture_v1` test provider
+- restrict source type `3` to the explicit `binance_index_kline_v1` provider
+- removed multi-source observations, weights, thresholds, and aggregation modes
+  from the task URI, consensus payload, and resolver state
 - moved Binance endpoints to validator-local configuration and reject `baseUrl`
   in consensus task URIs
 - bind each request to one exact closed bucket and verify returned open/close
   timestamps
 - derive round id, resolved time, and source block from the bucket; URI
   overrides are rejected
-- stream responses into a bounded buffer and cap request time, decimals, and
-  observation count
+- stream responses into a bounded buffer and cap request time and decimals
 - make a continuous feed origin immutable for one feed id
 - reconcile nonce and bucket cursor so fixed tasks are idempotent after restart
   and reject buckets older than confirmed history
-- align execution callback gas with a maximum-size resolver test
+- validate positive prices and monotonically increasing round and resolution
+  timestamps at the resolver boundary
 
 Polymarket mirror:
 
@@ -73,7 +74,7 @@ Contracts and SDK:
   settlement for the condition
 - use `Math.mulDiv` for proportional payouts
 - reject unknown markets, duplicate source ids, split payouts, stale rounds,
-  future observations, and arithmetic bounds violations
+  non-positive prices, and invalid decimals
 - cache fetched consensus bytes until the on-chain nonce catches up
 - decode UnsupportedJWK wrappers with canonical ABI validation and return an
   explicit error for disabled RSA payloads instead of panicking

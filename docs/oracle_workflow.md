@@ -61,12 +61,7 @@ gravity://3/1001/price_feed
   &pair=TSLAUSDT
   &interval=1m
   &bucketStartMs=<aligned-start>
-  &continuous=true
   &decimals=8
-  &aggregationMode=2
-  &minSourceCount=1
-  &minTotalWeight=1
-  &maxStaleness=180000
   &graceMs=120000
 ```
 
@@ -90,7 +85,7 @@ sequenceDiagram
     A->>A: validator quorum on identical bytes
     A->>N: recordBatch(sourceType=3, sequential nonce, payload)
     N->>P: onOracleEvent(...)
-    P->>P: validate observations and aggregate round
+    P->>P: validate and store Binance close
 ```
 
 For continuous feeds, Gravity delivery nonce is not the market round id:
@@ -103,8 +98,8 @@ resolvedAt(n)  = bucketEnd(n)
 ```
 
 This mapping lets validators that poll at different wall-clock instants request
-the same immutable bucket. `provider=inline_fixture_v1` exists only for local
-deterministic tests and must be explicit; a missing provider is rejected.
+the same immutable bucket. Only `provider=binance_index_kline_v1` is accepted;
+a missing or different provider is rejected.
 The configured bucket origin is immutable for one `feedId`; a new origin must
 use a new feed id so historical nonces keep one time mapping.
 
