@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 /// @title IPolymarketSettlementResolver
-/// @notice Read interface used by match markets that settle from mirrored Polymarket CTF resolutions.
+/// @notice Read interface used by markets that settle from mirrored Polymarket CTF resolutions.
 interface IPolymarketSettlementResolver {
     enum ObservationStatus {
         None,

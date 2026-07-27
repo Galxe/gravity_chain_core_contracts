@@ -15,8 +15,6 @@ HTTP sports-score and news adapters are outside this scope.
 Related documents:
 
 - [Oracle Production Readiness](oracle_production_readiness.md)
-- [Polymarket Mirror Runbook](runbooks/polymarket-match-market-runbook.md)
-- [Polymarket Market Contract Design](plans/polymarket-match-market-oracle-spec.md)
 
 ## Ownership Boundaries
 
@@ -29,7 +27,7 @@ flowchart LR
     Reth["gravity-reth\nfetch + validate + canonicalize"]
     Aptos["gravity-aptos\nunsupported-JWK consensus"]
     Native["NativeOracle\nnonce + raw bytes"]
-    Price["PriceFeedResolver\nround validation + aggregation"]
+    Price["PriceFeedResolver\nround validation + storage"]
     Settlement["PolymarketSettlementResolver\nimmutable settlement"]
     Market["Gravity market\nescrow + settle + claim"]
 

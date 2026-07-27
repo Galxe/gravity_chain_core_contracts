@@ -8,7 +8,6 @@ This review covers the production-candidate Oracle files on this branch:
 - `PriceFeedResolver`
 - `PolymarketSettlementResolver`
 - `PolymarketBinaryMarket`
-- `PolymarketMatchMarket`
 - the corresponding Binance and Polygon relayer adapters
 - the SDK cached-resend and restart-reconciliation path
 

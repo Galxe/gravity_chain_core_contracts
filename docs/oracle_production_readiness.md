@@ -16,7 +16,7 @@ flowchart LR
     Native["NativeOracle\nnonce + raw record"]
     Price["PriceFeedResolver\nBinance close + rounds"]
     Poly["PolymarketSettlementResolver\nimmutable settlement"]
-    Market["Binary / three-way market\nsettle + claim"]
+    Market["Binary market\nsettle + claim"]
 
     Config --> Relayer
     Local --> Relayer

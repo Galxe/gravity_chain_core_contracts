@@ -24,8 +24,8 @@ contract deployed on Gravity that provides:
 - **Any custom source**: Extensible via governance
 
 See [Price Feed Resolver](./oracle_price_feed_resolver.spec.md) for the
-contract-layer closed-bucket price feed and aggregation design. Polymarket
-settlement mirrors are described in the repository oracle workflow and runbook.
+contract-layer closed-bucket price validation and storage design. Polymarket
+settlement mirrors are described in the repository oracle workflow.
 
 ---
 

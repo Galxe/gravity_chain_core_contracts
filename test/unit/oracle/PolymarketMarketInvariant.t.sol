@@ -6,7 +6,6 @@ import { Test } from "forge-std/Test.sol";
 
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { PolymarketBinaryMarket } from "../../../src/oracle/market/PolymarketBinaryMarket.sol";
-import { PolymarketMatchMarket } from "../../../src/oracle/market/PolymarketMatchMarket.sol";
 import { IPolymarketSettlementResolver } from "../../../src/oracle/resolver/IPolymarketSettlementResolver.sol";
 import { MockGToken } from "../../utils/MockGToken.sol";
 
@@ -511,73 +510,6 @@ contract PolymarketBinaryMarketInvariantTest is PolymarketMarketInvariantTestBas
 
     function _marketSnapshot() internal view override returns (uint8 status, uint256 totalPool) {
         PolymarketBinaryMarket.Market memory stored = binaryMarket.getMarket(marketId);
-        return (uint8(stored.status), stored.totalPool);
-    }
-}
-
-contract PolymarketMatchMarketInvariantTest is PolymarketMarketInvariantTestBase {
-    uint256 internal constant MIRROR_ID = 1_897_398;
-    bytes32 internal constant CONDITION_ID = keccak256("match invariant condition");
-    bytes32 internal constant SPEC_HASH = keccak256("match invariant market");
-    address internal constant CTF = 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045;
-
-    PolymarketMatchMarket internal matchMarket;
-
-    function setUp() public {
-        vm.warp(1_700_000_000);
-        collateral = new MockGToken();
-        resolver = new InvariantPolymarketResolver();
-        matchMarket = new PolymarketMatchMarket();
-        marketAddress = address(matchMarket);
-        accounting = IPolymarketMarketAccounting(marketAddress);
-        outcomeCount = 3;
-
-        uint8[] memory slotToOutcome = new uint8[](outcomeCount);
-        slotToOutcome[0] = 0;
-        slotToOutcome[1] = 1;
-        slotToOutcome[2] = 2;
-
-        uint64 closesAt = uint64(block.timestamp + 1 days);
-        uint64 oracleDeadline = uint64(block.timestamp + 2 days);
-        resolver.setMirrorConfig(MIRROR_ID, 137, CTF, CONDITION_ID, outcomeCount);
-        PolymarketMatchMarket.CreateMarketParams memory params = PolymarketMatchMarket.CreateMarketParams({
-            specHash: SPEC_HASH,
-            opensAt: uint64(block.timestamp),
-            closesAt: closesAt,
-            oracleDeadline: oracleDeadline,
-            collateral: address(collateral),
-            settlementRef: PolymarketMatchMarket.SettlementRef({
-                sourceType: 6,
-                mirrorId: MIRROR_ID,
-                conditionId: CONDITION_ID,
-                resolver: address(resolver),
-                ctf: CTF,
-                polygonChainId: 137,
-                outcomeSlotCount: outcomeCount,
-                slotToOutcome: slotToOutcome,
-                mode: PolymarketMatchMarket.SettlementMode.SingleConditionThreeWay
-            })
-        });
-
-        vm.prank(SystemAddresses.GOVERNANCE);
-        marketId = matchMarket.createMarket(params);
-        handler = new PolymarketMarketHandler(
-            marketAddress,
-            resolver,
-            collateral,
-            marketId,
-            MIRROR_ID,
-            CONDITION_ID,
-            CTF,
-            closesAt,
-            oracleDeadline,
-            outcomeCount
-        );
-        _targetHandler();
-    }
-
-    function _marketSnapshot() internal view override returns (uint8 status, uint256 totalPool) {
-        PolymarketMatchMarket.Market memory stored = matchMarket.getMarket(marketId);
         return (uint8(stored.status), stored.totalPool);
     }
 }

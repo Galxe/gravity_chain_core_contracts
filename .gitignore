@@ -13,9 +13,6 @@ docs/*
 !docs/oracle_workflow.md
 !docs/oracle_production_readiness.md
 !docs/oracle_security_review.md
-!docs/plans/
-docs/plans/*
-!docs/plans/polymarket-match-market-oracle-spec.md
 
 # Dotenv file
 .env
