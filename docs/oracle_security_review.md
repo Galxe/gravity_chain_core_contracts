@@ -72,8 +72,12 @@ Contracts and SDK:
 - reject market creation and new bets after the configured resolver exposes a
   settlement for the condition
 - use `Math.mulDiv` for proportional payouts
-- reject unknown markets, duplicate source ids, split payouts, stale rounds,
-  non-positive prices, and invalid decimals
+- reject unknown markets, duplicate source ids, stale rounds, non-positive
+  prices, and invalid decimals
+- classify one-positive-slot CTF payouts as a winner and canonical
+  multiple-positive-slot payouts as a source-derived void/refund
+- use one strict payload decoder for callback, replay, and pending-observation
+  classification
 - cache fetched consensus bytes until the on-chain nonce catches up
 - decode UnsupportedJWK wrappers with canonical ABI validation and return an
   explicit error for disabled RSA payloads instead of panicking
@@ -89,16 +93,22 @@ choose and test a policy such as assigning the final residual to the last
 winning claimant or sweeping it after a claim deadline. The current behavior is
 deterministic but does not expose a sweep path.
 
-### Void liveness
+### Strict asynchronous Polymarket finality
 
-Settlement eligibility is fixed by the consensus record time: only a valid
-observation with `recordedAt < oracleDeadline` may settle. A timely payload that
-is pending resolver replay blocks `voidMarket`; after replay it can settle using
-the original record time. An observation at or after the deadline, no
-observation, or an invalid stored payload permits governance to void once the
-deadline is reached. `voidMarket` remains governance-only, so user refunds still
-depend on governance liveness. Decide whether the final product keeps this
-policy or permits anyone to trigger the same deterministic void rule.
+The Gravity market has no local oracle deadline and governance has no
+time-based void authority. A locked market remains locked until the reviewed
+Polygon CTF condition produces a canonical terminal payout:
+
+- exactly one positive payout slot settles the mapped Gravity outcome
+- more than one positive payout slot voids the market and enables refunds
+- missing, pending-replay, all-zero, malformed, or identity-mismatched data
+  leaves the market locked
+
+`recordedAt` is retained only as audit metadata and never changes settlement
+eligibility. Finalization is permissionless and reads the Resolver's canonical
+classification; the Market does not parse the payout vector independently.
+If the canonical winning outcome has no Gravity stake, the market refunds all
+stakes instead of trapping the pool.
 
 ### Challenge delay
 

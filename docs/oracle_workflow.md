@@ -109,7 +109,7 @@ An operator-reviewed manifest must freeze at least:
 - Polygon chain id `137`
 - CTF address, `conditionId`, `questionId`, and outcome slot count
 - Gravity `mirrorId`, outcome labels, and `slotToOutcome`
-- safe `fromBlock` and oracle deadline
+- safe exclusive `fromBlock`
 
 Example task identity:
 
@@ -148,9 +148,9 @@ sequenceDiagram
     A->>A: validator quorum on identical bytes
     A->>N: recordBatch(sourceType=6, sequential nonce, payload)
     N->>S: onOracleEvent(...)
-    S->>S: validate immutable identity and store once
-    M->>S: read payout vector
-    M->>M: settle or void, then claim or refund
+    S->>S: strict decode, validate identity and classify payout
+    M->>S: read canonical observation
+    M->>M: permissionless finalize, then claim or refund
 ```
 
 A Polygon event proves settlement, but it does not contain enough product
@@ -160,6 +160,12 @@ manifest review remain off-chain operator responsibilities.
 `fromBlock` is an exclusive cursor: choose a reviewed block before the expected
 settlement. Malformed filtered logs fail the poll without cursor advancement,
 and one mirror stops scanning after its single immutable settlement.
+
+The market is a strict asynchronous mirror. It has no Gravity-local oracle
+deadline and no governance timeout path. A unique positive payout slot settles
+the mapped outcome; a canonical payout with multiple positive slots voids and
+refunds; missing, pending, all-zero, malformed, or mismatched observations leave
+the market locked. `recordedAt` is audit metadata only.
 
 ## Idempotency and Recovery
 

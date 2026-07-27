@@ -7,7 +7,8 @@ interface IPolymarketSettlementResolver {
     enum ObservationStatus {
         None,
         PendingValid,
-        ResolvedValid,
+        ResolvedWinner,
+        ResolvedVoidable,
         Invalid
     }
 
@@ -26,12 +27,22 @@ interface IPolymarketSettlementResolver {
         bytes32 conditionId
     ) external view returns (bool observed);
 
-    /// @notice Returns the consensus observation used to resolve the deadline race.
-    /// @dev Resolved observations are tied to the settlement's stored nonce, not the latest source nonce.
+    /// @notice Returns the canonical state derived from the mirrored Polymarket CTF resolution.
+    /// @dev recordedAt is audit metadata only and must not affect market finalization.
     function getSettlementObservation(
         uint256 mirrorId,
         bytes32 conditionId
-    ) external view returns (ObservationStatus status, uint128 nonce, uint64 recordedAt);
+    )
+        external
+        view
+        returns (
+            ObservationStatus status,
+            uint8 winningSlot,
+            uint128 nonce,
+            uint64 recordedAt,
+            bytes32 txHash,
+            uint256 logIndex
+        );
 
     function getSettlement(
         uint256 mirrorId,

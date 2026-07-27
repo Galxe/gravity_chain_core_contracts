@@ -20,17 +20,13 @@ interface IPolymarketMarketActions {
         uint256 marketId
     ) external;
 
-    function settleMarket(
+    function finalizeMarket(
         uint256 marketId
     ) external;
 
     function claim(
         uint256 marketId
     ) external returns (uint256 amount);
-
-    function voidMarket(
-        uint256 marketId
-    ) external;
 
     function refund(
         uint256 marketId
@@ -71,6 +67,8 @@ contract InvariantPolymarketResolver is IPolymarketSettlementResolver {
 
     struct Settlement {
         bool exists;
+        ObservationStatus status;
+        uint8 winningSlot;
         uint64 recordedAt;
         uint256 polygonChainId;
         address ctf;
@@ -117,6 +115,18 @@ contract InvariantPolymarketResolver is IPolymarketSettlementResolver {
         settlement.ctf = ctf;
         settlement.outcomeSlotCount = outcomeSlotCount;
         settlement.payoutNumerators = payoutNumerators;
+
+        uint256 positivePayoutCount;
+        settlement.winningSlot = type(uint8).max;
+        for (uint256 i; i < payoutNumerators.length; ++i) {
+            if (payoutNumerators[i] > 0) {
+                ++positivePayoutCount;
+                if (positivePayoutCount == 1) settlement.winningSlot = uint8(i);
+            }
+        }
+        if (positivePayoutCount == 1) settlement.status = ObservationStatus.ResolvedWinner;
+        else if (positivePayoutCount > 1) settlement.status = ObservationStatus.ResolvedVoidable;
+        else settlement.status = ObservationStatus.Invalid;
     }
 
     function isSettlementObserved(
@@ -129,10 +139,21 @@ contract InvariantPolymarketResolver is IPolymarketSettlementResolver {
     function getSettlementObservation(
         uint256 mirrorId,
         bytes32 conditionId
-    ) external view returns (ObservationStatus status, uint128 nonce, uint64 recordedAt) {
+    )
+        external
+        view
+        returns (
+            ObservationStatus status,
+            uint8 winningSlot,
+            uint128 nonce,
+            uint64 recordedAt,
+            bytes32 txHash,
+            uint256 logIndex
+        )
+    {
         Settlement storage settlement = _settlements[mirrorId][conditionId];
-        if (!settlement.exists) return (ObservationStatus.None, 0, 0);
-        return (ObservationStatus.ResolvedValid, 1, settlement.recordedAt);
+        if (!settlement.exists) return (ObservationStatus.None, type(uint8).max, 0, 0, bytes32(0), 0);
+        return (settlement.status, settlement.winningSlot, 1, settlement.recordedAt, SETTLEMENT_TX_HASH, 0);
     }
 
     function getSettlement(
@@ -189,7 +210,6 @@ contract PolymarketMarketHandler is Test {
     bytes32 public immutable conditionId;
     address public immutable ctf;
     uint64 public immutable closesAt;
-    uint64 public immutable oracleDeadline;
     uint8 public immutable outcomeCount;
 
     address[ACTOR_COUNT] public actors;
@@ -208,7 +228,6 @@ contract PolymarketMarketHandler is Test {
         bytes32 conditionId_,
         address ctf_,
         uint64 closesAt_,
-        uint64 oracleDeadline_,
         uint8 outcomeCount_
     ) {
         market = IPolymarketMarketActions(market_);
@@ -219,7 +238,6 @@ contract PolymarketMarketHandler is Test {
         conditionId = conditionId_;
         ctf = ctf_;
         closesAt = closesAt_;
-        oracleDeadline = oracleDeadline_;
         outcomeCount = outcomeCount_;
 
         for (uint256 i; i < ACTOR_COUNT; ++i) {
@@ -264,7 +282,7 @@ contract PolymarketMarketHandler is Test {
         phase = 1;
     }
 
-    function settleMarket(
+    function finalizeWinner(
         uint8 winningSlotSeed
     ) external {
         if (phase == 1 && !settlementPrepared) {
@@ -274,25 +292,20 @@ contract PolymarketMarketHandler is Test {
             settlementPrepared = true;
         }
 
-        (bool success,) =
-            address(market).call(abi.encodeWithSelector(IPolymarketMarketActions.settleMarket.selector, marketId));
-        if (!success) return;
-
-        if (phase != 1) invalidTransition = true;
-        phase = 2;
+        _finalize();
     }
 
-    function voidMarket() external {
-        // forge-lint: disable-next-line(block-timestamp)
-        if (block.timestamp < oracleDeadline) vm.warp(oracleDeadline);
+    function finalizeVoidable() external {
+        if (phase == 1 && !settlementPrepared) {
+            uint256[] memory payouts = new uint256[](outcomeCount);
+            for (uint256 i; i < outcomeCount; ++i) {
+                payouts[i] = 1;
+            }
+            resolver.setSettlement(mirrorId, conditionId, 137, ctf, outcomeCount, payouts);
+            settlementPrepared = true;
+        }
 
-        vm.prank(SystemAddresses.GOVERNANCE);
-        (bool success,) =
-            address(market).call(abi.encodeWithSelector(IPolymarketMarketActions.voidMarket.selector, marketId));
-        if (!success) return;
-
-        if (phase == 2) invalidTransition = true;
-        phase = 2;
+        _finalize();
     }
 
     function claim(
@@ -314,6 +327,15 @@ contract PolymarketMarketHandler is Test {
             address(market).call(abi.encodeWithSelector(IPolymarketMarketActions.refund.selector, marketId));
         if (success) totalWithdrawn += abi.decode(returnData, (uint256));
     }
+
+    function _finalize() internal {
+        (bool success,) =
+            address(market).call(abi.encodeWithSelector(IPolymarketMarketActions.finalizeMarket.selector, marketId));
+        if (!success) return;
+
+        if (phase != 1) invalidTransition = true;
+        phase = 2;
+    }
 }
 
 abstract contract PolymarketMarketInvariantTestBase is StdInvariant, Test {
@@ -334,8 +356,8 @@ abstract contract PolymarketMarketInvariantTestBase is StdInvariant, Test {
         bytes4[] memory selectors = new bytes4[](6);
         selectors[0] = PolymarketMarketHandler.placeBet.selector;
         selectors[1] = PolymarketMarketHandler.lockMarket.selector;
-        selectors[2] = PolymarketMarketHandler.settleMarket.selector;
-        selectors[3] = PolymarketMarketHandler.voidMarket.selector;
+        selectors[2] = PolymarketMarketHandler.finalizeWinner.selector;
+        selectors[3] = PolymarketMarketHandler.finalizeVoidable.selector;
         selectors[4] = PolymarketMarketHandler.claim.selector;
         selectors[5] = PolymarketMarketHandler.refund.selector;
         targetContract(address(handler));
@@ -399,7 +421,7 @@ abstract contract PolymarketMarketInvariantTestBase is StdInvariant, Test {
         else assertTrue(status == STATUS_SETTLED || status == STATUS_VOIDED, "phase two must be terminal");
     }
 
-    function testFuzz_VoidRefundsEveryStake(
+    function testFuzz_CanonicalNonUniquePayoutRefundsEveryStake(
         uint96 firstStake,
         uint96 secondStake,
         uint96 thirdStake
@@ -407,7 +429,8 @@ abstract contract PolymarketMarketInvariantTestBase is StdInvariant, Test {
         handler.placeBet(0, 0, firstStake);
         handler.placeBet(1, 1, secondStake);
         handler.placeBet(2, 2, thirdStake);
-        handler.voidMarket();
+        handler.lockMarket();
+        handler.finalizeVoidable();
 
         for (uint256 actorIndex; actorIndex < handler.ACTOR_COUNT(); ++actorIndex) {
             handler.refund(actorIndex);
@@ -431,7 +454,7 @@ abstract contract PolymarketMarketInvariantTestBase is StdInvariant, Test {
         handler.placeBet(1, winningOutcome, secondWinnerStake);
         handler.placeBet(2, losingOutcome, losingStake);
         handler.lockMarket();
-        handler.settleMarket(winningOutcome);
+        handler.finalizeWinner(winningOutcome);
 
         (uint8 status, uint256 totalPool) = _marketSnapshot();
         assertEq(status, STATUS_SETTLED);
@@ -470,13 +493,11 @@ contract PolymarketBinaryMarketInvariantTest is PolymarketMarketInvariantTestBas
         slotToOutcome[1] = 1;
 
         uint64 closesAt = uint64(block.timestamp + 1 days);
-        uint64 oracleDeadline = uint64(block.timestamp + 2 days);
         resolver.setMirrorConfig(MIRROR_ID, 137, CTF, CONDITION_ID, outcomeCount);
         PolymarketBinaryMarket.CreateMarketParams memory params = PolymarketBinaryMarket.CreateMarketParams({
             specHash: SPEC_HASH,
             opensAt: uint64(block.timestamp),
             closesAt: closesAt,
-            oracleDeadline: oracleDeadline,
             collateral: address(collateral),
             settlementRef: PolymarketBinaryMarket.SettlementRef({
                 sourceType: 6,
@@ -494,16 +515,7 @@ contract PolymarketBinaryMarketInvariantTest is PolymarketMarketInvariantTestBas
         vm.prank(SystemAddresses.GOVERNANCE);
         marketId = binaryMarket.createMarket(params);
         handler = new PolymarketMarketHandler(
-            marketAddress,
-            resolver,
-            collateral,
-            marketId,
-            MIRROR_ID,
-            CONDITION_ID,
-            CTF,
-            closesAt,
-            oracleDeadline,
-            outcomeCount
+            marketAddress, resolver, collateral, marketId, MIRROR_ID, CONDITION_ID, CTF, closesAt, outcomeCount
         );
         _targetHandler();
     }

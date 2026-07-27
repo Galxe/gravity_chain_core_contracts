@@ -21,6 +21,8 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
 
     struct MockSettlement {
         bool exists;
+        ObservationStatus status;
+        uint8 winningSlot;
         uint64 recordedAt;
         uint256 polygonChainId;
         address ctf;
@@ -73,13 +75,31 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
         settlement.ctf = ctf;
         settlement.outcomeSlotCount = outcomeSlotCount;
         settlement.settlementKind = settlementKind;
+        settlement.status = ObservationStatus.Invalid;
+        settlement.winningSlot = type(uint8).max;
 
         delete settlement.payoutNumerators;
+        uint256 positivePayoutCount;
         for (uint256 i; i < payoutNumerators.length;) {
             settlement.payoutNumerators.push(payoutNumerators[i]);
+            if (payoutNumerators[i] > 0) {
+                ++positivePayoutCount;
+                if (positivePayoutCount == 1) settlement.winningSlot = uint8(i);
+            }
             unchecked {
                 ++i;
             }
+        }
+
+        MockMirrorConfig storage config = _mirrorConfigs[mirrorId];
+        if (
+            config.exists && polygonChainId == config.polygonChainId && ctf == config.ctf
+                && conditionId == config.conditionId && outcomeSlotCount == config.outcomeSlotCount
+                && payoutNumerators.length == outcomeSlotCount && settlementKind == 1 && positivePayoutCount > 0
+        ) {
+            settlement.status =
+                positivePayoutCount == 1 ? ObservationStatus.ResolvedWinner : ObservationStatus.ResolvedVoidable;
+            if (positivePayoutCount > 1) settlement.winningSlot = type(uint8).max;
         }
     }
 
@@ -135,10 +155,30 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
     function getSettlementObservation(
         uint256 mirrorId,
         bytes32 conditionId
-    ) external view returns (IPolymarketSettlementResolver.ObservationStatus status, uint128 nonce, uint64 recordedAt) {
+    )
+        external
+        view
+        returns (
+            IPolymarketSettlementResolver.ObservationStatus status,
+            uint8 winningSlot,
+            uint128 nonce,
+            uint64 recordedAt,
+            bytes32 txHash,
+            uint256 logIndex
+        )
+    {
         MockSettlement storage settlement = _settlements[mirrorId][conditionId];
-        if (!settlement.exists) return (IPolymarketSettlementResolver.ObservationStatus.None, 0, 0);
-        return (IPolymarketSettlementResolver.ObservationStatus.ResolvedValid, 1, settlement.recordedAt);
+        if (!settlement.exists) {
+            return (IPolymarketSettlementResolver.ObservationStatus.None, type(uint8).max, 0, 0, bytes32(0), 0);
+        }
+        return (
+            settlement.status,
+            settlement.winningSlot,
+            1,
+            settlement.recordedAt,
+            SETTLEMENT_TX_HASH,
+            SETTLEMENT_LOG_INDEX
+        );
     }
 
     function getPayoutNumerators(
@@ -326,12 +366,12 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
     }
 
-    function test_SettleMarketMapsReviewedSlotToYesNoOutcome() public {
+    function test_FinalizeMarketMapsReviewedSlotToYesNoOutcome() public {
         uint8[] memory slotMap = _noYesSlotMap();
         uint256 marketId = _createFundedLockedMarket(address(mockResolver), slotMap);
         _mockSettlement(_singleWinningPayout(1), POLYGON_CHAIN_ID, CTF, 2, 1);
 
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
 
         PolymarketBinaryMarket.Market memory stored = market.getMarket(marketId);
         assertEq(uint8(stored.status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
@@ -348,7 +388,7 @@ contract PolymarketBinaryMarketTest is Test {
         _placeBet(carol, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.No), 600 ether);
         _lockMarket(marketId);
         _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
 
         assertEq(market.claimable(marketId, alice), 250 ether);
         assertEq(market.claimable(marketId, bob), 750 ether);
@@ -409,7 +449,7 @@ contract PolymarketBinaryMarketTest is Test {
         market.placeBet(marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 100 ether);
         _lockMarket(marketId);
         _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
 
         feeToken.setFeeEnabled(true);
         vm.expectRevert(
@@ -425,10 +465,10 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(feeToken.balanceOf(address(market)), 100 ether);
     }
 
-    function test_RevertWhenSettlementUnavailableAmbiguousOrMismatched() public {
+    function test_FinalizeRequiresCanonicalTerminalObservation() public {
         uint256 missingMarketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
         vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
-        market.settleMarket(missingMarketId);
+        market.finalizeMarket(missingMarketId);
 
         uint256 ambiguousMarketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
         uint256[] memory ambiguous = new uint256[](2);
@@ -436,16 +476,16 @@ contract PolymarketBinaryMarketTest is Test {
         ambiguous[1] = 1;
         _mockSettlement(ambiguous, POLYGON_CHAIN_ID, CTF, 2, 1);
 
-        vm.expectRevert(PolymarketBinaryMarket.AmbiguousPayout.selector);
-        market.settleMarket(ambiguousMarketId);
+        market.finalizeMarket(ambiguousMarketId);
+        assertEq(uint8(market.getMarket(ambiguousMarketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
 
         MockBinaryPolymarketResolver mismatchResolver = new MockBinaryPolymarketResolver();
         mismatchResolver.setMirrorConfig(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
         uint256 mismatchMarketId = _createFundedLockedMarket(address(mismatchResolver), _yesNoSlotMap());
         mismatchResolver.setSettlement(MIRROR_ID, CONDITION_ID, 1, CTF, 2, 1, _singleWinningPayout(0));
 
-        vm.expectRevert(PolymarketBinaryMarket.SettlementMismatch.selector);
-        market.settleMarket(mismatchMarketId);
+        vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
+        market.finalizeMarket(mismatchMarketId);
     }
 
     function test_NoWinningStakeVoidsAndRefunds() public {
@@ -455,7 +495,7 @@ contract PolymarketBinaryMarketTest is Test {
         _lockMarket(marketId);
         _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
 
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
 
         PolymarketBinaryMarket.Market memory stored = market.getMarket(marketId);
         assertEq(uint8(stored.status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
@@ -469,55 +509,58 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(collateral.balanceOf(carol), STARTING_BALANCE);
     }
 
-    function test_VoidAfterOracleDeadlineEnablesRefund() public {
-        uint256 marketId = _createMarket(address(mockResolver), _yesNoSlotMap());
-        _placeBet(alice, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 100 ether);
+    function test_UnresolvedMarketRemainsLockedIndefinitely() public {
+        uint256 marketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
+        vm.warp(block.timestamp + 10 * 365 days);
 
-        vm.expectRevert(PolymarketBinaryMarket.OracleDeadlineNotReached.selector);
+        vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Locked));
+
         vm.prank(governance);
-        market.voidMarket(marketId);
-
-        vm.warp(_oracleDeadline());
-        vm.prank(governance);
-        market.voidMarket(marketId);
-
-        vm.prank(alice);
-        assertEq(market.refund(marketId), 100 ether);
-        assertEq(collateral.balanceOf(alice), STARTING_BALANCE);
+        (bool success,) = address(market).call(abi.encodeWithSignature("voidMarket(uint256)", marketId));
+        assertFalse(success);
     }
 
-    function test_TimelySettlementCanSettleAfterDeadlineAndBlocksVoid() public {
+    function test_CanonicalSettlementCanFinalizeYearsAfterMarketCloses() public {
         uint256 marketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
-        uint64 deadline = market.getMarket(marketId).oracleDeadline;
+        vm.warp(block.timestamp + 10 * 365 days);
         _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
-        (,, uint64 recordedAt) = mockResolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
 
-        vm.warp(deadline);
-        vm.expectRevert(abi.encodeWithSelector(PolymarketBinaryMarket.TimelySettlementObserved.selector, recordedAt));
-        vm.prank(governance);
-        market.voidMarket(marketId);
-
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
         assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
     }
 
-    function test_ObservationAtDeadlineIsLateAndMarketCanBeVoided() public {
+    function test_RecordedAtIsAuditMetadataOnly() public {
         uint256 marketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
-        uint64 deadline = market.getMarket(marketId).oracleDeadline;
-        vm.warp(deadline);
         _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
+        mockResolver.setRecordedAt(MIRROR_ID, CONDITION_ID, type(uint64).max);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(PolymarketBinaryMarket.SettlementObservedAfterDeadline.selector, deadline, deadline)
-        );
-        market.settleMarket(marketId);
-
-        vm.prank(governance);
-        market.voidMarket(marketId);
-        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
     }
 
-    function test_TimelyPendingPayloadBlocksVoidAndSettlesAfterReplay() public {
+    function test_PolymarketNonUniquePayoutVoidsAndRefunds() public {
+        uint256 marketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
+        uint256[] memory payouts = new uint256[](2);
+        payouts[0] = 1;
+        payouts[1] = 1;
+        _mockSettlement(payouts, POLYGON_CHAIN_ID, CTF, 2, 1);
+
+        vm.prank(alice);
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
+
+        vm.prank(alice);
+        assertEq(market.refund(marketId), 100 ether);
+        vm.prank(bob);
+        assertEq(market.refund(marketId), 200 ether);
+        vm.prank(carol);
+        assertEq(market.refund(marketId), 300 ether);
+        assertEq(collateral.balanceOf(address(market)), 0);
+    }
+
+    function test_PendingPayloadRemainsLockedUntilReplay() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
@@ -527,27 +570,24 @@ contract PolymarketBinaryMarketTest is Test {
         vm.stopPrank();
 
         uint256 marketId = _createFundedLockedMarket(address(resolver), _yesNoSlotMap());
-        uint64 recordedAt = uint64(block.timestamp);
-        uint64 deadline = market.getMarket(marketId).oracleDeadline;
         vm.prank(systemCaller);
         oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 1);
 
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint64 observedAt) =
+        (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
             resolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
         assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.PendingValid));
-        assertEq(observedAt, recordedAt);
 
-        vm.warp(deadline);
-        vm.expectRevert(abi.encodeWithSelector(PolymarketBinaryMarket.TimelySettlementObserved.selector, recordedAt));
-        vm.prank(governance);
-        market.voidMarket(marketId);
+        vm.warp(block.timestamp + 10 * 365 days);
+        vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Locked));
 
         resolver.replaySettlement(MIRROR_ID, 1);
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
         assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
     }
 
-    function test_InvalidStoredPayloadDoesNotBlockVoid() public {
+    function test_InvalidStoredPayloadRemainsLockedIndefinitely() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
@@ -560,14 +600,14 @@ contract PolymarketBinaryMarketTest is Test {
         vm.prank(systemCaller);
         oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, hex"deadbeef", CALLBACK_GAS_LIMIT);
 
-        (IPolymarketSettlementResolver.ObservationStatus status,,) =
+        (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
             resolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
         assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
 
-        vm.warp(market.getMarket(marketId).oracleDeadline);
-        vm.prank(governance);
-        market.voidMarket(marketId);
-        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
+        vm.warp(block.timestamp + 10 * 365 days);
+        vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Locked));
     }
 
     function test_IntegrationSettlesFromNativeOracleAndRealResolver() public {
@@ -589,12 +629,33 @@ contract PolymarketBinaryMarketTest is Test {
         vm.prank(systemCaller);
         oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
 
-        market.settleMarket(marketId);
+        market.finalizeMarket(marketId);
 
         PolymarketBinaryMarket.Market memory stored = market.getMarket(marketId);
         assertEq(uint8(stored.status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
         assertEq(stored.winningOutcome, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes));
         assertEq(market.claimable(marketId, alice), 300 ether);
+    }
+
+    function test_IntegrationVoidsFromCanonicalNonUniquePolymarketPayout() public {
+        NativeOracle oracle = _installNativeOracle();
+        PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
+
+        vm.startPrank(governance);
+        oracle.setDefaultCallback(market.SOURCE_TYPE_POLYMARKET_SETTLEMENT(), address(resolver));
+        resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+        vm.stopPrank();
+
+        uint256 marketId = _createFundedLockedMarket(address(resolver), _yesNoSlotMap());
+        uint256[] memory payouts = new uint256[](2);
+        payouts[0] = 1;
+        payouts[1] = 1;
+
+        vm.prank(systemCaller);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(payouts), CALLBACK_GAS_LIMIT);
+
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
     }
 
     function _createMarket(
@@ -613,7 +674,6 @@ contract PolymarketBinaryMarketTest is Test {
         params.specHash = SPEC_HASH;
         params.opensAt = _opensAt();
         params.closesAt = _closesAt();
-        params.oracleDeadline = _oracleDeadline();
         params.collateral = address(collateral);
         params.settlementRef = PolymarketBinaryMarket.SettlementRef({
             sourceType: 6,
@@ -726,9 +786,5 @@ contract PolymarketBinaryMarketTest is Test {
 
     function _closesAt() internal view returns (uint64) {
         return uint64(block.timestamp + 1 hours);
-    }
-
-    function _oracleDeadline() internal view returns (uint64) {
-        return uint64(block.timestamp + 2 hours);
     }
 }

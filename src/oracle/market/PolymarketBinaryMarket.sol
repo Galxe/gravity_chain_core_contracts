@@ -12,16 +12,15 @@ import { IPolymarketSettlementResolver } from "../resolver/IPolymarketSettlement
 
 /// @title PolymarketBinaryMarket
 /// @notice Binary market settled from a reviewed Polymarket CTF mirror.
-/// @dev V1 supports one two-outcome CTF condition and rejects split/ambiguous payouts.
+/// @dev V1 supports one two-outcome CTF condition. Only canonical Polymarket resolution can terminalize a market.
 contract PolymarketBinaryMarket is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint32 public constant SOURCE_TYPE_POLYMARKET_SETTLEMENT = 6;
     uint256 public constant POLYGON_CHAIN_ID = 137;
-    uint8 public constant SETTLEMENT_KIND_CTF_CONDITION_RESOLUTION = 1;
     uint8 public constant BINARY_OUTCOME_COUNT = 2;
 
-    bytes32 public constant VOID_REASON_ORACLE_DEADLINE_EXPIRED = keccak256("ORACLE_DEADLINE_EXPIRED");
+    bytes32 public constant VOID_REASON_POLYMARKET_NON_UNIQUE_PAYOUT = keccak256("POLYMARKET_NON_UNIQUE_PAYOUT");
     bytes32 public constant VOID_REASON_NO_WINNING_STAKE = keccak256("NO_WINNING_STAKE");
 
     enum MarketStatus {
@@ -56,7 +55,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         bytes32 specHash;
         uint64 opensAt;
         uint64 closesAt;
-        uint64 oracleDeadline;
         address collateral;
         MarketStatus status;
         uint8 winningOutcome;
@@ -67,7 +65,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         bytes32 specHash;
         uint64 opensAt;
         uint64 closesAt;
-        uint64 oracleDeadline;
         address collateral;
         SettlementRef settlementRef;
     }
@@ -102,10 +99,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
     error SettlementUnavailable();
     error SettlementAlreadyAvailable();
     error SettlementMismatch();
-    error AmbiguousPayout();
-    error OracleDeadlineNotReached();
-    error SettlementObservedAfterDeadline(uint64 recordedAt, uint64 oracleDeadline);
-    error TimelySettlementObserved(uint64 recordedAt);
     error NothingToClaim();
     error NothingToRefund();
     error MarketNotFound(uint256 marketId);
@@ -124,7 +117,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
             specHash: params.specHash,
             opensAt: params.opensAt,
             closesAt: params.closesAt,
-            oracleDeadline: params.oracleDeadline,
             collateral: params.collateral,
             status: MarketStatus.Open,
             winningOutcome: type(uint8).max,
@@ -190,7 +182,9 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         emit MarketLocked(marketId);
     }
 
-    function settleMarket(
+    /// @notice Finalizes a locked market from the canonical mirrored Polymarket resolution.
+    /// @dev Anyone may call. Pending, missing, or malformed observations leave the market locked.
+    function finalizeMarket(
         uint256 marketId
     ) external {
         Market storage market = _markets[marketId];
@@ -200,9 +194,26 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         }
         if (market.status != MarketStatus.Locked) revert MarketNotLocked();
 
-        _requireTimelyResolvedSettlement(_settlementRefs[marketId], market.oracleDeadline);
+        SettlementRef storage ref = _settlementRefs[marketId];
+        IPolymarketSettlementResolver.ObservationStatus observationStatus;
+        uint8 winningSlot;
+        bytes32 settlementTxHash;
+        uint256 settlementLogIndex;
+        (observationStatus, winningSlot,,, settlementTxHash, settlementLogIndex) =
+            IPolymarketSettlementResolver(ref.resolver).getSettlementObservation(ref.mirrorId, ref.conditionId);
 
-        (uint8 winningOutcome, bytes32 txHash, uint256 logIndex) = _resolveWinningOutcome(marketId);
+        if (observationStatus == IPolymarketSettlementResolver.ObservationStatus.ResolvedVoidable) {
+            market.status = MarketStatus.Voided;
+            emit MarketVoided(marketId, VOID_REASON_POLYMARKET_NON_UNIQUE_PAYOUT);
+            return;
+        }
+        if (observationStatus != IPolymarketSettlementResolver.ObservationStatus.ResolvedWinner) {
+            revert SettlementUnavailable();
+        }
+        if (winningSlot >= ref.slotToOutcome.length) revert SettlementMismatch();
+
+        uint8 winningOutcome = ref.slotToOutcome[winningSlot];
+        if (winningOutcome >= BINARY_OUTCOME_COUNT) revert SettlementMismatch();
 
         if (outcomeTotal[marketId][winningOutcome] == 0) {
             market.status = MarketStatus.Voided;
@@ -212,7 +223,7 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
 
         market.status = MarketStatus.Settled;
         market.winningOutcome = winningOutcome;
-        emit MarketSettled(marketId, winningOutcome, txHash, logIndex);
+        emit MarketSettled(marketId, winningOutcome, settlementTxHash, settlementLogIndex);
     }
 
     function claim(
@@ -230,24 +241,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         _transferExact(IERC20(market.collateral), msg.sender, amount);
 
         emit Claimed(marketId, msg.sender, amount);
-    }
-
-    function voidMarket(
-        uint256 marketId
-    ) external {
-        requireAllowed(SystemAddresses.GOVERNANCE);
-
-        Market storage market = _markets[marketId];
-        _requireMarketExists(marketId, market);
-        if (market.status == MarketStatus.Settled || market.status == MarketStatus.Voided) {
-            revert MarketAlreadyFinalized();
-        }
-        if (block.timestamp < market.oracleDeadline) revert OracleDeadlineNotReached();
-
-        _requireNoTimelySettlement(_settlementRefs[marketId], market.oracleDeadline);
-
-        market.status = MarketStatus.Voided;
-        emit MarketVoided(marketId, VOID_REASON_ORACLE_DEADLINE_EXPIRED);
     }
 
     function refund(
@@ -308,7 +301,7 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
             params.specHash == bytes32(0) || params.collateral.code.length == 0
                 || params.settlementRef.resolver.code.length == 0
         ) revert InvalidSettlementRef();
-        if (params.opensAt >= params.closesAt || params.closesAt >= params.oracleDeadline) revert InvalidMarketTime();
+        if (params.opensAt >= params.closesAt) revert InvalidMarketTime();
 
         SettlementRef calldata ref = params.settlementRef;
         if (
@@ -354,35 +347,6 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         }
     }
 
-    function _requireTimelyResolvedSettlement(
-        SettlementRef storage ref,
-        uint64 oracleDeadline
-    ) internal view {
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint64 recordedAt) =
-            IPolymarketSettlementResolver(ref.resolver).getSettlementObservation(ref.mirrorId, ref.conditionId);
-        if (status != IPolymarketSettlementResolver.ObservationStatus.ResolvedValid) {
-            revert SettlementUnavailable();
-        }
-        if (recordedAt >= oracleDeadline) {
-            revert SettlementObservedAfterDeadline(recordedAt, oracleDeadline);
-        }
-    }
-
-    function _requireNoTimelySettlement(
-        SettlementRef storage ref,
-        uint64 oracleDeadline
-    ) internal view {
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint64 recordedAt) =
-            IPolymarketSettlementResolver(ref.resolver).getSettlementObservation(ref.mirrorId, ref.conditionId);
-        if (
-            recordedAt < oracleDeadline
-                && (status == IPolymarketSettlementResolver.ObservationStatus.PendingValid
-                    || status == IPolymarketSettlementResolver.ObservationStatus.ResolvedValid)
-        ) {
-            revert TimelySettlementObserved(recordedAt);
-        }
-    }
-
     function _requireOpenForBetting(
         Market storage market
     ) internal view {
@@ -421,50 +385,5 @@ contract PolymarketBinaryMarket is ReentrancyGuard {
         uint256 spent = senderBefore >= senderAfter ? senderBefore - senderAfter : type(uint256).max;
         uint256 received = recipientAfter >= recipientBefore ? recipientAfter - recipientBefore : 0;
         if (spent != amount || received != amount) revert InvalidCollateralPayout(amount, received, spent);
-    }
-
-    function _resolveWinningOutcome(
-        uint256 marketId
-    ) internal view returns (uint8 winningOutcome, bytes32 txHash, uint256 logIndex) {
-        SettlementRef storage ref = _settlementRefs[marketId];
-
-        (
-            bool exists,,
-            uint256 polygonChainId,
-            address ctf,,,
-            uint256 outcomeSlotCount,
-            bytes32 settlementTxHash,
-            uint256 settlementLogIndex,
-            uint8 settlementKind
-        ) = IPolymarketSettlementResolver(ref.resolver).getSettlement(ref.mirrorId, ref.conditionId);
-
-        if (!exists) revert SettlementUnavailable();
-        if (
-            polygonChainId != POLYGON_CHAIN_ID || ctf != ref.ctf || outcomeSlotCount != ref.outcomeSlotCount
-                || settlementKind != SETTLEMENT_KIND_CTF_CONDITION_RESOLUTION
-        ) {
-            revert SettlementMismatch();
-        }
-
-        uint256[] memory payouts = IPolymarketSettlementResolver(ref.resolver)
-            .getPayoutNumerators({ mirrorId: ref.mirrorId, conditionId: ref.conditionId });
-        if (payouts.length != ref.outcomeSlotCount) revert SettlementMismatch();
-
-        uint256 positiveSlot = type(uint256).max;
-        for (uint256 i; i < payouts.length;) {
-            if (payouts[i] > 0) {
-                if (positiveSlot != type(uint256).max) revert AmbiguousPayout();
-                positiveSlot = i;
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        if (positiveSlot == type(uint256).max) revert AmbiguousPayout();
-
-        winningOutcome = ref.slotToOutcome[positiveSlot];
-        if (winningOutcome >= BINARY_OUTCOME_COUNT) revert SettlementMismatch();
-        txHash = settlementTxHash;
-        logIndex = settlementLogIndex;
     }
 }
