@@ -426,6 +426,10 @@ library Errors {
         uint256 noncesLength, uint256 blockNumbersLength, uint256 payloadsLength, uint256 gasLimitsLength
     );
 
+    /// @notice Oracle callbacks must be unset or point to deployed contract code
+    /// @param callback The invalid callback address
+    error InvalidOracleCallback(address callback);
+
     // ========================================================================
     // VERSION CONFIG ERRORS
     // ========================================================================
@@ -584,4 +588,3 @@ library Errors {
     /// @notice Operation is not supported
     error OperationNotSupported();
 }
-

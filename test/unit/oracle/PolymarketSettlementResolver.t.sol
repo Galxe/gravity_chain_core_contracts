@@ -204,6 +204,25 @@ contract PolymarketSettlementResolverTest is Test {
         assertGt(recordedAt, 0);
     }
 
+    function test_AllZeroPayoutIsRejectedAsInvalidSettlementPayload() public {
+        uint256[] memory payouts = new uint256[](2);
+        bytes memory payload = _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts);
+
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
+
+        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertFalse(exists);
+        (IPolymarketSettlementResolver.ObservationStatus status,, uint128 nonce, uint64 recordedAt,,) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
+        assertEq(nonce, 1);
+        assertGt(recordedAt, 0);
+        assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).data, payload);
+
+        vm.expectRevert(PolymarketSettlementResolver.InvalidSettlementPayload.selector);
+        resolver.replaySettlement(DRAW_MARKET_ID, 1);
+    }
+
     function test_SplitPayoutIsStoredAsResolvedVoidableObservation() public {
         uint256[] memory payouts = new uint256[](2);
         payouts[0] = 1;

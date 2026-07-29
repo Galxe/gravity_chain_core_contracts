@@ -61,6 +61,28 @@ contract MockOracleCallback is IOracleCallback {
     }
 }
 
+contract MalformedReturnCallback {
+    uint256 private immutable _returnWord;
+    uint256 private immutable _returnSize;
+
+    constructor(
+        uint256 returnWord,
+        uint256 returnSize
+    ) {
+        _returnWord = returnWord;
+        _returnSize = returnSize;
+    }
+
+    fallback() external {
+        uint256 returnWord = _returnWord;
+        uint256 returnSize = _returnSize;
+        assembly ("memory-safe") {
+            mstore(0, returnWord)
+            return(0, returnSize)
+        }
+    }
+}
+
 /// @title NativeOracleTest
 /// @notice Comprehensive unit tests for NativeOracle contract
 contract NativeOracleTest is Test {
@@ -329,6 +351,12 @@ contract NativeOracleTest is Test {
         oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(mockCallback));
     }
 
+    function test_SetDefaultCallback_RevertWhenCallbackHasNoCode() public {
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidOracleCallback.selector, alice));
+        vm.prank(governance);
+        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, alice);
+    }
+
     function test_SetDefaultCallback_Unregister() public {
         // Register default callback
         vm.prank(governance);
@@ -352,6 +380,23 @@ contract NativeOracleTest is Test {
         vm.expectRevert();
         vm.prank(alice);
         oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(mockCallback));
+    }
+
+    function test_SetCallback_RevertWhenCallbackHasNoCode() public {
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidOracleCallback.selector, bob));
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, bob);
+    }
+
+    function test_Initialize_RevertWhenCallbackHasNoCode() public {
+        uint32[] memory sourceTypes = new uint32[](1);
+        sourceTypes[0] = SOURCE_TYPE_BLOCKCHAIN;
+        address[] memory callbacks = new address[](1);
+        callbacks[0] = alice;
+
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidOracleCallback.selector, alice));
+        vm.prank(SystemAddresses.GENESIS);
+        oracle.initialize(sourceTypes, callbacks);
     }
 
     function test_SetCallback_Unregister() public {
@@ -523,6 +568,45 @@ contract NativeOracleTest is Test {
 
         // Callback was not successfully called
         assertEq(mockCallback.callCount(), 0);
+    }
+
+    function test_CallbackWithCodeRemovedFailsOpenAndStoresPayload() public {
+        MalformedReturnCallback callback = new MalformedReturnCallback(1, 32);
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(callback));
+        vm.etch(address(callback), hex"");
+
+        bytes memory payload = abi.encode("no-code callback");
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 0, payload, CALLBACK_GAS_LIMIT);
+
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1).data, payload);
+    }
+
+    function test_CallbackWithEmptyReturnFailsOpenAndStoresPayload() public {
+        _assertMalformedCallbackStores(new MalformedReturnCallback(0, 0), abi.encode("empty return"));
+    }
+
+    function test_CallbackWithShortReturnFailsOpenAndStoresPayload() public {
+        _assertMalformedCallbackStores(new MalformedReturnCallback(1, 1), abi.encode("short return"));
+    }
+
+    function test_CallbackWithNonCanonicalBoolFailsOpenAndStoresPayload() public {
+        _assertMalformedCallbackStores(new MalformedReturnCallback(2, 32), abi.encode("invalid bool"));
+    }
+
+    function test_CallbackWithLargeReturnUsesBoundedCopy() public {
+        MalformedReturnCallback callback = new MalformedReturnCallback(0, 4096);
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(callback));
+
+        bytes memory payload = abi.encode("large return");
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 0, payload, CALLBACK_GAS_LIMIT);
+
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1).recordedAt, 0);
     }
 
     function test_CallbackGasLimitEnforced() public {
@@ -962,5 +1046,19 @@ contract NativeOracleTest is Test {
 
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, nonce, 0, payload, CALLBACK_GAS_LIMIT);
+    }
+
+    function _assertMalformedCallbackStores(
+        MalformedReturnCallback callback,
+        bytes memory payload
+    ) internal {
+        vm.prank(governance);
+        oracle.setCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, address(callback));
+
+        vm.prank(systemCaller);
+        oracle.record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 0, payload, CALLBACK_GAS_LIMIT);
+
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1).data, payload);
     }
 }

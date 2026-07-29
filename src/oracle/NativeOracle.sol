@@ -13,6 +13,8 @@ import { Errors } from "../foundation/Errors.sol";
 ///      Records are keyed by (sourceType, sourceId, nonce) tuple.
 ///      Callbacks are invoked with caller-specified gas limit and failures do NOT revert oracle recording.
 contract NativeOracle is INativeOracle {
+    uint256 private constant MAX_CALLBACK_RETURNDATA_BYTES = 256;
+
     // ========================================================================
     // STATE
     // ========================================================================
@@ -56,6 +58,7 @@ contract NativeOracle is INativeOracle {
         }
 
         for (uint256 i; i < length;) {
+            _validateCallback(callbacks[i]);
             _defaultCallbacks[sourceTypes[i]] = callbacks[i];
             emit DefaultCallbackSet(sourceTypes[i], address(0), callbacks[i]);
             unchecked {
@@ -174,6 +177,7 @@ contract NativeOracle is INativeOracle {
         address callback
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
+        _validateCallback(callback);
 
         address oldCallback = _defaultCallbacks[sourceType];
         _defaultCallbacks[sourceType] = callback;
@@ -195,6 +199,7 @@ contract NativeOracle is INativeOracle {
         address callback
     ) external {
         requireAllowed(SystemAddresses.GOVERNANCE);
+        _validateCallback(callback);
 
         address oldCallback = _callbacks[sourceType][sourceId];
         _callbacks[sourceType][sourceId] = callback;
@@ -307,21 +312,56 @@ contract NativeOracle is INativeOracle {
             return true;
         }
 
-        // Try to call the callback with specified gas limit
-        // This prevents malicious callbacks from:
-        // 1. Consuming excessive gas
-        // 2. Blocking oracle updates by reverting
-        try IOracleCallback(callback).onOracleEvent{ gas: gasLimit }(sourceType, sourceId, nonce, payload) returns (
-            bool callbackShouldStore
-        ) {
-            emit CallbackSuccess(sourceType, sourceId, nonce, callback);
-            if (!callbackShouldStore) {
-                emit StorageSkipped(sourceType, sourceId, nonce, callback);
-            }
-            return callbackShouldStore;
-        } catch (bytes memory reason) {
-            emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
-            return true; // On failure, store by default to preserve data
+        bytes memory callData = abi.encodeCall(IOracleCallback.onOracleEvent, (sourceType, sourceId, nonce, payload));
+        (bool success, bytes memory returnData) = _callWithBoundedReturndata(callback, gasLimit, callData);
+
+        if (!success || returnData.length < 32) {
+            emit CallbackFailed(sourceType, sourceId, nonce, callback, returnData);
+            return true;
+        }
+
+        uint256 rawShouldStore;
+        assembly ("memory-safe") {
+            rawShouldStore := mload(add(returnData, 0x20))
+        }
+        if (rawShouldStore > 1) {
+            emit CallbackFailed(sourceType, sourceId, nonce, callback, returnData);
+            return true;
+        }
+
+        bool callbackShouldStore = rawShouldStore == 1;
+        emit CallbackSuccess(sourceType, sourceId, nonce, callback);
+        if (!callbackShouldStore) {
+            emit StorageSkipped(sourceType, sourceId, nonce, callback);
+        }
+        return callbackShouldStore;
+    }
+
+    /// @dev Calls a callback without automatically copying unbounded returndata into memory.
+    function _callWithBoundedReturndata(
+        address callback,
+        uint256 gasLimit,
+        bytes memory callData
+    ) private returns (bool success, bytes memory returnData) {
+        uint256 maxReturnData = MAX_CALLBACK_RETURNDATA_BYTES;
+        assembly ("memory-safe") {
+            success := call(gasLimit, callback, 0, add(callData, 0x20), mload(callData), 0, 0)
+
+            let returnSize := returndatasize()
+            if gt(returnSize, maxReturnData) { returnSize := maxReturnData }
+
+            returnData := mload(0x40)
+            mstore(returnData, returnSize)
+            returndatacopy(add(returnData, 0x20), 0, returnSize)
+            mstore(0x40, and(add(add(returnData, 0x3f), returnSize), not(0x1f)))
+        }
+    }
+
+    function _validateCallback(
+        address callback
+    ) private view {
+        if (callback != address(0) && callback.code.length == 0) {
+            revert Errors.InvalidOracleCallback(callback);
         }
     }
 }

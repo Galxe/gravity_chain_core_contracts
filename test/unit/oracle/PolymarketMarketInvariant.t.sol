@@ -525,3 +525,134 @@ contract PolymarketBinaryMarketInvariantTest is PolymarketMarketInvariantTestBas
         return (uint8(stored.status), stored.totalPool);
     }
 }
+
+contract PolymarketBinaryMultiMarketInvariantTest is StdInvariant, Test {
+    uint8 internal constant STATUS_OPEN = 0;
+    uint8 internal constant STATUS_LOCKED = 1;
+    uint8 internal constant STATUS_SETTLED = 2;
+    uint8 internal constant STATUS_VOIDED = 3;
+
+    uint256 internal constant FIRST_MIRROR_ID = 7_202_626;
+    uint256 internal constant SECOND_MIRROR_ID = 7_202_627;
+    bytes32 internal constant FIRST_CONDITION_ID = keccak256("first shared-collateral condition");
+    bytes32 internal constant SECOND_CONDITION_ID = keccak256("second shared-collateral condition");
+    address internal constant CTF = 0x4D97DCd97eC945f40cF65F87097ACe5EA0476045;
+
+    MockGToken internal collateral;
+    InvariantPolymarketResolver internal resolver;
+    PolymarketBinaryMarket internal market;
+    IPolymarketMarketAccounting internal accounting;
+    PolymarketMarketHandler internal firstHandler;
+    PolymarketMarketHandler internal secondHandler;
+    uint256 internal firstMarketId;
+    uint256 internal secondMarketId;
+
+    function setUp() public {
+        vm.warp(1_700_000_000);
+        collateral = new MockGToken();
+        resolver = new InvariantPolymarketResolver();
+        market = new PolymarketBinaryMarket();
+        accounting = IPolymarketMarketAccounting(address(market));
+
+        uint64 closesAt = uint64(block.timestamp + 1 days);
+        firstMarketId = _createMarket(FIRST_MIRROR_ID, FIRST_CONDITION_ID, closesAt);
+        secondMarketId = _createMarket(SECOND_MIRROR_ID, SECOND_CONDITION_ID, closesAt);
+
+        firstHandler = new PolymarketMarketHandler(
+            address(market), resolver, collateral, firstMarketId, FIRST_MIRROR_ID, FIRST_CONDITION_ID, CTF, closesAt, 2
+        );
+        secondHandler = new PolymarketMarketHandler(
+            address(market),
+            resolver,
+            collateral,
+            secondMarketId,
+            SECOND_MIRROR_ID,
+            SECOND_CONDITION_ID,
+            CTF,
+            closesAt,
+            2
+        );
+        _targetHandler(firstHandler);
+        _targetHandler(secondHandler);
+    }
+
+    function invariant_SharedCollateralRemainsSolventAcrossMarkets() public view {
+        uint256 totalDeposited = firstHandler.totalDeposited() + secondHandler.totalDeposited();
+        uint256 totalWithdrawn = firstHandler.totalWithdrawn() + secondHandler.totalWithdrawn();
+        uint256 escrowed = collateral.balanceOf(address(market));
+
+        assertEq(market.getMarket(firstMarketId).totalPool, firstHandler.totalDeposited());
+        assertEq(market.getMarket(secondMarketId).totalPool, secondHandler.totalDeposited());
+        assertEq(escrowed + totalWithdrawn, totalDeposited, "shared escrow plus withdrawals must equal deposits");
+        assertLe(totalWithdrawn, totalDeposited, "aggregate withdrawals must not exceed deposits");
+
+        uint256 outstanding =
+            _outstandingLiability(firstHandler, firstMarketId) + _outstandingLiability(secondHandler, secondMarketId);
+        assertGe(escrowed, outstanding, "shared collateral must cover all outstanding market liabilities");
+        assertLe(totalWithdrawn + outstanding, totalDeposited, "paid and outstanding liabilities must remain solvent");
+    }
+
+    function _createMarket(
+        uint256 mirrorId,
+        bytes32 conditionId,
+        uint64 closesAt
+    ) internal returns (uint256 marketId) {
+        resolver.setMirrorConfig(mirrorId, 137, CTF, conditionId, 2);
+
+        uint8[] memory slotToOutcome = new uint8[](2);
+        slotToOutcome[0] = 0;
+        slotToOutcome[1] = 1;
+        PolymarketBinaryMarket.CreateMarketParams memory params = PolymarketBinaryMarket.CreateMarketParams({
+            specHash: keccak256(abi.encode("shared collateral invariant", mirrorId)),
+            opensAt: uint64(block.timestamp),
+            closesAt: closesAt,
+            collateral: address(collateral),
+            settlementRef: PolymarketBinaryMarket.SettlementRef({
+                sourceType: 6,
+                mirrorId: mirrorId,
+                conditionId: conditionId,
+                resolver: address(resolver),
+                ctf: CTF,
+                polygonChainId: 137,
+                outcomeSlotCount: 2,
+                slotToOutcome: slotToOutcome,
+                mode: PolymarketBinaryMarket.SettlementMode.SingleConditionBinary
+            })
+        });
+
+        vm.prank(SystemAddresses.GOVERNANCE);
+        return market.createMarket(params);
+    }
+
+    function _targetHandler(
+        PolymarketMarketHandler handler
+    ) internal {
+        bytes4[] memory selectors = new bytes4[](6);
+        selectors[0] = PolymarketMarketHandler.placeBet.selector;
+        selectors[1] = PolymarketMarketHandler.lockMarket.selector;
+        selectors[2] = PolymarketMarketHandler.finalizeWinner.selector;
+        selectors[3] = PolymarketMarketHandler.finalizeVoidable.selector;
+        selectors[4] = PolymarketMarketHandler.claim.selector;
+        selectors[5] = PolymarketMarketHandler.refund.selector;
+        targetContract(address(handler));
+        targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
+    }
+
+    function _outstandingLiability(
+        PolymarketMarketHandler handler,
+        uint256 marketId
+    ) internal view returns (uint256 outstanding) {
+        uint8 status = uint8(market.getMarket(marketId).status);
+        if (status == STATUS_OPEN || status == STATUS_LOCKED) return market.getMarket(marketId).totalPool;
+
+        for (uint256 actorIndex; actorIndex < handler.ACTOR_COUNT(); ++actorIndex) {
+            address actor = handler.actors(actorIndex);
+            if (status == STATUS_VOIDED && !accounting.claimed(marketId, actor)) {
+                outstanding += accounting.userStake(marketId, actor, 0);
+                outstanding += accounting.userStake(marketId, actor, 1);
+            } else if (status == STATUS_SETTLED) {
+                outstanding += accounting.claimable(marketId, actor);
+            }
+        }
+    }
+}

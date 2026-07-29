@@ -11,6 +11,88 @@ import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { MockGToken } from "../../utils/MockGToken.sol";
 import { FeeOnTransferToken } from "../../utils/FeeOnTransferToken.sol";
 
+contract ReentrantCollateral is MockGToken {
+    enum Attack {
+        None,
+        PlaceBet,
+        Claim,
+        Refund
+    }
+
+    PolymarketBinaryMarket private _market;
+    uint256 private _marketId;
+    Attack private _attack;
+    bool private _insideHook;
+
+    bool public reentryAttempted;
+    bool public reentrySucceeded;
+    bytes4 public reentryRevertSelector;
+
+    function configureAttack(
+        PolymarketBinaryMarket market,
+        uint256 marketId,
+        Attack attack
+    ) external {
+        _market = market;
+        _marketId = marketId;
+        _attack = attack;
+        reentryAttempted = false;
+        reentrySucceeded = false;
+        reentryRevertSelector = bytes4(0);
+        _approve(address(this), address(market), type(uint256).max);
+    }
+
+    function placeBet(
+        uint8 outcome,
+        uint256 amount
+    ) external {
+        _market.placeBet(_marketId, outcome, amount);
+    }
+
+    function claim() external returns (uint256 amount) {
+        return _market.claim(_marketId);
+    }
+
+    function refund() external returns (uint256 amount) {
+        return _market.refund(_marketId);
+    }
+
+    function _update(
+        address from,
+        address to,
+        uint256 value
+    ) internal override {
+        super._update(from, to, value);
+        if (_attack == Attack.None || _insideHook || (from != address(this) && to != address(this))) return;
+
+        _insideHook = true;
+        reentryAttempted = true;
+
+        bytes memory callData;
+        if (_attack == Attack.PlaceBet) {
+            callData = abi.encodeCall(
+                PolymarketBinaryMarket.placeBet,
+                (_marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), uint256(1))
+            );
+        } else if (_attack == Attack.Claim) {
+            callData = abi.encodeCall(PolymarketBinaryMarket.claim, (_marketId));
+        } else {
+            callData = abi.encodeCall(PolymarketBinaryMarket.refund, (_marketId));
+        }
+
+        bytes memory returnData;
+        (reentrySucceeded, returnData) = address(_market).call(callData);
+        if (returnData.length >= 4) {
+            bytes4 selector;
+            assembly ("memory-safe") {
+                selector := mload(add(returnData, 0x20))
+            }
+            reentryRevertSelector = selector;
+        }
+        _insideHook = false;
+    }
+}
+
 contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
     address public constant UMA_ORACLE = 0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296;
 
@@ -190,6 +272,8 @@ contract MockBinaryPolymarketResolver is IPolymarketSettlementResolver {
 }
 
 contract PolymarketBinaryMarketTest is Test {
+    bytes4 internal constant REENTRANCY_ERROR = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
+
     PolymarketBinaryMarket public market;
     MockBinaryPolymarketResolver public mockResolver;
     MockGToken public collateral;
@@ -465,6 +549,68 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(feeToken.balanceOf(address(market)), 100 ether);
     }
 
+    function test_ReentrantCollateralCannotReenterPlaceBet() public {
+        ReentrantCollateral token = new ReentrantCollateral();
+        uint256 marketId = _createMarketWithCollateral(address(token));
+        token.mint(address(token), 100 ether);
+        token.configureAttack(market, marketId, ReentrantCollateral.Attack.PlaceBet);
+
+        token.placeBet(uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 100 ether);
+
+        _assertReentryBlocked(token);
+        assertEq(market.userStake(marketId, address(token), uint8(PolymarketBinaryMarket.BinaryOutcome.Yes)), 100 ether);
+        assertEq(market.getMarket(marketId).totalPool, 100 ether);
+        assertEq(token.balanceOf(address(market)), 100 ether);
+        assertEq(token.balanceOf(address(token)), 0);
+    }
+
+    function test_ReentrantCollateralCannotClaimTwice() public {
+        ReentrantCollateral token = new ReentrantCollateral();
+        uint256 marketId = _createMarketWithCollateral(address(token));
+        token.mint(address(token), 100 ether);
+        token.configureAttack(market, marketId, ReentrantCollateral.Attack.PlaceBet);
+        token.placeBet(uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 100 ether);
+
+        token.mint(alice, 100 ether);
+        vm.prank(alice);
+        token.approve(address(market), type(uint256).max);
+        vm.prank(alice);
+        market.placeBet(marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.No), 100 ether);
+
+        _lockMarket(marketId);
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
+        market.finalizeMarket(marketId);
+
+        token.configureAttack(market, marketId, ReentrantCollateral.Attack.Claim);
+        assertEq(token.claim(), 200 ether);
+
+        _assertReentryBlocked(token);
+        assertTrue(market.claimed(marketId, address(token)));
+        assertEq(token.balanceOf(address(token)), 200 ether);
+        assertEq(token.balanceOf(address(market)), 0);
+    }
+
+    function test_ReentrantCollateralCannotRefundTwice() public {
+        ReentrantCollateral token = new ReentrantCollateral();
+        uint256 marketId = _createMarketWithCollateral(address(token));
+        token.mint(address(token), 100 ether);
+        token.configureAttack(market, marketId, ReentrantCollateral.Attack.PlaceBet);
+        token.placeBet(uint8(PolymarketBinaryMarket.BinaryOutcome.No), 100 ether);
+
+        _lockMarket(marketId);
+        _mockSettlement(_singleWinningPayout(0), POLYGON_CHAIN_ID, CTF, 2, 1);
+        market.finalizeMarket(marketId);
+        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Voided));
+
+        token.configureAttack(market, marketId, ReentrantCollateral.Attack.Refund);
+        assertEq(token.refund(), 100 ether);
+
+        _assertReentryBlocked(token);
+        assertTrue(market.claimed(marketId, address(token)));
+        assertEq(token.balanceOf(address(token)), 100 ether);
+        assertEq(token.balanceOf(address(market)), 0);
+    }
+
     function test_FinalizeRequiresCanonicalTerminalObservation() public {
         uint256 missingMarketId = _createFundedLockedMarket(address(mockResolver), _yesNoSlotMap());
         vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
@@ -697,6 +843,23 @@ contract PolymarketBinaryMarketTest is Test {
         _placeBet(bob, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 200 ether);
         _placeBet(carol, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.Yes), 300 ether);
         _lockMarket(marketId);
+    }
+
+    function _createMarketWithCollateral(
+        address collateralAddress
+    ) internal returns (uint256 marketId) {
+        PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(mockResolver), _yesNoSlotMap());
+        params.collateral = collateralAddress;
+        vm.prank(governance);
+        return market.createMarket(params);
+    }
+
+    function _assertReentryBlocked(
+        ReentrantCollateral token
+    ) internal view {
+        assertTrue(token.reentryAttempted());
+        assertFalse(token.reentrySucceeded());
+        assertEq(token.reentryRevertSelector(), REENTRANCY_ERROR);
     }
 
     function _placeBet(
