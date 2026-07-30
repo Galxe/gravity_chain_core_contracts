@@ -54,7 +54,6 @@ The resolver rejects a payload when any of the following is true:
 - `sourceId != feedId`
 - `roundId` is zero or not greater than the latest stored round
 - `resolvedAt` is not greater than the latest stored resolution time
-- the same `(feedId, roundId)` was already resolved
 - decimals exceed 18
 - price is zero or negative
 
@@ -65,21 +64,17 @@ shape and state-transition invariants.
 ## Storage
 
 `latestPrice(feedId)` exposes the newest accepted Binance close.
-`priceRounds(feedId, roundId)` retains historical rounds. No weighted mean,
-weighted median, source count, or total weight is computed or stored.
+Each accepted round overwrites the previous value, so storage remains one
+fixed-size slot per feed. Historical rounds remain available from source data
+and transaction logs, not contract storage. No weighted mean, weighted median,
+source count, or total weight is computed or stored.
 
 ## Callback Failure Recovery
 
-`NativeOracle` deliberately advances its nonce and stores raw payload bytes when
-a callback fails. `replayPrice(feedId, nonce)` reads those consensus-approved
-bytes from `NativeOracle.getRecord` and applies the normal validation path.
-
-The function is permissionless because callers cannot supply or alter the
-payload. A missing historical round can be backfilled after newer rounds exist;
-replay never rewinds `latestPrice`.
-
-Operators should alert on `CallbackFailed` and call replay only after confirming
-the callback contract and configuration are healthy.
+`NativeOracle` invokes the resolver before advancing source progress. A callback
+failure reverts the complete delivery, leaving the nonce retryable without
+storing raw payload bytes. Validators can resubmit the same consensus-approved
+payload after the callback or configuration problem is fixed.
 
 ## Configuration Boundary
 
