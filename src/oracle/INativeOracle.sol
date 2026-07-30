@@ -4,9 +4,8 @@ pragma solidity ^0.8.30;
 /// @title INativeOracle
 /// @author Gravity Team
 /// @notice Interface for the Native Oracle contract
-/// @dev Stores verified data from external sources (blockchains, JWK providers, DNS records).
-///      Data is recorded by the consensus engine via SYSTEM_CALLER after validators reach consensus.
-///      Records are keyed by (sourceType, sourceId, nonce) tuple.
+/// @dev Delivers consensus-approved external data to callbacks and stores only the latest
+///      progress for each (sourceType, sourceId) pair. Legacy records remain queryable.
 interface INativeOracle {
     // ========================================================================
     // DATA STRUCTURES
@@ -21,6 +20,13 @@ interface INativeOracle {
         uint256 blockNumber;
         /// @notice Stored payload data
         bytes data;
+    }
+
+    /// @notice Latest accepted progress for one oracle source
+    /// @dev Both fields pack into one storage slot.
+    struct SourceProgress {
+        uint128 latestNonce;
+        uint128 latestPosition;
     }
 
     // ========================================================================
@@ -41,12 +47,14 @@ interface INativeOracle {
     // EVENTS
     // ========================================================================
 
-    /// @notice Emitted when data is recorded
-    /// @param sourceType The source type (0 = BLOCKCHAIN, 1 = JWK, etc.)
-    /// @param sourceId The source identifier (e.g., chain ID for blockchains)
-    /// @param nonce The nonce (block height, timestamp, etc.)
-    /// @param dataLength Length of the stored data
+    /// @notice Legacy event retained in the ABI for historical log decoding
+    /// @dev New deliveries emit OracleDelivered instead.
     event DataRecorded(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint256 dataLength);
+
+    /// @notice Emitted after a consensus payload is successfully delivered
+    event OracleDelivered(
+        uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint128 sourcePosition, bytes32 payloadHash
+    );
 
     /// @notice Emitted when a default callback is registered or updated
     /// @param sourceType The source type
@@ -70,41 +78,30 @@ interface INativeOracle {
     /// @param callback The callback contract address
     event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
-    /// @notice Emitted when a callback fails (tx continues, does NOT revert)
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the record
-    /// @param callback The callback contract address
-    /// @param reason The failure reason
+    /// @notice Legacy event retained in the ABI for historical log decoding
+    /// @dev New callback failures revert atomically.
     event CallbackFailed(
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
     );
 
-    /// @notice Emitted when payload storage is skipped (callback returned shouldStore=false)
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the record
-    /// @param callback The callback contract that requested skip
+    /// @notice Legacy event retained in the ABI for historical log decoding
     event StorageSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
-    /// @notice Emitted when callback execution is skipped due to gas limit 0
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The nonce of the record
-    /// @param callback The callback contract that was skipped
+    /// @notice Legacy event retained in the ABI for historical log decoding
     event CallbackSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================
 
-    /// @notice Record a single data entry
-    /// @dev Only callable by SYSTEM_CALLER. Invokes callback if registered.
+    /// @notice Deliver a single consensus-approved data entry
+    /// @dev Only callable by SYSTEM_CALLER. Callback execution and progress update are atomic.
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param nonce The nonce - must start from 1 and strictly increase
-    /// @param payload The data payload to store
-    /// @param callbackGasLimit Gas limit for callback execution (0 = no callback)
+    /// @param blockNumber Source-defined restart position; retained name preserves the existing ABI
+    /// @param payload The callback payload
+    /// @param callbackGasLimit Gas limit for callback execution
     function record(
         uint32 sourceType,
         uint256 sourceId,
@@ -114,14 +111,13 @@ interface INativeOracle {
         uint256 callbackGasLimit
     ) external;
 
-    /// @notice Batch record multiple data entries from the same source
-    /// @dev Only callable by SYSTEM_CALLER. More gas efficient for multiple records.
-    ///      Each nonce is validated individually to prevent overwriting existing records.
+    /// @notice Deliver multiple consensus-approved entries from the same source
+    /// @dev Only callable by SYSTEM_CALLER. The entire batch is atomic.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonces Array of nonces (must be strictly increasing, each > previous latestNonce)
-    /// @param payloads Array of payloads to store (must match nonces length)
-    /// @param callbackGasLimits Array of gas limits for callback execution per record (0 = no callback)
+    /// @param payloads Array of callback payloads (must match nonces length)
+    /// @param callbackGasLimits Array of nonzero callback gas limits
     function recordBatch(
         uint32 sourceType,
         uint256 sourceId,
@@ -187,8 +183,8 @@ interface INativeOracle {
     // QUERY FUNCTIONS
     // ========================================================================
 
-    /// @notice Get a record by its key tuple
-    /// @dev Record exists if record.recordedAt > 0
+    /// @notice Get a legacy record by its key tuple
+    /// @dev New deliveries do not write records. This getter remains for pre-upgrade history.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce
@@ -202,11 +198,17 @@ interface INativeOracle {
     /// @notice Get the latest nonce for a source
     /// @param sourceType The source type
     /// @param sourceId The source identifier
-    /// @return nonce The latest nonce (0 if no records)
+    /// @return nonce The latest accepted nonce (0 if no delivery exists)
     function getLatestNonce(
         uint32 sourceType,
         uint256 sourceId
     ) external view returns (uint128 nonce);
+
+    /// @notice Get the effective latest progress, including legacy fallback
+    function getSourceProgress(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (SourceProgress memory progress);
 
     /// @notice Check if a source has synced past a certain point
     /// @param sourceType The source type
@@ -223,18 +225,15 @@ interface INativeOracle {
 /// @title IOracleCallback
 /// @author Gravity Team
 /// @notice Interface for oracle callback handlers
-/// @dev Implement this to receive oracle events. Callbacks are invoked with caller-specified gas limit.
+/// @dev The bool return is retained for ABI compatibility but no longer controls NativeOracle storage.
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failures are caught - they do NOT revert the oracle recording.
-    ///      The return value controls whether NativeOracle stores the payload:
-    ///      - true: Store the payload in NativeOracle (default behavior)
-    ///      - false: Skip storage (callback handles its own storage, e.g., JWKManager)
+    /// @dev Callback failure reverts delivery, so callback state and source progress remain atomic.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
-    /// @return shouldStore True if NativeOracle should store the payload, false to skip storage
+    /// @return shouldStore Deprecated and ignored by NativeOracle
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,

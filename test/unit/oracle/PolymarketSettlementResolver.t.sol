@@ -8,6 +8,7 @@ import { PolymarketSettlementResolver } from "../../../src/oracle/resolver/Polym
 import { IPolymarketSettlementResolver } from "../../../src/oracle/resolver/IPolymarketSettlementResolver.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
 
 contract PolymarketSettlementResolverTest is Test {
     NativeOracle public oracle;
@@ -35,7 +36,6 @@ contract PolymarketSettlementResolverTest is Test {
     function setUp() public {
         vm.etch(SystemAddresses.NATIVE_ORACLE, address(new NativeOracle()).code);
         oracle = NativeOracle(SystemAddresses.NATIVE_ORACLE);
-
         resolver = new PolymarketSettlementResolver();
 
         vm.startPrank(governance);
@@ -44,10 +44,10 @@ contract PolymarketSettlementResolverTest is Test {
         vm.stopPrank();
     }
 
-    function test_RecordsPolymarketDrawSettlementThroughNativeOracle() public {
+    function test_RecordsTerminalSettlementWithoutRawPayloadHistory() public {
+        vm.warp(1_000_000);
         bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
 
         (
             bool exists,
@@ -61,7 +61,6 @@ contract PolymarketSettlementResolverTest is Test {
             uint256 logIndex,
             uint8 settlementKind
         ) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-
         assertTrue(exists);
         assertEq(nonce, 1);
         assertEq(polygonChainId, POLYGON_CHAIN_ID);
@@ -78,10 +77,6 @@ contract PolymarketSettlementResolverTest is Test {
         assertEq(payouts[0], 1);
         assertEq(payouts[1], 0);
 
-        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1);
-        assertEq(record.blockNumber, SOURCE_BLOCK);
-        assertEq(record.data, payload);
-
         (
             IPolymarketSettlementResolver.ObservationStatus status,
             uint8 winningSlot,
@@ -93,9 +88,15 @@ contract PolymarketSettlementResolverTest is Test {
         assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedWinner));
         assertEq(winningSlot, 0);
         assertEq(observedNonce, 1);
-        assertEq(recordedAt, record.recordedAt);
+        assertEq(recordedAt, 1_000_000);
         assertEq(observedTxHash, DRAW_TX_HASH);
         assertEq(observedLogIndex, LOG_INDEX);
+
+        INativeOracle.SourceProgress memory progress =
+            oracle.getSourceProgress(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID);
+        assertEq(progress.latestNonce, 1);
+        assertEq(progress.latestPosition, SOURCE_BLOCK);
+        assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt, 0);
     }
 
     function test_GetMirrorConfigReturnsRegisteredCondition() public view {
@@ -109,42 +110,81 @@ contract PolymarketSettlementResolverTest is Test {
         assertEq(outcomeSlotCount, 2);
     }
 
-    function test_ReplayStoredSettlementAfterCallbackGasFailure() public {
+    function test_CallbackGasFailureLeavesNoPendingState() public {
         bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, 1);
+        _assertUnobserved();
+    }
 
-        vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, 1);
-        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertFalse(exists);
-        assertTrue(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
+    function test_SecondSettlementCannotOverwriteResolvedCondition() public {
+        bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
+
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 2, SOURCE_BLOCK + 1, payload, CALLBACK_GAS_LIMIT);
+
+        (, uint128 nonce,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(nonce, 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID), 1);
+    }
+
+    function test_MismatchedConditionRevertsAtomically() public {
+        bytes32 wrongCondition = keccak256("wrong-condition");
+        bytes memory payload = _drawPayload(DRAW_MARKET_ID, wrongCondition);
+
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
+        _assertUnobserved();
+    }
+
+    function test_MalformedPayloadRevertsAtomically() public {
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, hex"deadbeef", CALLBACK_GAS_LIMIT);
+        _assertUnobserved();
+    }
+
+    function test_AllZeroPayoutRevertsAtomically() public {
+        uint256[] memory payouts = new uint256[](2);
+        bytes memory payload = _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts);
+
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
+        _assertUnobserved();
+    }
+
+    function test_SplitPayoutIsStoredAsResolvedVoidableObservation() public {
+        uint256[] memory payouts = new uint256[](2);
+        payouts[0] = 1;
+        payouts[1] = 1;
+        _record(
+            DRAW_MARKET_ID,
+            1,
+            SOURCE_BLOCK,
+            _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts),
+            CALLBACK_GAS_LIMIT
+        );
 
         (
             IPolymarketSettlementResolver.ObservationStatus status,
             uint8 winningSlot,
-            uint128 observedNonce,
-            uint64 recordedAt,
-            bytes32 observedTxHash,
-            uint256 observedLogIndex
+            uint128 nonce,,
+            bytes32 txHash,
+            uint256 logIndex
         ) = resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.PendingValid));
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedVoidable));
         assertEq(winningSlot, type(uint8).max);
-        assertEq(observedNonce, 1);
-        assertEq(recordedAt, oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt);
-        assertEq(observedTxHash, bytes32(0));
-        assertEq(observedLogIndex, 0);
-
-        resolver.replaySettlement(DRAW_MARKET_ID, 1);
-        uint128 nonce;
-        (exists, nonce,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertTrue(exists);
         assertEq(nonce, 1);
+        assertEq(txHash, DRAW_TX_HASH);
+        assertEq(logIndex, LOG_INDEX);
+    }
 
-        (status, winningSlot, observedNonce, recordedAt,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedWinner));
-        assertEq(winningSlot, 0);
-        assertEq(observedNonce, 1);
-        assertEq(recordedAt, oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt);
+    function test_NonCanonicalPayloadRevertsAtomically() public {
+        bytes memory payload = bytes.concat(_drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID), bytes32(uint256(1)));
+
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
+        _assertUnobserved();
     }
 
     function test_RevertWhenRegisteringMirrorTwice() public {
@@ -153,131 +193,6 @@ contract PolymarketSettlementResolverTest is Test {
         );
         vm.prank(governance);
         resolver.registerMirror(DRAW_MARKET_ID, POLYGON_CHAIN_ID, CTF, DRAW_CONDITION_ID, 2);
-    }
-
-    function test_SecondSettlementCannotOverwriteResolvedCondition() public {
-        bytes memory payload = _drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
-        uint64 firstRecordedAt = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt;
-        vm.warp(block.timestamp + 1);
-        _record(DRAW_MARKET_ID, 2, SOURCE_BLOCK + 1, payload);
-
-        (, uint128 nonce,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(nonce, 1);
-        assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 2).data, payload);
-
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint128 observedNonce, uint64 recordedAt,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedWinner));
-        assertEq(observedNonce, 1);
-        assertEq(recordedAt, firstRecordedAt);
-    }
-
-    function test_MismatchedConditionFailsCallbackButStoresRawPayload() public {
-        bytes32 wrongCondition = keccak256("wrong-condition");
-        bytes memory payload = _drawPayload(DRAW_MARKET_ID, wrongCondition);
-
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
-
-        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertFalse(exists);
-        assertTrue(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
-
-        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1);
-        assertEq(record.data, payload);
-
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint128 nonce, uint64 recordedAt,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
-        assertEq(nonce, 1);
-        assertEq(recordedAt, record.recordedAt);
-    }
-
-    function test_MalformedStoredPayloadIsInvalidObservation() public {
-        bytes memory malformed = hex"deadbeef";
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, malformed);
-
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint128 nonce, uint64 recordedAt,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
-        assertEq(nonce, 1);
-        assertGt(recordedAt, 0);
-    }
-
-    function test_AllZeroPayoutIsRejectedAsInvalidSettlementPayload() public {
-        uint256[] memory payouts = new uint256[](2);
-        bytes memory payload = _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts);
-
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
-
-        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertFalse(exists);
-        (IPolymarketSettlementResolver.ObservationStatus status,, uint128 nonce, uint64 recordedAt,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
-        assertEq(nonce, 1);
-        assertGt(recordedAt, 0);
-        assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).data, payload);
-
-        vm.expectRevert(PolymarketSettlementResolver.InvalidSettlementPayload.selector);
-        resolver.replaySettlement(DRAW_MARKET_ID, 1);
-    }
-
-    function test_SplitPayoutIsStoredAsResolvedVoidableObservation() public {
-        uint256[] memory payouts = new uint256[](2);
-        payouts[0] = 1;
-        payouts[1] = 1;
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts));
-
-        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertTrue(exists);
-        (
-            IPolymarketSettlementResolver.ObservationStatus status,
-            uint8 winningSlot,
-            uint128 nonce,
-            uint64 recordedAt,
-            bytes32 txHash,
-            uint256 logIndex
-        ) = resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedVoidable));
-        assertEq(winningSlot, type(uint8).max);
-        assertEq(nonce, 1);
-        assertGt(recordedAt, 0);
-        assertEq(txHash, DRAW_TX_HASH);
-        assertEq(logIndex, LOG_INDEX);
-    }
-
-    function test_ReplayStoredSplitPayoutAfterCallbackGasFailure() public {
-        uint256[] memory payouts = new uint256[](2);
-        payouts[0] = 1;
-        payouts[1] = 1;
-        bytes memory payload = _settlementPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID, payouts);
-
-        vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload, 1);
-
-        (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.PendingValid));
-
-        resolver.replaySettlement(DRAW_MARKET_ID, 1);
-        (status,,,,,) = resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedVoidable));
-    }
-
-    function test_NonCanonicalPayloadIsRejectedConsistently() public {
-        bytes memory payload = bytes.concat(_drawPayload(DRAW_MARKET_ID, DRAW_CONDITION_ID), bytes32(uint256(1)));
-
-        _record(DRAW_MARKET_ID, 1, SOURCE_BLOCK, payload);
-
-        (bool exists,,,,,,,,,) = resolver.getSettlement(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertFalse(exists);
-        (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
-            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
-
-        vm.expectRevert(PolymarketSettlementResolver.InvalidSettlementPayload.selector);
-        resolver.replaySettlement(DRAW_MARKET_ID, 1);
     }
 
     function test_RevertWhenCallbackCalledOutsideNativeOracle() public {
@@ -294,14 +209,24 @@ contract PolymarketSettlementResolverTest is Test {
         resolver.registerMirror(42, POLYGON_CHAIN_ID, CTF, keccak256("condition"), 2);
     }
 
+    function _assertUnobserved() internal view {
+        assertFalse(resolver.isSettlementObserved(DRAW_MARKET_ID, DRAW_CONDITION_ID));
+        (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
+            resolver.getSettlementObservation(DRAW_MARKET_ID, DRAW_CONDITION_ID);
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.None));
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID), 0);
+        assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, DRAW_MARKET_ID, 1).recordedAt, 0);
+    }
+
     function _record(
         uint256 sourceId,
         uint128 nonce,
-        uint256 blockNumber,
-        bytes memory payload
+        uint256 sourcePosition,
+        bytes memory payload,
+        uint256 callbackGasLimit
     ) internal {
         vm.prank(systemCaller);
-        oracle.record(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId, nonce, blockNumber, payload, CALLBACK_GAS_LIMIT);
+        oracle.record(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId, nonce, sourcePosition, payload, callbackGasLimit);
     }
 
     function _drawPayload(
@@ -311,7 +236,6 @@ contract PolymarketSettlementResolverTest is Test {
         uint256[] memory payouts = new uint256[](2);
         payouts[0] = 1;
         payouts[1] = 0;
-
         return _settlementPayload(mirrorId, conditionId, payouts);
     }
 

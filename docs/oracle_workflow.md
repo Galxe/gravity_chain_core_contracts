@@ -173,8 +173,9 @@ There are two independent cursors:
 
 | Cursor | Meaning |
 | --- | --- |
-| source cursor | Binance bucket or Polygon `(block, logIndex, txHash)` progress |
-| delivery nonce | sequential `NativeOracle` nonce for `(sourceType, sourceId)` |
+| local scan cursor | Validator-local Binance bucket or Polygon scan watermark |
+| source position | Latest successfully delivered bucket close or source block |
+| delivery nonce | Sequential `NativeOracle` nonce for `(sourceType, sourceId)` |
 
 The relayer returns a canonical payload once and advances its in-memory source
 cursor. The SDK-side observer caches that complete poll result. Until
@@ -182,19 +183,20 @@ cursor. The SDK-side observer caches that complete poll result. Until
 instead of fetching a new external value.
 
 Persisted progress records fetched data, so it can be ahead of chain state after
-a crash. Startup reconciliation compares it with `NativeOracle.latestNonce`:
+a crash. Startup reconciliation compares it with
+`NativeOracle.getSourceProgress`:
 
-- chain ahead: fast-forward local progress;
-- equal: restore the persisted cursor;
-- local ahead: roll back to the confirmed nonce and source block;
+- chain ahead: fast-forward local nonce and source position;
+- equal: restore the persisted scan cursor;
+- local ahead: roll back to the confirmed nonce and source position;
 - no state: start from the configured cursor.
 
-`NativeOracle` stores raw bytes even when a callback fails. After fixing the
-callback cause, anyone can call `replayPrice(feedId, nonce)` or
-`replaySettlement(mirrorId, nonce)`; both functions read the consensus-approved
-record from `NativeOracle` rather than accepting caller-provided bytes. Price
-replay can fill a missing historical round without moving `latestPrice`
-backward.
+`NativeOracle` stores only one packed `(latestNonce, latestPosition)` value per
+source. It invokes the configured resolver before updating that value. A
+callback failure reverts the complete delivery, so validators retry the same
+consensus-approved bytes at the same nonce after the callback or configuration
+problem is fixed. `PriceFeedResolver` overwrites one latest-price slot; the
+Polymarket resolver stores one terminal settlement for each mirror.
 
 ## Test Gates
 

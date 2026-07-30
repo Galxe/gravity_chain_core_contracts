@@ -429,6 +429,10 @@ library Errors {
     /// @notice Oracle callbacks must be unset or point to deployed contract code
     /// @param callback The invalid callback address
     error InvalidOracleCallback(address callback);
+    error OracleCallbackNotConfigured(uint32 sourceType, uint256 sourceId);
+    error OracleCallbackGasLimitZero(uint32 sourceType, uint256 sourceId);
+    error OracleCallbackFailed(uint32 sourceType, uint256 sourceId, uint128 nonce, address callback, bytes reason);
+    error OracleSourcePositionOverflow(uint256 sourcePosition);
 
     // ========================================================================
     // VERSION CONFIG ERRORS

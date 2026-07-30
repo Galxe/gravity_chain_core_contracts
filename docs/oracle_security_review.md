@@ -62,9 +62,10 @@ Polymarket mirror:
 
 Contracts and SDK:
 
-- preserve raw `NativeOracle` records on callback failure and provide
-  permissionless replay from those records; historical price replay cannot
-  rewind the latest round
+- keep callback execution and source progress advancement atomic; a failed
+  callback leaves the same nonce available for consensus retry
+- store one packed latest progress checkpoint per source and one latest price
+  per feed instead of accumulating payload or round history
 - validate deployed resolver/collateral code and reject non-exact collateral
   deposits and payouts
 - use pull claims with `SafeERC20`, `ReentrancyGuard`, and effects before token
@@ -76,8 +77,7 @@ Contracts and SDK:
   prices, and invalid decimals
 - classify one-positive-slot CTF payouts as a winner and canonical
   multiple-positive-slot payouts as a source-derived void/refund
-- use one strict payload decoder for callback, replay, and pending-observation
-  classification
+- use one strict payload decoder for callback and tooling validation
 - cache fetched consensus bytes until the on-chain nonce catches up
 - decode UnsupportedJWK wrappers with canonical ABI validation and return an
   explicit error for disabled RSA payloads instead of panicking

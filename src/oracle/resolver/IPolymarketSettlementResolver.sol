@@ -6,7 +6,7 @@ pragma solidity ^0.8.30;
 interface IPolymarketSettlementResolver {
     enum ObservationStatus {
         None,
-        PendingValid,
+        PendingValid, // Legacy raw-payload state; new atomic deliveries never return this.
         ResolvedWinner,
         ResolvedVoidable,
         Invalid
@@ -20,8 +20,8 @@ interface IPolymarketSettlementResolver {
         view
         returns (bool exists, uint256 polygonChainId, address ctf, bytes32 conditionId, uint256 outcomeSlotCount);
 
-    /// @notice Returns true once a settlement is resolved or its consensus payload is pending replay.
-    /// @dev Markets use this fail-closed predicate to stop accepting stake as soon as the result is public.
+    /// @notice Returns true once a settlement has been resolved by the callback.
+    /// @dev NativeOracle callback execution and progress advancement are atomic.
     function isSettlementObserved(
         uint256 mirrorId,
         bytes32 conditionId

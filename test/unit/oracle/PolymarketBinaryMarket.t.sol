@@ -8,6 +8,7 @@ import { IPolymarketSettlementResolver } from "../../../src/oracle/resolver/IPol
 import { PolymarketSettlementResolver } from "../../../src/oracle/resolver/PolymarketSettlementResolver.sol";
 import { PolymarketBinaryMarket } from "../../../src/oracle/market/PolymarketBinaryMarket.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
+import { Errors } from "../../../src/foundation/Errors.sol";
 import { MockGToken } from "../../utils/MockGToken.sol";
 import { FeeOnTransferToken } from "../../utils/FeeOnTransferToken.sol";
 
@@ -412,15 +413,17 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(collateral.balanceOf(bob), STARTING_BALANCE);
     }
 
-    function test_RevertWhenCreatingMarketAfterSettlementPayloadIsStored() public {
+    function test_RevertWhenCreatingMarketAfterSettlementIsResolved() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
-        vm.prank(governance);
+        vm.startPrank(governance);
+        oracle.setDefaultCallback(market.SOURCE_TYPE_POLYMARKET_SETTLEMENT(), address(resolver));
         resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+        vm.stopPrank();
 
         vm.prank(systemCaller);
-        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 0);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), CALLBACK_GAS_LIMIT);
 
         PolymarketBinaryMarket.CreateMarketParams memory params = _createParams(address(resolver), _yesNoSlotMap());
         vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
@@ -428,18 +431,20 @@ contract PolymarketBinaryMarketTest is Test {
         market.createMarket(params);
     }
 
-    function test_RevertWhenBettingAfterSettlementPayloadIsStored() public {
+    function test_RevertWhenBettingAfterSettlementIsResolved() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
-        vm.prank(governance);
+        vm.startPrank(governance);
+        oracle.setDefaultCallback(market.SOURCE_TYPE_POLYMARKET_SETTLEMENT(), address(resolver));
         resolver.registerMirror(MIRROR_ID, POLYGON_CHAIN_ID, CTF, CONDITION_ID, 2);
+        vm.stopPrank();
 
         uint256 marketId = _createMarket(address(resolver), _yesNoSlotMap());
         _placeBet(alice, marketId, uint8(PolymarketBinaryMarket.BinaryOutcome.No), 100 ether);
 
         vm.prank(systemCaller);
-        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 0);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), CALLBACK_GAS_LIMIT);
 
         assertTrue(resolver.isSettlementObserved(MIRROR_ID, CONDITION_ID));
         vm.expectRevert(PolymarketBinaryMarket.SettlementAlreadyAvailable.selector);
@@ -706,7 +711,7 @@ contract PolymarketBinaryMarketTest is Test {
         assertEq(collateral.balanceOf(address(market)), 0);
     }
 
-    function test_PendingPayloadRemainsLockedUntilReplay() public {
+    function test_CallbackFailureKeepsNonceRetryable() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
@@ -716,24 +721,22 @@ contract PolymarketBinaryMarketTest is Test {
         vm.stopPrank();
 
         uint256 marketId = _createFundedLockedMarket(address(resolver), _yesNoSlotMap());
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
         vm.prank(systemCaller);
         oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), 1);
 
         (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
             resolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.PendingValid));
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.None));
+        assertEq(oracle.getLatestNonce(6, MIRROR_ID), 0);
 
-        vm.warp(block.timestamp + 10 * 365 days);
-        vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);
-        market.finalizeMarket(marketId);
-        assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Locked));
-
-        resolver.replaySettlement(MIRROR_ID, 1);
+        vm.prank(systemCaller);
+        oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, _resolverPayload(_singleWinningPayout(0)), CALLBACK_GAS_LIMIT);
         market.finalizeMarket(marketId);
         assertEq(uint8(market.getMarket(marketId).status), uint8(PolymarketBinaryMarket.MarketStatus.Settled));
     }
 
-    function test_InvalidStoredPayloadRemainsLockedIndefinitely() public {
+    function test_InvalidPayloadDoesNotCreatePendingSettlement() public {
         NativeOracle oracle = _installNativeOracle();
         PolymarketSettlementResolver resolver = new PolymarketSettlementResolver();
 
@@ -743,12 +746,14 @@ contract PolymarketBinaryMarketTest is Test {
         vm.stopPrank();
 
         uint256 marketId = _createFundedLockedMarket(address(resolver), _yesNoSlotMap());
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
         vm.prank(systemCaller);
         oracle.record(6, MIRROR_ID, 1, SOURCE_BLOCK, hex"deadbeef", CALLBACK_GAS_LIMIT);
 
         (IPolymarketSettlementResolver.ObservationStatus status,,,,,) =
             resolver.getSettlementObservation(MIRROR_ID, CONDITION_ID);
-        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.Invalid));
+        assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.None));
+        assertEq(oracle.getLatestNonce(6, MIRROR_ID), 0);
 
         vm.warp(block.timestamp + 10 * 365 days);
         vm.expectRevert(PolymarketBinaryMarket.SettlementUnavailable.selector);

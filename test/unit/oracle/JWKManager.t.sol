@@ -139,22 +139,18 @@ contract JWKManagerTest is Test {
         // Verify key1 exists
         assertTrue(jwkManager.hasJWK(GOOGLE_ISSUER, "key1"));
 
-        // Second record with same version - callback will fail but NativeOracle won't revert
-        // (because callback failures are caught). The data will be stored in NativeOracle
-        // but JWKManager will NOT update its state.
+        // A non-increasing version fails atomically. The nonce stays retryable.
         uint256 sourceId = uint256(keccak256(GOOGLE_ISSUER));
         bytes memory payload = _createPayload(GOOGLE_ISSUER, 1, jwks); // Same version
 
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
-        // JWKManager still has the original version (callback failed, state unchanged)
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);
         assertEq(provider.version, 1);
-
-        // NativeOracle stored the data (because callback failure defaults to store)
-        INativeOracle.DataRecord memory record = oracle.getRecord(SOURCE_TYPE_JWK, sourceId, 2);
-        assertTrue(record.recordedAt > 0);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 1);
+        assertEq(oracle.getRecord(SOURCE_TYPE_JWK, sourceId, 2).recordedAt, 0);
     }
 
     function test_OnOracleEvent_UpdateExistingProvider() public {
@@ -586,17 +582,16 @@ contract JWKManagerTest is Test {
         // First record succeeds
         _recordJWK(GOOGLE_ISSUER, version1, jwks, 1);
 
-        // Second with non-increasing version causes callback failure
-        // JWKManager state should not change
+        // A non-increasing version fails atomically.
         uint256 sourceId = uint256(keccak256(GOOGLE_ISSUER));
         bytes memory payload = _createPayload(GOOGLE_ISSUER, version2, jwks);
 
+        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
-        // JWKManager still has the original version (callback failed)
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);
         assertEq(provider.version, version1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 1);
     }
 }
-

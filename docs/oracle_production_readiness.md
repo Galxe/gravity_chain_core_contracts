@@ -13,8 +13,8 @@ flowchart LR
     Polygon["Polygon finalized logs\ncondition-scoped"]
     Relayer["gravity-reth adapters\ncanonical bytes"]
     JWK["gravity-aptos JWK consensus\nvalidator quorum"]
-    Native["NativeOracle\nnonce + raw record"]
-    Price["PriceFeedResolver\nBinance close + rounds"]
+    Native["NativeOracle\nlatest nonce + source position"]
+    Price["PriceFeedResolver\nlatest Binance close"]
     Poly["PolymarketSettlementResolver\nimmutable settlement"]
     Market["Binary market\nsettle + claim"]
 
@@ -41,7 +41,8 @@ Price feed:
 - one feed id has one immutable continuous bucket origin
 - HTTP responses are streamed into a bounded buffer and request duration is capped
 - fixed tasks reject buckets older than confirmed feed history
-- callback failure leaves a replayable raw record
+- callback success and source progress advancement are atomic
+- only the latest price is retained; no historical rounds accumulate on-chain
 
 Polymarket mirror:
 
@@ -51,7 +52,8 @@ Polymarket mirror:
 - malformed filtered logs fail without cursor advancement
 - source events are ordered by block, log index, and transaction hash
 - mirror configuration and accepted settlement are immutable
-- callback failure leaves a replayable raw record
+- callback success and source progress advancement are atomic
+- one terminal settlement is retained per configured mirror
 
 Market contracts:
 
@@ -66,14 +68,15 @@ Market contracts:
 The relayer caches a fetched payload until `NativeOracle.latestNonce` catches up.
 This lets a validator repeatedly gossip byte-identical data while JWK consensus
 is pending. Persisted progress may be ahead after a crash; startup reconciliation
-rolls it back to the confirmed on-chain nonce and source block.
+rolls it back to the confirmed on-chain nonce and source position.
 
 The execution adapter accepts only canonical ABI encoding of the UnsupportedJWK
 wrapper before constructing `NativeOracle.recordBatch`.
 
-If `NativeOracle` emits `CallbackFailed`, raw bytes are still stored and the nonce
-advances. Use `replayPrice` or `replaySettlement` after fixing the callback
-cause. Historical price backfill does not rewind the latest round.
+Callback execution and progress advancement happen in one transaction. A missing,
+out-of-gas, malformed, or reverting callback reverts the delivery, leaves the
+nonce unchanged, and allows consensus to retry the same canonical payload. No
+new raw payload history is stored in `NativeOracle`.
 
 ## Test gates
 

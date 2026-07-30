@@ -8,10 +8,8 @@ import { Errors } from "../foundation/Errors.sol";
 
 /// @title NativeOracle
 /// @author Gravity Team
-/// @notice Stores verified data from external sources (blockchains, JWK providers, DNS records)
-/// @dev Data is recorded by the consensus engine via SYSTEM_CALLER after validators reach consensus.
-///      Records are keyed by (sourceType, sourceId, nonce) tuple.
-///      Callbacks are invoked with caller-specified gas limit and failures do NOT revert oracle recording.
+/// @notice Delivers verified external data and stores one latest checkpoint per source
+/// @dev Legacy records and nonces retain their storage slots for hardfork compatibility.
 contract NativeOracle is INativeOracle {
     uint256 private constant MAX_CALLBACK_RETURNDATA_BYTES = 256;
 
@@ -19,11 +17,10 @@ contract NativeOracle is INativeOracle {
     // STATE
     // ========================================================================
 
-    // TODO: refactor? how to upgrade
-    /// @notice Data records: sourceType -> sourceId -> nonce -> DataRecord
+    /// @dev Legacy records. Kept for historical reads and storage compatibility; never written.
     mapping(uint32 => mapping(uint256 => mapping(uint128 => DataRecord))) private _records;
 
-    /// @notice Latest nonce per source: sourceType -> sourceId -> nonce
+    /// @dev Legacy nonces. Kept for hardfork fallback and storage compatibility; never written.
     mapping(uint32 => mapping(uint256 => uint128)) private _nonces;
 
     /// @notice Default callback handlers: sourceType -> callback contract
@@ -34,6 +31,10 @@ contract NativeOracle is INativeOracle {
 
     /// @notice Whether the contract has been initialized
     bool private _initialized;
+
+    /// @notice Latest post-hardfork progress, packed into one slot per source
+    /// @dev Appended after every legacy field to preserve the deployed storage layout.
+    mapping(uint32 => mapping(uint256 => SourceProgress)) private _sourceProgress;
 
     // ========================================================================
     // INITIALIZATION
@@ -83,24 +84,7 @@ contract NativeOracle is INativeOracle {
         uint256 callbackGasLimit
     ) external {
         requireAllowed(SystemAddresses.SYSTEM_CALLER);
-
-        // Validate and update nonce (always done regardless of storage)
-        _updateNonce(sourceType, sourceId, nonce);
-
-        // Invoke callback first to determine if we should store
-        // Default: store if no callback or callback fails
-        bool shouldStore = true;
-        shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
-
-        // Conditionally store record based on callback result
-        if (shouldStore) {
-            _records[sourceType][sourceId][nonce] = DataRecord({
-                recordedAt: uint64(block.timestamp), // NOTE: EVM seconds, NOT Gravity microseconds
-                blockNumber: blockNumber,
-                data: payload
-            });
-            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
-        }
+        _deliver(sourceType, sourceId, nonce, blockNumber, payload, callbackGasLimit);
     }
 
     /// @inheritdoc INativeOracle
@@ -124,9 +108,9 @@ contract NativeOracle is INativeOracle {
             );
         }
 
-        // Record all data entries with individual nonce validation
+        // Deliver all entries atomically. Any callback failure reverts the full batch.
         for (uint256 i; i < length;) {
-            _recordSingle(sourceType, sourceId, nonces[i], blockNumbers[i], payloads[i], callbackGasLimits[i]);
+            _deliver(sourceType, sourceId, nonces[i], blockNumbers[i], payloads[i], callbackGasLimits[i]);
 
             unchecked {
                 ++i;
@@ -134,13 +118,13 @@ contract NativeOracle is INativeOracle {
         }
     }
 
-    /// @notice Internal helper to record a single entry (reduces stack depth)
+    /// @notice Deliver one entry and advance progress only after callback success
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce
     /// @param payload The payload data
     /// @param callbackGasLimit Gas limit for callback (0 = no callback)
-    function _recordSingle(
+    function _deliver(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
@@ -148,23 +132,17 @@ contract NativeOracle is INativeOracle {
         bytes calldata payload,
         uint256 callbackGasLimit
     ) private {
-        // Validate and update nonce (always done regardless of storage)
-        _updateNonce(sourceType, sourceId, nonce);
-
-        // Invoke callback first to determine if we should store
-        // Default: store if no callback or callback fails
-        bool shouldStore = true;
-        shouldStore = _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
-
-        // Conditionally store record based on callback result
-        if (shouldStore) {
-            _records[sourceType][sourceId][nonce] = DataRecord({
-                recordedAt: uint64(block.timestamp), // NOTE: EVM seconds, NOT Gravity microseconds
-                blockNumber: blockNumber,
-                data: payload
-            });
-            emit DataRecorded(sourceType, sourceId, nonce, payload.length);
+        SourceProgress memory current = _getSourceProgress(sourceType, sourceId);
+        if (nonce != current.latestNonce + 1) {
+            revert Errors.NonceNotSequential(sourceType, sourceId, current.latestNonce + 1, nonce);
         }
+        if (blockNumber > type(uint128).max) revert Errors.OracleSourcePositionOverflow(blockNumber);
+
+        _invokeCallback(sourceType, sourceId, nonce, payload, callbackGasLimit);
+
+        uint128 sourcePosition = uint128(blockNumber);
+        _sourceProgress[sourceType][sourceId] = SourceProgress({ latestNonce: nonce, latestPosition: sourcePosition });
+        emit OracleDelivered(sourceType, sourceId, nonce, sourcePosition, keccak256(payload));
     }
 
     // ========================================================================
@@ -237,7 +215,15 @@ contract NativeOracle is INativeOracle {
         uint32 sourceType,
         uint256 sourceId
     ) external view returns (uint128 nonce) {
-        return _nonces[sourceType][sourceId];
+        return _getSourceProgress(sourceType, sourceId).latestNonce;
+    }
+
+    /// @inheritdoc INativeOracle
+    function getSourceProgress(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (SourceProgress memory progress) {
+        return _getSourceProgress(sourceType, sourceId);
     }
 
     /// @inheritdoc INativeOracle
@@ -246,7 +232,7 @@ contract NativeOracle is INativeOracle {
         uint256 sourceId,
         uint128 nonce
     ) external view returns (bool) {
-        uint128 latestNonce = _nonces[sourceType][sourceId];
+        uint128 latestNonce = _getSourceProgress(sourceType, sourceId).latestNonce;
         return latestNonce > 0 && latestNonce >= nonce;
     }
 
@@ -254,24 +240,22 @@ contract NativeOracle is INativeOracle {
     // INTERNAL FUNCTIONS
     // ========================================================================
 
-    /// @notice Update nonce for a source
-    /// @dev Validates that nonce is sequential (currentNonce defaults to 0, so first nonce must be 1)
-    /// @param sourceType The source type
-    /// @param sourceId The source identifier
-    /// @param nonce The new nonce (must be currentNonce + 1)
-    function _updateNonce(
+    /// @notice Read post-hardfork progress or fall back to the latest legacy record
+    function _getSourceProgress(
         uint32 sourceType,
-        uint256 sourceId,
-        uint128 nonce
-    ) internal {
-        uint128 currentNonce = _nonces[sourceType][sourceId];
+        uint256 sourceId
+    ) internal view returns (SourceProgress memory progress) {
+        progress = _sourceProgress[sourceType][sourceId];
+        if (progress.latestNonce != 0) return progress;
 
-        // Nonce must be sequential (currentNonce defaults to 0, so first nonce must be 1)
-        if (nonce != currentNonce + 1) {
-            revert Errors.NonceNotSequential(sourceType, sourceId, currentNonce + 1, nonce);
+        uint128 legacyNonce = _nonces[sourceType][sourceId];
+        if (legacyNonce == 0) return progress;
+
+        uint256 legacyPosition = _records[sourceType][sourceId][legacyNonce].blockNumber;
+        if (legacyPosition > type(uint128).max) {
+            revert Errors.OracleSourcePositionOverflow(legacyPosition);
         }
-
-        _nonces[sourceType][sourceId] = nonce;
+        progress = SourceProgress({ latestNonce: legacyNonce, latestPosition: uint128(legacyPosition) });
     }
 
     /// @notice Resolve callback using 2-layer lookup
@@ -290,51 +274,43 @@ contract NativeOracle is INativeOracle {
         return _defaultCallbacks[sourceType];
     }
 
-    /// @notice Invoke callback with specified gas limit
-    /// @dev Failures are caught to prevent DOS attacks. Returns whether storage should happen.
+    /// @notice Invoke callback with bounded returndata and fail atomically
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload
     /// @param gasLimit Gas limit for callback execution
-    /// @return shouldStore True if payload should be stored, false to skip storage
     function _invokeCallback(
         uint32 sourceType,
         uint256 sourceId,
         uint128 nonce,
         bytes calldata payload,
         uint256 gasLimit
-    ) internal returns (bool shouldStore) {
+    ) internal {
         address callback = _resolveCallback(sourceType, sourceId);
-        if (callback == address(0)) return true; // No callback = store by default
+        if (callback == address(0)) {
+            revert Errors.OracleCallbackNotConfigured(sourceType, sourceId);
+        }
         if (gasLimit == 0) {
-            emit CallbackSkipped(sourceType, sourceId, nonce, callback);
-            return true;
+            revert Errors.OracleCallbackGasLimitZero(sourceType, sourceId);
         }
 
         bytes memory callData = abi.encodeCall(IOracleCallback.onOracleEvent, (sourceType, sourceId, nonce, payload));
         (bool success, bytes memory returnData) = _callWithBoundedReturndata(callback, gasLimit, callData);
 
         if (!success || returnData.length < 32) {
-            emit CallbackFailed(sourceType, sourceId, nonce, callback, returnData);
-            return true;
+            revert Errors.OracleCallbackFailed(sourceType, sourceId, nonce, callback, returnData);
         }
 
-        uint256 rawShouldStore;
+        uint256 rawReturnValue;
         assembly ("memory-safe") {
-            rawShouldStore := mload(add(returnData, 0x20))
+            rawReturnValue := mload(add(returnData, 0x20))
         }
-        if (rawShouldStore > 1) {
-            emit CallbackFailed(sourceType, sourceId, nonce, callback, returnData);
-            return true;
+        if (rawReturnValue > 1) {
+            revert Errors.OracleCallbackFailed(sourceType, sourceId, nonce, callback, returnData);
         }
 
-        bool callbackShouldStore = rawShouldStore == 1;
         emit CallbackSuccess(sourceType, sourceId, nonce, callback);
-        if (!callbackShouldStore) {
-            emit StorageSkipped(sourceType, sourceId, nonce, callback);
-        }
-        return callbackShouldStore;
     }
 
     /// @dev Calls a callback without automatically copying unbounded returndata into memory.

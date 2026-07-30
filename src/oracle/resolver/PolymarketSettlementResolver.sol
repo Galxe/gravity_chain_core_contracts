@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import { INativeOracle, IOracleCallback } from "../INativeOracle.sol";
+import { IOracleCallback } from "../INativeOracle.sol";
 import { IPolymarketSettlementResolver } from "./IPolymarketSettlementResolver.sol";
 import { SystemAddresses } from "../../foundation/SystemAddresses.sol";
 import { requireAllowed } from "../../foundation/SystemAccessControl.sol";
 
 /// @title PolymarketSettlementResolver
 /// @notice Callback for finalized Polymarket CTF settlement events mirrored from Polygon.
-/// @dev NativeOracle keeps the raw payload. This resolver stores application-ready settlement state.
+/// @dev Each mirror is terminal after one successfully delivered settlement.
 contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementResolver {
     uint32 public constant SOURCE_TYPE_POLYMARKET_SETTLEMENT = 6;
     uint256 public constant POLYGON_CHAIN_ID = 137;
@@ -43,6 +43,7 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         ObservationStatus status;
         uint8 winningSlot;
         uint128 nonce;
+        uint64 recordedAt;
         uint256 polygonChainId;
         address ctf;
         address oracle;
@@ -91,7 +92,6 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
     error OutcomeSlotCountMismatch(uint256 expected, uint256 provided);
     error MirrorAlreadyRegistered(uint256 mirrorId);
     error SettlementAlreadyResolved(uint256 mirrorId, bytes32 conditionId);
-    error RecordUnavailable(uint32 sourceType, uint256 sourceId, uint128 nonce);
 
     function registerMirror(
         uint256 mirrorId,
@@ -146,21 +146,7 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         if (sourceType != SOURCE_TYPE_POLYMARKET_SETTLEMENT) revert UnsupportedSourceType(sourceType);
 
         _resolveEncoded(sourceId, nonce, payload);
-        return true;
-    }
-
-    /// @notice Replays a consensus-stored settlement when its callback previously failed.
-    /// @dev Anyone may call this because the payload is read from NativeOracle.
-    function replaySettlement(
-        uint256 mirrorId,
-        uint128 nonce
-    ) external {
-        INativeOracle.DataRecord memory record =
-            INativeOracle(SystemAddresses.NATIVE_ORACLE).getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
-        if (record.recordedAt == 0) {
-            revert RecordUnavailable(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
-        }
-        _resolveEncoded(mirrorId, nonce, record.data);
+        return false;
     }
 
     /// @inheritdoc IPolymarketSettlementResolver
@@ -168,11 +154,7 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         uint256 mirrorId,
         bytes32 conditionId
     ) external view override returns (bool observed) {
-        if (_settlements[mirrorId][conditionId].exists) return true;
-
-        return
-            INativeOracle(SystemAddresses.NATIVE_ORACLE).getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId)
-                != 0;
+        return _settlements[mirrorId][conditionId].exists;
     }
 
     /// @inheritdoc IPolymarketSettlementResolver
@@ -193,46 +175,20 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         )
     {
         Settlement storage settlement = _settlements[mirrorId][conditionId];
-        if (settlement.exists) {
-            nonce = settlement.nonce;
-            INativeOracle.DataRecord memory resolvedRecord = INativeOracle(SystemAddresses.NATIVE_ORACLE)
-                .getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
-            if (resolvedRecord.recordedAt == 0) {
-                return (ObservationStatus.Invalid, type(uint8).max, nonce, 0, bytes32(0), 0);
-            }
-            return (
-                settlement.status,
-                settlement.winningSlot,
-                nonce,
-                resolvedRecord.recordedAt,
-                settlement.txHash,
-                settlement.logIndex
-            );
+        if (!settlement.exists) {
+            return (ObservationStatus.None, type(uint8).max, 0, 0, bytes32(0), 0);
         }
-
-        nonce = INativeOracle(SystemAddresses.NATIVE_ORACLE).getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId);
-        if (nonce == 0) return (ObservationStatus.None, type(uint8).max, 0, 0, bytes32(0), 0);
-
-        INativeOracle.DataRecord memory pendingRecord =
-            INativeOracle(SystemAddresses.NATIVE_ORACLE).getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, mirrorId, nonce);
-        if (pendingRecord.recordedAt == 0) {
-            return (ObservationStatus.Invalid, type(uint8).max, nonce, 0, bytes32(0), 0);
-        }
-
-        MirrorConfig storage config = mirrorConfigs[mirrorId];
-        if (!config.exists || conditionId != config.conditionId) {
-            return (ObservationStatus.Invalid, type(uint8).max, nonce, pendingRecord.recordedAt, bytes32(0), 0);
-        }
-
-        try this.classifySettlementPayload(mirrorId, pendingRecord.data) returns (ObservationStatus, uint8) {
-            return (ObservationStatus.PendingValid, type(uint8).max, nonce, pendingRecord.recordedAt, bytes32(0), 0);
-        } catch {
-            return (ObservationStatus.Invalid, type(uint8).max, nonce, pendingRecord.recordedAt, bytes32(0), 0);
-        }
+        return (
+            settlement.status,
+            settlement.winningSlot,
+            settlement.nonce,
+            settlement.recordedAt,
+            settlement.txHash,
+            settlement.logIndex
+        );
     }
 
-    /// @notice Strict decoder used to classify consensus-stored payloads whose callback failed.
-    /// @dev Callback, replay, and observation paths all use the same canonical validation rules.
+    /// @notice Strict decoder exposed for tooling and payload validation.
     function classifySettlementPayload(
         uint256 sourceId,
         bytes calldata encoded
@@ -298,6 +254,7 @@ contract PolymarketSettlementResolver is IOracleCallback, IPolymarketSettlementR
         stored.status = status;
         stored.winningSlot = winningSlot;
         stored.nonce = nonce;
+        stored.recordedAt = uint64(block.timestamp);
         stored.polygonChainId = payload.polygonChainId;
         stored.ctf = payload.ctf;
         stored.oracle = payload.oracle;
