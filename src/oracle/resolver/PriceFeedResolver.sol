@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import { IOracleCallback } from "../INativeOracle.sol";
+import { SystemAddresses } from "../../foundation/SystemAddresses.sol";
+import { requireAllowed } from "../../foundation/SystemAccessControl.sol";
+
+/// @title PriceFeedResolver
+/// @author Gravity Team
+/// @notice Stores the latest consensus-approved price round for each configured feed.
+contract PriceFeedResolver is IOracleCallback {
+    struct PricePayload {
+        uint256 feedId;
+        uint64 roundId;
+        uint64 resolvedAt;
+        uint8 decimals;
+        int256 price;
+    }
+
+    struct PriceRound {
+        bool exists;
+        uint64 roundId;
+        uint64 resolvedAt;
+        uint8 decimals;
+        int256 price;
+    }
+
+    /// @notice NativeOracle source type reserved for deterministic price feeds.
+    uint32 public constant SOURCE_TYPE_PRICE_FEED = 3;
+    /// @notice Maximum accepted fixed-point precision.
+    uint8 public constant MAX_PRICE_DECIMALS = 18;
+
+    /// @notice Latest accepted round for each feed identifier.
+    mapping(uint256 feedId => PriceRound round) public latestPrice;
+
+    /// @notice Emitted after a newer price round is accepted.
+    /// @param feedId Stable feed identifier matching the NativeOracle source ID.
+    /// @param roundId Provider-defined monotonically increasing round identifier.
+    /// @param price Positive fixed-point price.
+    /// @param decimals Number of decimal places in `price`.
+    /// @param resolvedAt Provider-defined monotonically increasing resolution timestamp.
+    event PriceResolved(
+        uint256 indexed feedId, uint64 indexed roundId, int256 price, uint8 decimals, uint64 resolvedAt
+    );
+
+    error UnsupportedSourceType(uint32 sourceType);
+    error SourceIdMismatch(uint256 expected, uint256 provided);
+    error StaleRound(uint64 latestRoundId, uint64 providedRoundId);
+    error StaleResolvedAt(uint64 latestResolvedAt, uint64 providedResolvedAt);
+    error InvalidPrice(int256 price);
+    error InvalidDecimals(uint8 decimals);
+
+    /// @inheritdoc IOracleCallback
+    function onOracleEvent(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128,
+        bytes calldata payload
+    ) external override returns (bool shouldStore) {
+        requireAllowed(SystemAddresses.NATIVE_ORACLE);
+        if (sourceType != SOURCE_TYPE_PRICE_FEED) revert UnsupportedSourceType(sourceType);
+
+        _resolvePrice(sourceId, abi.decode(payload, (PricePayload)));
+        return false;
+    }
+
+    function _resolvePrice(
+        uint256 sourceId,
+        PricePayload memory payload
+    ) internal {
+        if (sourceId != payload.feedId) revert SourceIdMismatch(payload.feedId, sourceId);
+
+        PriceRound memory current = latestPrice[payload.feedId];
+        if (payload.roundId == 0 || payload.roundId <= current.roundId) {
+            revert StaleRound(current.roundId, payload.roundId);
+        }
+        if (payload.resolvedAt <= current.resolvedAt) {
+            revert StaleResolvedAt(current.resolvedAt, payload.resolvedAt);
+        }
+        if (payload.decimals > MAX_PRICE_DECIMALS) revert InvalidDecimals(payload.decimals);
+        if (payload.price <= 0) revert InvalidPrice(payload.price);
+
+        latestPrice[payload.feedId] = PriceRound({
+            exists: true,
+            roundId: payload.roundId,
+            resolvedAt: payload.resolvedAt,
+            decimals: payload.decimals,
+            price: payload.price
+        });
+
+        emit PriceResolved(payload.feedId, payload.roundId, payload.price, payload.decimals, payload.resolvedAt);
+    }
+}
