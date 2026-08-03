@@ -58,9 +58,9 @@ consists of contracts deployed on both chains, providing:
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                         NativeOracle                                 │  │
 │   │                                                                      │  │
-│   │  • Stores verified payload                                          │  │
-│   │  • Invokes callback with specified gas limit                        │  │
-│   │  • Callback failures do NOT revert recording                        │  │
+│   │  • Delivers verified payload to the receiver                        │  │
+│   │  • Tracks one nonce and source position checkpoint                  │  │
+│   │  • Callback failure reverts without advancing progress              │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                         │                                                   │
 │                         │ Callback: onOracleEvent()                        │
@@ -72,7 +72,7 @@ consists of contracts deployed on both chains, providing:
 │   │  • Parses PortalMessage payload                                     │  │
 │   │  • Verifies sender is trusted GBridgeSender                         │  │
 │   │  • Mints native G tokens via system precompile                      │  │
-│   │  • Tracks processed nonces for replay protection                    │  │
+│   │  • Relies on NativeOracle nonce continuity for replay protection    │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -293,10 +293,10 @@ PortalMessage payloads.
 
 ```solidity
 abstract contract BlockchainEventHandler is IOracleCallback {
-    /// @notice Called by NativeOracle when a blockchain event is recorded
+    /// @notice Called by NativeOracle when a blockchain event is delivered
     /// @dev Parses the portal message payload and delegates to _handlePortalMessage().
-    ///      Returns `shouldStore` up to NativeOracle so the derived handler can decide whether
-    ///      the raw payload is worth persisting.
+    ///      The bool return is retained for callback ABI compatibility; NativeOracle does not
+    ///      persist new payload history.
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
@@ -305,7 +305,7 @@ abstract contract BlockchainEventHandler is IOracleCallback {
     ) external override returns (bool shouldStore);
 
     /// @notice Handle a parsed portal message (override in derived contracts)
-    /// @return shouldStore Whether NativeOracle should persist the raw payload
+    /// @return shouldStore Deprecated compatibility return
     function _handlePortalMessage(
         uint32 sourceType,
         uint256 sourceId,
@@ -534,7 +534,7 @@ error MintFailed(address recipient, uint256 amount);
            sourceType=0,        // BLOCKCHAIN
            sourceId=1,          // Ethereum chain ID (matches GBridgeReceiver.trustedSourceId)
            nonce=currentNonce+1,// Sequential; NativeOracle enforces expectedNonce == currentNonce+1
-           blockNumber,         // From MessageSent.block_number; stored as provenance in DataRecord
+           blockNumber,         // From MessageSent.block_number; committed as latestPosition
            payload,             // Full portal message
            callbackGasLimit     // Caller-specified
        )
@@ -542,8 +542,9 @@ error MintFailed(address recipient, uint256 amount);
 3. NativeOracle on Gravity:
    └─> Validates nonce == currentNonce + 1 (reverts NonceNotSequential otherwise — replay-safe)
    └─> Resolves callback using 2-layer lookup → GBridgeReceiver
-   └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...) — expects bool return
-   └─> Stores DataRecord (with blockNumber) iff callback returned true (or no callback / gas=0 / revert)
+   └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...) — expects canonical bool return
+   └─> On success, commits nonce + source position and emits OracleDelivered
+   └─> On callback failure, reverts without advancing source progress
 
 4. GBridgeReceiver (extends BlockchainEventHandler):
    └─> Verifies sourceId == trustedSourceId
@@ -552,7 +553,7 @@ error MintFailed(address recipient, uint256 amount);
    └─> Calls NATIVE_MINT_PRECOMPILE (0x...1625F5000) via low-level call
        with callData = 0x01 || recipient || amount
    └─> Emits NativeMinted(recipient, amount, messageNonce)
-   └─> Returns shouldStore = true so the oracle keeps the payload for audit
+   └─> Returns the legacy bool for ABI compatibility; NativeOracle stores no new payload history
 ```
 
 ---
@@ -581,7 +582,7 @@ error MintFailed(address recipient, uint256 amount);
 1. **Fee Validation**: GravityPortal rejects both underpayment (`InsufficientFee`) and overpayment (`ExcessiveFee`) so a caller sees a deterministic cost.
 2. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
 3. **Source and Sender Verification**: GBridgeReceiver checks both `sourceId == trustedSourceId` and the in-payload `sender == trustedBridge`.
-4. **Callback Failure Tolerance**: Failures do NOT revert oracle recording; NativeOracle falls back to storing the payload for later inspection.
+4. **Atomic Callback Delivery**: Receiver failure reverts the NativeOracle delivery, so its nonce remains retryable and no source progress advances.
 5. **Replay Protection**: Enforced by NativeOracle's sequential-nonce rule (`nonce == currentNonce + 1`). GBridgeReceiver does NOT keep its own processed-nonce map; the legacy slot exists only as `__deprecated_processedNonces` for storage-layout compatibility.
 6. **Compact Encoding**: PortalMessage uses 36-byte overhead (vs 128+ with abi.encode)
 
@@ -590,7 +591,7 @@ error MintFailed(address recipient, uint256 amount);
 ## Invariants
 
 1. **Nonce Uniqueness**: Each nonce from GravityPortal is unique (monotonic uint128)
-2. **Callback Safety**: Callback failures never affect oracle state
+2. **Callback Atomicity**: Receiver state and NativeOracle source progress either both update or both revert
 3. **Token Conservation**: G tokens locked on Ethereum = native G minted on Gravity (minus failed mints)
 4. **Replay Prevention**: NativeOracle enforces `nonce == currentNonce + 1` per (sourceType, sourceId), so each portal nonce can be delivered to the receiver at most once.
 
