@@ -8,12 +8,13 @@ layer: oracle
 
 ## Overview
 
-The Native Oracle module enables Gravity to receive and store **verified external data** from any source. It is a single
+The Native Oracle module enables Gravity to receive and deliver **verified external data** from any source. It is a single
 contract deployed on Gravity that provides:
 
-1. **Consensus-validated data recording** from any external source
+1. **Consensus-validated data delivery** from any external source
 2. **Flexible callback routing** based on source type and source ID
-3. **Replay protection** via strictly increasing nonces
+3. **Replay protection** via sequential nonces
+4. **Bounded source progress** without retaining new payload history
 
 **Supported data sources include (extensible via governance):**
 
@@ -50,10 +51,10 @@ contract deployed on Gravity that provides:
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                         NativeOracle                                 │  │
 │   │                                                                      │  │
-│   │  • Stores verified data keyed by (sourceType, sourceId, nonce)     │  │
-│   │  • Tracks latest nonce per source (sourceType, sourceId)           │  │
-│   │  • Invokes callbacks with CALLER-SPECIFIED gas limit               │  │
-│   │  • Callback failures do NOT revert recording                        │  │
+│   │  • Delivers verified data to one configured callback               │  │
+│   │  • Tracks latest nonce and source position per source              │  │
+│   │  • Stores no new payload history                                    │  │
+│   │  • Callback and progress updates succeed or revert atomically       │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                         │                                                   │
 │                         │ Callback: onOracleEvent()                        │
@@ -161,7 +162,7 @@ uint128 nonce;
 - `nonce == 1` for the first record per source
 - For each (sourceType, sourceId) pair, consecutive records MUST satisfy `newNonce == latestNonce + 1`
 
-### DataRecord
+### DataRecord (Legacy)
 
 ```solidity
 struct DataRecord {
@@ -171,21 +172,35 @@ struct DataRecord {
 }
 ```
 
-Record existence is determined by `recordedAt > 0`. `blockNumber` is carried independently of `nonce` so that a single source can mix sequence-based ordering with source-block provenance.
+Record existence is determined by `recordedAt > 0`. These records remain queryable after the hardfork, but new deliveries
+do not write this mapping. The existing `blockNumber` argument is interpreted as a source-defined restart position for new
+deliveries; its name is retained to preserve the existing `record()` and `recordBatch()` selectors.
+
+### SourceProgress
+
+```solidity
+struct SourceProgress {
+    uint128 latestNonce;
+    uint128 latestPosition;
+}
+```
+
+The two fields occupy one storage slot. `latestPosition` is an opaque, source-defined checkpoint used by the relayer for
+restart and cursor reconciliation.
 
 ---
 
 ## Contract: NativeOracle
 
-Stores verified data from external sources. Only writable by SYSTEM_CALLER via consensus.
+Delivers verified data from external sources. Only writable by SYSTEM_CALLER via consensus.
 
 ### State Variables
 
 ```solidity
-/// @notice Data records: sourceType -> sourceId -> nonce -> DataRecord
+/// @dev Legacy records retained at slot 0 for historical reads and layout compatibility
 mapping(uint32 => mapping(uint256 => mapping(uint128 => DataRecord))) private _records;
 
-/// @notice Latest nonce per source: sourceType -> sourceId -> nonce
+/// @dev Legacy nonces retained at slot 1 for hardfork fallback and layout compatibility
 mapping(uint32 => mapping(uint256 => uint128)) private _nonces;
 
 /// @notice Default callback handlers: sourceType -> callback contract
@@ -195,7 +210,20 @@ mapping(uint32 => address) private _defaultCallbacks;
 /// @notice Specialized callback handlers: sourceType -> sourceId -> callback contract
 /// @dev Overrides default callback for specific (sourceType, sourceId) pairs
 mapping(uint32 => mapping(uint256 => address)) private _callbacks;
+
+/// @dev Appended at slot 5; one packed progress slot per source
+mapping(uint32 => mapping(uint256 => SourceProgress)) private _sourceProgress;
 ```
+
+The deployed slots remain unchanged: `_records` = 0, `_nonces` = 1, `_defaultCallbacks` = 2, `_callbacks` = 3, and
+`_initialized` = 4. `_sourceProgress` is appended at slot 5. If no post-hardfork progress exists, reads fall back to the
+legacy nonce and latest legacy record position. The first new delivery must continue from `legacyNonce + 1`.
+
+Legacy callbacks were allowed to consume a payload without writing its `DataRecord`. For such a source,
+`getSourceProgress()` returns the authoritative nonzero legacy nonce with `latestPosition == 0`, meaning that the old
+position is unknown rather than source genesis. Reth reconciliation must use persisted/configured migration state for this
+transition and must not interpret zero as a confirmed historical cursor. The first successful post-hardfork delivery writes
+an authoritative nonzero position into `_sourceProgress`.
 
 ### Interface
 
@@ -207,9 +235,9 @@ interface INativeOracle {
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param nonce The nonce - must equal `currentNonce + 1` for this (sourceType, sourceId)
-    /// @param blockNumber The source block number (provenance, NOT used for ordering)
-    /// @param payload The data payload to store
-    /// @param callbackGasLimit Gas limit for callback execution (0 = invoke no callback, emit CallbackSkipped and store)
+    /// @param blockNumber Source-defined restart position; name retained for selector compatibility
+    /// @param payload The callback payload
+    /// @param callbackGasLimit Nonzero gas limit for callback execution
     function record(
         uint32 sourceType,
         uint256 sourceId,
@@ -220,12 +248,12 @@ interface INativeOracle {
     ) external;
 
     /// @notice Batch record multiple data entries from the same source
-    /// @dev Each record is validated individually with its own nonce/blockNumber/callbackGasLimit.
+    /// @dev Each delivery is validated individually with its own nonce/position/callbackGasLimit.
     ///      Callers typically pass strictly sequential nonces; the contract validates each as currentNonce+1.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonces Array of nonces (length N)
-    /// @param blockNumbers Array of source block numbers (length N)
+    /// @param blockNumbers Array of source-defined restart positions (length N)
     /// @param payloads Array of payloads (length N)
     /// @param callbackGasLimits Array of per-record gas limits (length N)
     function recordBatch(
@@ -243,7 +271,7 @@ interface INativeOracle {
     //   1. Default callback per sourceType - applies to all sources of that type
     //   2. Specialized callback per (sourceType, sourceId) - overrides default
     //
-    // When an oracle event is recorded, the system first checks for a specialized
+    // When an oracle event is delivered, the system first checks for a specialized
     // callback. If none is set, it falls back to the default callback for that
     // source type.
 
@@ -276,6 +304,11 @@ interface INativeOracle {
         uint256 sourceId
     ) external view returns (uint128 nonce);
 
+    function getSourceProgress(
+        uint32 sourceType,
+        uint256 sourceId
+    ) external view returns (SourceProgress memory progress);
+
     /// @notice Check if synced past a certain point
     function isSyncedPast(
         uint32 sourceType,
@@ -289,17 +322,13 @@ interface INativeOracle {
 
 ```solidity
 interface IOracleCallback {
-    /// @notice Called when an oracle event is recorded
-    /// @dev Callback failures are caught — do NOT revert oracle recording.
-    ///      The returned `shouldStore` flag tells NativeOracle whether to persist the payload
-    ///      into the `_records` mapping. Returning `false` lets callbacks that fully consume the
-    ///      payload (e.g., apply it to their own state) avoid paying for redundant storage.
+    /// @notice Called when an oracle event is delivered
+    /// @dev Callback failure reverts delivery and leaves source progress unchanged.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
     /// @param payload The event payload (encoding depends on event type)
-    /// @return shouldStore If true, NativeOracle writes the DataRecord; if false, storage is skipped
-    ///                    (a `StorageSkipped` event is emitted instead).
+    /// @return shouldStore Deprecated compatibility return; NativeOracle accepts true or false
     function onOracleEvent(
         uint32 sourceType,
         uint256 sourceId,
@@ -309,12 +338,16 @@ interface IOracleCallback {
 }
 ```
 
-**Storage semantics**:
-- No callback registered → payload is always stored.
-- Callback registered but `callbackGasLimit == 0` → `CallbackSkipped` event, payload is still stored.
-- Callback succeeds and returns `true` → `CallbackSuccess` event, payload stored.
-- Callback succeeds and returns `false` → `CallbackSuccess` + `StorageSkipped` events, payload NOT stored (the callback "consumed" the data).
-- Callback reverts or runs out of gas → `CallbackFailed` event with revert bytes, payload stored anyway (fail-safe).
+**Delivery semantics**:
+
+- A deployed callback must resolve for every delivery; missing callbacks revert.
+- `callbackGasLimit` must be nonzero.
+- Callback return data must contain one canonical ABI boolean. Both `true` and `false` are accepted for compatibility.
+- Callback revert, out-of-gas, short return data, or a non-boolean return word reverts the entire delivery.
+- Source progress advances and `OracleDelivered` is emitted only after callback success.
+- `recordBatch()` is atomic: any invalid nonce or callback failure rolls back every callback and progress update in the batch.
+- Callback returndata copied into memory is capped at 256 bytes.
+- New payloads are never written to `_records`.
 
 ### Callback Resolution (2-Layer System)
 
@@ -324,49 +357,8 @@ The callback system uses a 2-layer resolution:
 2. **Specialized callback per (sourceType, sourceId)**: Overrides the default for specific sources (e.g., only Ethereum
    events)
 
-```solidity
-/// @notice Resolve callback using 2-layer lookup
-function _resolveCallback(
-    uint32 sourceType,
-    uint256 sourceId
-) internal view returns (address callback) {
-    // First check for specialized callback
-    address specialized = _callbacks[sourceType][sourceId];
-    if (specialized != address(0)) {
-        return specialized;
-    }
-    // Fall back to default callback for this source type
-    return _defaultCallbacks[sourceType];
-}
-
-function _invokeCallback(
-    uint32 sourceType,
-    uint256 sourceId,
-    uint128 nonce,
-    bytes calldata payload,
-    uint256 gasLimit
-) internal returns (bool shouldStore) {
-    address callback = _resolveCallback(sourceType, sourceId);
-    if (callback == address(0)) return true;           // no callback → store
-    if (gasLimit == 0) {
-        emit CallbackSkipped(sourceType, sourceId, nonce, callback);
-        return true;                                    // skip invocation, still store
-    }
-
-    try IOracleCallback(callback).onOracleEvent{gas: gasLimit}(
-        sourceType, sourceId, nonce, payload
-    ) returns (bool callbackShouldStore) {
-        emit CallbackSuccess(sourceType, sourceId, nonce, callback);
-        if (!callbackShouldStore) {
-            emit StorageSkipped(sourceType, sourceId, nonce, callback);
-        }
-        return callbackShouldStore;
-    } catch (bytes memory reason) {
-        emit CallbackFailed(sourceType, sourceId, nonce, callback, reason);
-        return true;                                    // on failure, store by default to preserve data
-    }
-}
-```
+Governance may unregister a callback by setting it to zero. Any nonzero callback registration must point to deployed
+contract code. Deliveries for an unregistered source remain fail-closed until governance configures a callback.
 
 **Example Usage:**
 
@@ -385,12 +377,13 @@ governance.setCallback(0, 10, optimismSpecialHandlerAddress);
 ### Events
 
 ```solidity
-/// @notice Emitted when data is recorded
-event DataRecorded(
+/// @notice Emitted after callback success and progress update
+event OracleDelivered(
     uint32 indexed sourceType,
     uint256 indexed sourceId,
     uint128 nonce,
-    uint256 dataLength
+    uint128 sourcePosition,
+    bytes32 payloadHash
 );
 
 /// @notice Emitted when a default callback is registered or updated
@@ -416,30 +409,8 @@ event CallbackSuccess(
     address callback
 );
 
-/// @notice Emitted when a callback fails (tx continues, does NOT revert)
-event CallbackFailed(
-    uint32 indexed sourceType,
-    uint256 indexed sourceId,
-    uint128 nonce,
-    address callback,
-    bytes reason
-);
-
-/// @notice Emitted when a callback is registered but gasLimit == 0 was passed (callback not invoked; record still stored)
-event CallbackSkipped(
-    uint32 indexed sourceType,
-    uint256 indexed sourceId,
-    uint128 nonce,
-    address callback
-);
-
-/// @notice Emitted when the callback returned shouldStore == false — the payload is NOT persisted
-event StorageSkipped(
-    uint32 indexed sourceType,
-    uint256 indexed sourceId,
-    uint128 nonce,
-    address callback
-);
+// DataRecorded, CallbackFailed, CallbackSkipped, and StorageSkipped remain in
+// the ABI for historical log decoding but are not emitted for new deliveries.
 ```
 
 ### Errors
@@ -462,6 +433,12 @@ error OracleBatchArrayLengthMismatch(
     uint256 payloadsLen,
     uint256 callbackGasLimitsLen
 );
+
+error InvalidOracleCallback(address callback);
+error OracleCallbackNotConfigured(uint32 sourceType, uint256 sourceId);
+error OracleCallbackGasLimitZero(uint32 sourceType, uint256 sourceId);
+error OracleCallbackFailed(uint32 sourceType, uint256 sourceId, uint128 nonce, address callback, bytes reason);
+error OracleSourcePositionOverflow(uint256 sourcePosition);
 ```
 
 ---
@@ -489,7 +466,10 @@ error OracleBatchArrayLengthMismatch(
 
 ## Contract: OracleTaskConfig
 
-Stores configuration for **continuous** oracle tasks that validators actively monitor off-chain. Tasks are keyed by `(sourceType, sourceId, taskName)`, allowing multiple tasks per source (e.g., an Ethereum chain can have a JWK-sync task, a block-header task, and a price-feed task simultaneously).
+Stores configuration for **continuous** oracle tasks that validators actively monitor off-chain. Tasks are keyed by
+`(sourceType, sourceId, taskName)`. Relayer-backed source types 0, 3, and 6 allow only one task for each
+`(sourceType, sourceId)` because `NativeOracle` owns one nonce/progress stream for that pair. Other source types may
+register multiple named tasks.
 
 ### System Address
 
@@ -541,6 +521,7 @@ interface IOracleTaskConfig {
 
 - `setTask()` reverts with `EmptyConfig` if `config.length == 0`.
 - Setting `taskName` that already exists overwrites in place (same `updatedAt` refresh).
+- Adding a second task name for relayer-backed source types 0, 3, or 6 reverts with `RelayerTaskAlreadyConfigured`.
 - `removeTask()` cleans up empty source-id and source-type registrations to keep the enumeration helpers bounded.
 
 ---
@@ -563,18 +544,23 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 
 1. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
 2. **Callback Gas Limits**: Caller-specified gas limit prevents excessive gas consumption
-3. **Callback Failure Tolerance**: Failures do NOT revert oracle recording
+3. **Atomic Callback Failure**: Callback failure reverts the delivery and leaves progress retryable
 4. **GOVERNANCE Control**: Callback registration requires governance approval
-5. **Nonce Ordering**: Must start from 1 and strictly increase - prevents replay and ensures data freshness
+5. **Callback Code Validation**: Nonzero callback registrations must point to deployed contract code
+6. **Bounded Returndata**: NativeOracle copies at most 256 callback returndata bytes
+7. **Nonce Ordering**: Nonces start at 1 and increment by exactly one
+8. **Bounded State**: New deliveries overwrite one packed progress slot rather than retaining external payload bytes
 
 ---
 
 ## Invariants
 
-1. **Nonce Monotonicity**: For each (sourceType, sourceId), `latestNonce` only increases
-2. **Nonce Minimum**: First nonce for any source must be >= 1
-3. **Record Existence**: If `recordedAt > 0`, record was written by SYSTEM_CALLER
-4. **Callback Safety**: Callback failures never affect oracle state
+1. **Nonce Continuity**: For each `(sourceType, sourceId)`, a new nonce equals `latestNonce + 1`
+2. **Atomicity**: A successful delivery updates both callback state and source progress; a failed delivery updates neither
+3. **Batch Atomicity**: Any failure rolls back the complete `recordBatch()` transaction
+4. **Legacy Preservation**: Existing slots 0 through 4 and historical records remain readable
+5. **Progress Bound**: Each source adds at most one packed `SourceProgress` slot regardless of delivery count
+6. **Task Identity**: A relayer-backed `(sourceType, sourceId)` maps to at most one configured continuous task
 
 ---
 
@@ -583,26 +569,32 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 ### Unit Tests
 
 1. **NativeOracle**
-   - Record data with sourceType, sourceId, nonce
-   - Batch recording with sequential nonces
-   - Nonce validation (must start from 1, must increase)
-   - Callback invocation with specified gas limit
-   - Callback failure handling (should not revert)
+   - Deliver data with source type, source ID, nonce, and source position
+   - Batch delivery with sequential nonces and atomic rollback
+   - Callback revert, zero gas, malformed return, and missing callback failures
+   - Bounded callback returndata
+   - Legacy progress fallback and first post-hardfork write
+   - No new `_records` payload history
    - 2-layer callback resolution:
      - Default callback per sourceType
      - Specialized callback per (sourceType, sourceId)
      - Specialized overrides default
      - Fallback to default when no specialized set
    - GOVERNANCE callback registration (setDefaultCallback, setCallback)
-   - Query functions (getRecord, getLatestNonce, isSyncedPast)
+   - Query functions (getRecord, getLatestNonce, getSourceProgress, isSyncedPast)
+
+2. **OracleTaskConfig**
+   - Existing task updates remain allowed
+   - Second task names are rejected for relayer-backed source types
+   - Multiple task names remain allowed for non-relayer source types
 
 ### Fuzz Tests
 
 1. **Random payloads and amounts**
 2. **Nonce ordering**
-3. **Nonce boundaries (must be >= 1)**
+3. **Nonce boundaries (the first nonce must equal 1)**
 4. **SourceType and SourceId combinations**
-5. **Callback gas limit boundaries**
+5. **Source position boundaries**
 
 ---
 
