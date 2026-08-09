@@ -127,6 +127,81 @@ contract OracleTaskConfigTest is Test {
         _assertSecondRelayerTaskRejected(SOURCE_TYPE_POLYMARKET_SETTLEMENT, 3);
     }
 
+    function test_SetTask_PriceFeedConfigIsPermanentlyBoundToSourceId() public {
+        uint256 feedId = 2001;
+        bytes memory config = bytes(
+            "gravity://3/2001/price_feed?provider=binance_index_kline_v1&pair=TSLAUSDT&interval=1m&bucketStartMs=1710000000000&decimals=8"
+        );
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, config);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, config);
+        taskConfig.removeTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, config);
+        vm.stopPrank();
+
+        assertEq(taskConfig.priceFeedConfigHash(feedId), keccak256(config));
+    }
+
+    function test_SetTask_RejectsPriceFeedSemanticReconfiguration() public {
+        uint256 feedId = 2001;
+        bytes memory originalConfig = bytes("pair=TSLAUSDT");
+        bytes memory changedConfig = bytes("pair=BTCUSDT");
+
+        vm.prank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, originalConfig);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleTaskConfig.PriceFeedConfigImmutable.selector,
+                feedId,
+                keccak256(originalConfig),
+                keccak256(changedConfig)
+            )
+        );
+        vm.prank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, changedConfig);
+    }
+
+    function test_SetTask_RejectsPriceFeedRebindingAfterRemoval() public {
+        uint256 feedId = 2001;
+        bytes memory originalConfig = bytes("pair=TSLAUSDT");
+        bytes memory changedConfig = bytes("pair=BTCUSDT");
+
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, originalConfig);
+        taskConfig.removeTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS);
+        vm.stopPrank();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OracleTaskConfig.PriceFeedConfigImmutable.selector,
+                feedId,
+                keccak256(originalConfig),
+                keccak256(changedConfig)
+            )
+        );
+        vm.prank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, feedId, TASK_EVENTS, changedConfig);
+    }
+
+    function test_SetTask_RejectsPriceFeedSourceIdOverflow() public {
+        uint256 sourceId = uint256(type(uint64).max) + 1;
+
+        vm.expectRevert(abi.encodeWithSelector(OracleTaskConfig.PriceFeedSourceIdOverflow.selector, sourceId));
+        vm.prank(governance);
+        taskConfig.setTask(SOURCE_TYPE_PRICE_FEED, sourceId, TASK_EVENTS, bytes("price config"));
+    }
+
+    function test_SetTask_OtherSourceTypesRemainReconfigurable() public {
+        vm.startPrank(governance);
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, bytes("config v1"));
+        taskConfig.setTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS, bytes("config v2"));
+        vm.stopPrank();
+
+        assertEq(taskConfig.getTask(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, TASK_EVENTS).config, bytes("config v2"));
+    }
+
     function test_SetTask_MultipleSources() public {
         bytes memory ethConfig = abi.encode("ethereum config");
         bytes memory arbConfig = abi.encode("arbitrum config");
@@ -338,6 +413,7 @@ contract OracleTaskConfigTest is Test {
         bytes memory config
     ) public {
         vm.assume(config.length > 0);
+        vm.assume(sourceType != SOURCE_TYPE_PRICE_FEED || sourceId <= type(uint64).max);
 
         vm.prank(governance);
         taskConfig.setTask(sourceType, sourceId, taskName, config);
@@ -356,6 +432,7 @@ contract OracleTaskConfigTest is Test {
         bytes memory config
     ) public {
         vm.assume(config.length > 0);
+        vm.assume(sourceType != SOURCE_TYPE_PRICE_FEED || sourceId <= type(uint64).max);
 
         vm.prank(governance);
         taskConfig.setTask(sourceType, sourceId, taskName, config);
@@ -409,6 +486,8 @@ contract OracleTaskConfigTest is Test {
         uint256 sourceId2
     ) public {
         vm.assume(sourceType1 != sourceType2 || sourceId1 != sourceId2);
+        vm.assume(sourceType1 != SOURCE_TYPE_PRICE_FEED || sourceId1 <= type(uint64).max);
+        vm.assume(sourceType2 != SOURCE_TYPE_PRICE_FEED || sourceId2 <= type(uint64).max);
 
         bytes memory config1 = abi.encode("config1");
         bytes memory config2 = abi.encode("config2");
