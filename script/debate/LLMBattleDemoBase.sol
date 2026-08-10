@@ -12,8 +12,8 @@ abstract contract LLMBattleDemoBase is Script {
         address llmBattle;
         address deployer;
         address sponsor;
-        address contenderA;
-        address contenderB;
+        address[] teamA;
+        address[] teamB;
         address[] validatorPools;
         address[] validatorVoters;
     }
@@ -37,8 +37,8 @@ abstract contract LLMBattleDemoBase is Script {
         deployment.llmBattle = vm.parseJsonAddress(json, ".llmBattle");
         deployment.deployer = vm.parseJsonAddress(json, ".deployer");
         deployment.sponsor = vm.parseJsonAddress(json, ".sponsor");
-        deployment.contenderA = vm.parseJsonAddress(json, ".contenderA");
-        deployment.contenderB = vm.parseJsonAddress(json, ".contenderB");
+        deployment.teamA = vm.parseJsonAddressArray(json, ".teamA");
+        deployment.teamB = vm.parseJsonAddressArray(json, ".teamB");
         deployment.validatorPools = vm.parseJsonAddressArray(json, ".validatorPools");
         deployment.validatorVoters = vm.parseJsonAddressArray(json, ".validatorVoters");
     }
@@ -53,6 +53,42 @@ abstract contract LLMBattleDemoBase is Script {
     function _validatorKeys() internal view returns (uint256[] memory keys) {
         keys = vm.envUint("LLM_BATTLE_VALIDATOR_KEYS", ",");
         require(keys.length > 0, "LLMBattleDemo: no validator keys");
+    }
+
+    function _teamAKeys() internal view returns (uint256[] memory keys) {
+        keys = vm.envUint("LLM_BATTLE_TEAM_A_KEYS", ",");
+        require(keys.length > 0, "LLMBattleDemo: no team A keys");
+    }
+
+    function _teamBKeys() internal view returns (uint256[] memory keys) {
+        keys = vm.envUint("LLM_BATTLE_TEAM_B_KEYS", ",");
+        require(keys.length > 0, "LLMBattleDemo: no team B keys");
+    }
+
+    function _addresses(
+        uint256[] memory keys
+    ) internal pure returns (address[] memory accounts) {
+        accounts = new address[](keys.length);
+        for (uint256 i; i < keys.length; ++i) {
+            accounts[i] = vm.addr(keys[i]);
+        }
+    }
+
+    function _roundSpeakers(
+        address[] memory team
+    ) internal pure returns (address[3] memory speakers) {
+        for (uint256 i; i < speakers.length; ++i) {
+            speakers[i] = team[i % team.length];
+        }
+    }
+
+    function _dynamicSpeakers(
+        address[3] memory speakers
+    ) internal pure returns (address[] memory dynamicSpeakers) {
+        dynamicSpeakers = new address[](speakers.length);
+        for (uint256 i; i < speakers.length; ++i) {
+            dynamicSpeakers[i] = speakers[i];
+        }
     }
 
     function _votes(

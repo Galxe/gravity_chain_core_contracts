@@ -14,15 +14,16 @@ contract DeployLLMBattleLocal is LLMBattleDemoBase {
     function run() external returns (address llmBattleAddress) {
         uint256 deployerKey = vm.envUint("LLM_BATTLE_DEPLOYER_KEY");
         uint256 sponsorKey = vm.envUint("LLM_BATTLE_SPONSOR_KEY");
-        uint256 contenderAKey = vm.envUint("LLM_BATTLE_CONTENDER_A_KEY");
-        uint256 contenderBKey = vm.envUint("LLM_BATTLE_CONTENDER_B_KEY");
+        uint256[] memory teamAKeys = _teamAKeys();
+        uint256[] memory teamBKeys = _teamBKeys();
         uint256[] memory validatorKeys = _validatorKeys();
+        require(teamAKeys.length <= 8 && teamBKeys.length <= 8, "DeployLLMBattleLocal: team exceeds maximum");
         require(validatorKeys.length <= 128, "DeployLLMBattleLocal: jury exceeds LLMBattle maximum");
 
         address deployer = vm.addr(deployerKey);
         address sponsor = vm.addr(sponsorKey);
-        address contenderA = vm.addr(contenderAKey);
-        address contenderB = vm.addr(contenderBKey);
+        address[] memory teamA = _addresses(teamAKeys);
+        address[] memory teamB = _addresses(teamBKeys);
         address[] memory pools = new address[](validatorKeys.length);
         address[] memory voters = new address[](validatorKeys.length);
 
@@ -53,8 +54,8 @@ contract DeployLLMBattleLocal is LLMBattleDemoBase {
         vm.serializeAddress(objectKey, "llmBattle", address(llmBattle));
         vm.serializeAddress(objectKey, "deployer", deployer);
         vm.serializeAddress(objectKey, "sponsor", sponsor);
-        vm.serializeAddress(objectKey, "contenderA", contenderA);
-        vm.serializeAddress(objectKey, "contenderB", contenderB);
+        vm.serializeAddress(objectKey, "teamA", teamA);
+        vm.serializeAddress(objectKey, "teamB", teamB);
         vm.serializeAddress(objectKey, "validatorPools", pools);
         vm.serializeAddress(objectKey, "validatorVoters", voters);
         string memory json = vm.serializeUint(objectKey, "validatorCount", validatorKeys.length);
@@ -64,6 +65,8 @@ contract DeployLLMBattleLocal is LLMBattleDemoBase {
         console.log("  LLMBattle          :", address(llmBattle));
         console.log("  ValidatorManagement:", address(validatorManagement));
         console.log("  Staking            :", address(staking));
+        console.log("  Team A members     :", teamA.length);
+        console.log("  Team B members     :", teamB.length);
         console.log("  Validators         :", validatorKeys.length);
         console.log("  Artifact           :", _deploymentFile());
 

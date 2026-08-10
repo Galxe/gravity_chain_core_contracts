@@ -48,19 +48,23 @@ derive_key() {
     "${CAST}" wallet private-key "${LLM_BATTLE_MNEMONIC}" "$1"
 }
 
-# Seven distinct, funded Anvil actors: deployer, sponsor, two contenders, and four validator voters.
+# Eleven distinct, funded Anvil actors: deployer, sponsor, five debaters, and four validator voters.
 LLM_BATTLE_DEPLOYER_KEY="${LLM_BATTLE_DEPLOYER_KEY:-$(derive_key 0)}"
 LLM_BATTLE_SPONSOR_KEY="${LLM_BATTLE_SPONSOR_KEY:-$(derive_key 1)}"
-LLM_BATTLE_CONTENDER_A_KEY="${LLM_BATTLE_CONTENDER_A_KEY:-$(derive_key 2)}"
-LLM_BATTLE_CONTENDER_B_KEY="${LLM_BATTLE_CONTENDER_B_KEY:-$(derive_key 3)}"
+if [[ -z "${LLM_BATTLE_TEAM_A_KEYS:-}" ]]; then
+    LLM_BATTLE_TEAM_A_KEYS="$(derive_key 2),$(derive_key 3)"
+fi
+if [[ -z "${LLM_BATTLE_TEAM_B_KEYS:-}" ]]; then
+    LLM_BATTLE_TEAM_B_KEYS="$(derive_key 4),$(derive_key 5),$(derive_key 6)"
+fi
 if [[ -z "${LLM_BATTLE_VALIDATOR_KEYS:-}" ]]; then
-    LLM_BATTLE_VALIDATOR_KEYS="$(derive_key 4),$(derive_key 5),$(derive_key 6),$(derive_key 7)"
+    LLM_BATTLE_VALIDATOR_KEYS="$(derive_key 7),$(derive_key 8),$(derive_key 9),$(derive_key 10)"
 fi
 
 export LLM_BATTLE_DEPLOYER_KEY
 export LLM_BATTLE_SPONSOR_KEY
-export LLM_BATTLE_CONTENDER_A_KEY
-export LLM_BATTLE_CONTENDER_B_KEY
+export LLM_BATTLE_TEAM_A_KEYS
+export LLM_BATTLE_TEAM_B_KEYS
 export LLM_BATTLE_VALIDATOR_KEYS
 export LLM_BATTLE_DEPLOYMENT_FILE="${DEPLOYMENT_FILE}"
 export LLM_BATTLE_STATE_FILE="${BATTLE_FILE}"
@@ -104,7 +108,7 @@ start_anvil() {
         --host 127.0.0.1 \
         --port "${LLM_BATTLE_PORT}" \
         --chain-id "${LLM_BATTLE_CHAIN_ID}" \
-        --accounts 10 \
+        --accounts 12 \
         --balance 10000 \
         --mnemonic "${LLM_BATTLE_MNEMONIC}" \
         >"${LOG_FILE}" 2>&1 &
@@ -180,7 +184,7 @@ play_battle() {
     [[ -f "${DEPLOYMENT_FILE}" ]] || die "missing ${DEPLOYMENT_FILE}; run '$0 deploy' first"
     rm -f "${BATTLE_FILE}" "${RESULT_FILE}"
 
-    green "Creating, funding, filling, and locking a battle"
+    green "Creating, funding, filling, and locking a team battle"
     run_script "script/debate/02_CreateLLMBattleLocal.s.sol:CreateLLMBattleLocal"
 
     green "Collecting hidden commitments from validator voters"
@@ -211,10 +215,14 @@ play_battle() {
     votes_a="$(jq -r '.votesA' "${RESULT_FILE}")"
     votes_b="$(jq -r '.votesB' "${RESULT_FILE}")"
     juror_reward="$(jq -r '.jurorRewardPerVoteWei' "${RESULT_FILE}")"
+    local team_a_size team_b_size
+    team_a_size="$(jq -r '.teamA | length' "${BATTLE_FILE}")"
+    team_b_size="$(jq -r '.teamB | length' "${BATTLE_FILE}")"
 
     green "Local battle complete"
     printf "  Battle ID            : %s\n" "${battle_id}"
     printf "  Question             : %s\n" "${question}"
+    printf "  Teams                : %sv%s debaters\n" "${team_a_size}" "${team_b_size}"
     printf "  Outcome              : %s (%s-%s)\n" "${outcome}" "${votes_a}" "${votes_b}"
     printf "  Juror reward / reveal: %s wei\n" "${juror_reward}"
     printf "  Escrow remaining     : 0 wei\n"

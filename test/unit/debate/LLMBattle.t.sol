@@ -59,6 +59,9 @@ contract LLMBattleTest is Test {
     address private constant SPONSOR = address(0x5000);
     address private constant CONTENDER_A = address(0xA11CE);
     address private constant CONTENDER_B = address(0xB0B);
+    address private constant TEAM_A_2 = address(0xA12);
+    address private constant TEAM_B_2 = address(0xB02);
+    address private constant TEAM_B_3 = address(0xB03);
     address private constant OUTSIDER = address(0xBAD);
 
     uint256 private constant WINNER_PRIZE = 10 ether;
@@ -141,6 +144,62 @@ contract LLMBattleTest is Test {
             assertEq(voters[i].balance, voterBalanceBefore + 1 ether);
         }
         assertEq(address(battle).balance, 0);
+    }
+
+    function test_TwoVersusThreeBattle_AssignedSpeakersDebateAndWinningTeamSplitsPrize() public {
+        uint64 battleId = _createTwoVersusThreeBattle();
+
+        address[] memory teamA = battle.getTeamMembers(battleId, LLMBattle.Choice.SideA);
+        address[] memory teamB = battle.getTeamMembers(battleId, LLMBattle.Choice.SideB);
+        assertEq(teamA.length, 2);
+        assertEq(teamB.length, 3);
+        assertEq(teamA[0], CONTENDER_A);
+        assertEq(teamA[1], TEAM_A_2);
+        assertEq(teamB[0], CONTENDER_B);
+        assertEq(teamB[1], TEAM_B_2);
+        assertEq(teamB[2], TEAM_B_3);
+        assertEq(uint8(battle.participantSide(battleId, TEAM_B_3)), uint8(LLMBattle.Choice.SideB));
+
+        vm.prank(TEAM_A_2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LLMBattle.NotRoundSpeaker.selector,
+                LLMBattle.Choice.SideA,
+                LLMBattle.Round.Opening,
+                CONTENDER_A,
+                TEAM_A_2
+            )
+        );
+        battle.submitArgument(battleId, LLMBattle.Round.Opening, "A teammate cannot steal the opening");
+
+        _submitTwoVersusThreeDebate(battleId);
+        assertEq(battle.argumentAuthor(battleId, LLMBattle.Choice.SideA, LLMBattle.Round.Rebuttal), TEAM_A_2);
+        assertEq(battle.argumentAuthor(battleId, LLMBattle.Choice.SideB, LLMBattle.Round.Finisher), TEAM_B_3);
+        battle.lockTranscript(battleId);
+
+        LLMBattle.Battle memory locked = battle.getBattle(battleId);
+        assertEq(locked.teamSizeA, 2);
+        assertEq(locked.teamSizeB, 3);
+
+        _commit(battleId, 0, LLMBattle.Choice.SideA, REASON_A, SALT_1);
+        _commit(battleId, 1, LLMBattle.Choice.SideA, REASON_A, SALT_2);
+        _commit(battleId, 2, LLMBattle.Choice.SideA, REASON_A, SALT_3);
+        _commit(battleId, 3, LLMBattle.Choice.SideB, REASON_B, SALT_4);
+
+        vm.warp(locked.commitDeadline);
+        battle.openReveal(battleId);
+        _reveal(battleId, 0, LLMBattle.Choice.SideA, REASON_A, SALT_1);
+        _reveal(battleId, 1, LLMBattle.Choice.SideA, REASON_A, SALT_2);
+        _reveal(battleId, 2, LLMBattle.Choice.SideA, REASON_A, SALT_3);
+        _reveal(battleId, 3, LLMBattle.Choice.SideB, REASON_B, SALT_4);
+        battle.resolve(battleId);
+
+        assertEq(uint8(battle.getBattle(battleId).outcome), uint8(LLMBattle.Outcome.SideA));
+        assertEq(battle.claimable(CONTENDER_A), WINNER_PRIZE / 2);
+        assertEq(battle.claimable(TEAM_A_2), WINNER_PRIZE / 2);
+        assertEq(battle.claimable(CONTENDER_B), 0);
+        assertEq(battle.claimable(TEAM_B_2), 0);
+        assertEq(battle.claimable(TEAM_B_3), 0);
     }
 
     function test_NoQuorum_RefundsBothPoolsAndPaysNoJurorReward() public {
@@ -267,8 +326,88 @@ contract LLMBattleTest is Test {
         battle.submitArgument(battleId, LLMBattle.Round.Rebuttal, "Rust premature rebuttal");
 
         vm.prank(OUTSIDER);
-        vm.expectRevert(abi.encodeWithSelector(LLMBattle.UnauthorizedContender.selector, OUTSIDER));
+        vm.expectRevert(abi.encodeWithSelector(LLMBattle.NotParticipant.selector, OUTSIDER));
         battle.submitArgument(battleId, LLMBattle.Round.Opening, "Outsider opening");
+    }
+
+    function test_RevertWhen_ParticipantAppearsOnBothTeams() public {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
+        params.teamB[0] = CONTENDER_A;
+        params.speakersB = [CONTENDER_A, CONTENDER_A, CONTENDER_A];
+
+        vm.prank(SPONSOR);
+        vm.expectRevert(abi.encodeWithSelector(LLMBattle.DuplicateParticipant.selector, CONTENDER_A));
+        battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function test_RevertWhen_RoundSpeakerIsNotOnItsTeam() public {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
+        params.speakersA[1] = OUTSIDER;
+
+        vm.prank(SPONSOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LLMBattle.InvalidRoundSpeaker.selector, LLMBattle.Choice.SideA, LLMBattle.Round.Rebuttal, OUTSIDER
+            )
+        );
+        battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function test_RevertWhen_TeamIsEmpty() public {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
+        params.teamA = new address[](0);
+
+        vm.prank(SPONSOR);
+        vm.expectRevert(abi.encodeWithSelector(LLMBattle.TeamIsEmpty.selector, LLMBattle.Choice.SideA));
+        battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function test_RevertWhen_TeamExceedsMaximum() public {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
+        params.teamA = new address[](9);
+        for (uint256 i; i < params.teamA.length; ++i) {
+            params.teamA[i] = address(uint160(i + 1));
+        }
+
+        vm.prank(SPONSOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LLMBattle.TeamTooLarge.selector, LLMBattle.Choice.SideA, uint256(9), battle.MAX_TEAM_SIZE()
+            )
+        );
+        battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function test_WinningTeamSplit_RemainderReturnsToCreator() public {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
+        params.teamA = new address[](3);
+        params.teamA[0] = CONTENDER_A;
+        params.teamA[1] = TEAM_A_2;
+        params.teamA[2] = OUTSIDER;
+        params.winnerPrize = 10 wei;
+
+        vm.prank(SPONSOR);
+        uint64 battleId = battle.createBattle{ value: JUROR_POOL + 10 wei }(params);
+        _submitCompleteDebate(battleId);
+        battle.lockTranscript(battleId);
+        LLMBattle.Battle memory locked = battle.getBattle(battleId);
+
+        _commit(battleId, 0, LLMBattle.Choice.SideA, REASON_A, SALT_1);
+        _commit(battleId, 1, LLMBattle.Choice.SideA, REASON_A, SALT_2);
+        _commit(battleId, 2, LLMBattle.Choice.SideA, REASON_A, SALT_3);
+        _commit(battleId, 3, LLMBattle.Choice.SideB, REASON_B, SALT_4);
+        vm.warp(locked.commitDeadline);
+        battle.openReveal(battleId);
+        _reveal(battleId, 0, LLMBattle.Choice.SideA, REASON_A, SALT_1);
+        _reveal(battleId, 1, LLMBattle.Choice.SideA, REASON_A, SALT_2);
+        _reveal(battleId, 2, LLMBattle.Choice.SideA, REASON_A, SALT_3);
+        _reveal(battleId, 3, LLMBattle.Choice.SideB, REASON_B, SALT_4);
+        battle.resolve(battleId);
+
+        assertEq(battle.claimable(CONTENDER_A), 3 wei);
+        assertEq(battle.claimable(TEAM_A_2), 3 wei);
+        assertEq(battle.claimable(OUTSIDER), 3 wei);
+        assertEq(battle.claimable(SPONSOR), 1 wei);
     }
 
     function test_ExpiredUnlockedBattleCanAlwaysBeCancelled() public {
@@ -287,16 +426,44 @@ contract LLMBattleTest is Test {
     }
 
     function _createBattle() private returns (uint64 battleId) {
+        LLMBattle.CreateBattleParams memory params = _singleContenderParams();
         vm.prank(SPONSOR);
-        battleId = battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(
-            CONTENDER_A,
-            CONTENDER_B,
-            "Which is the best systems programming language of the 2020s?",
-            "Rust",
-            "Zig",
-            WINNER_PRIZE,
-            JUROR_POOL
-        );
+        battleId = battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function _createTwoVersusThreeBattle() private returns (uint64 battleId) {
+        LLMBattle.CreateBattleParams memory params;
+        params.teamA = new address[](2);
+        params.teamA[0] = CONTENDER_A;
+        params.teamA[1] = TEAM_A_2;
+        params.teamB = new address[](3);
+        params.teamB[0] = CONTENDER_B;
+        params.teamB[1] = TEAM_B_2;
+        params.teamB[2] = TEAM_B_3;
+        params.speakersA = [CONTENDER_A, TEAM_A_2, CONTENDER_A];
+        params.speakersB = [CONTENDER_B, TEAM_B_2, TEAM_B_3];
+        params.question = "Which is the best systems programming language of the 2020s?";
+        params.positionA = "Rust";
+        params.positionB = "Zig";
+        params.winnerPrize = WINNER_PRIZE;
+        params.jurorPool = JUROR_POOL;
+
+        vm.prank(SPONSOR);
+        battleId = battle.createBattle{ value: WINNER_PRIZE + JUROR_POOL }(params);
+    }
+
+    function _singleContenderParams() private pure returns (LLMBattle.CreateBattleParams memory params) {
+        params.teamA = new address[](1);
+        params.teamA[0] = CONTENDER_A;
+        params.teamB = new address[](1);
+        params.teamB[0] = CONTENDER_B;
+        params.speakersA = [CONTENDER_A, CONTENDER_A, CONTENDER_A];
+        params.speakersB = [CONTENDER_B, CONTENDER_B, CONTENDER_B];
+        params.question = "Which is the best systems programming language of the 2020s?";
+        params.positionA = "Rust";
+        params.positionB = "Zig";
+        params.winnerPrize = WINNER_PRIZE;
+        params.jurorPool = JUROR_POOL;
     }
 
     function _createAndLockBattle() private returns (uint64 battleId) {
@@ -324,6 +491,25 @@ contract LLMBattleTest is Test {
         battle.submitArgument(battleId, LLMBattle.Round.Finisher, "Rust finisher: ecosystem plus correctness wins.");
         vm.prank(CONTENDER_B);
         battle.submitArgument(battleId, LLMBattle.Round.Finisher, "Zig finisher: transparent tooling wins.");
+    }
+
+    function _submitTwoVersusThreeDebate(
+        uint64 battleId
+    ) private {
+        vm.prank(CONTENDER_A);
+        battle.submitArgument(battleId, LLMBattle.Round.Opening, "Rust speaker one opens for the team.");
+        vm.prank(CONTENDER_B);
+        battle.submitArgument(battleId, LLMBattle.Round.Opening, "Zig speaker one opens for the team.");
+
+        vm.prank(TEAM_A_2);
+        battle.submitArgument(battleId, LLMBattle.Round.Rebuttal, "Rust speaker two handles the rebuttal.");
+        vm.prank(TEAM_B_2);
+        battle.submitArgument(battleId, LLMBattle.Round.Rebuttal, "Zig speaker two handles the rebuttal.");
+
+        vm.prank(CONTENDER_A);
+        battle.submitArgument(battleId, LLMBattle.Round.Finisher, "Rust speaker one returns to finish.");
+        vm.prank(TEAM_B_3);
+        battle.submitArgument(battleId, LLMBattle.Round.Finisher, "Zig speaker three closes the debate.");
     }
 
     function _commit(

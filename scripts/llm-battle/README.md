@@ -13,8 +13,8 @@ The command:
 
 1. starts Anvil on `127.0.0.1:8547`;
 2. deploys local Staking and ValidatorManagement adapters plus `LLMBattle`;
-3. creates and funds a Rust-vs-Zig battle;
-4. submits all three debate rounds;
+3. creates and funds a Rust-vs-Zig `2v3` team battle with five debaters;
+4. rotates designated team speakers through all three debate rounds;
 5. snapshots four validators and commits votes;
 6. advances local time, reveals a default `3-1` result, resolves, and withdraws every payout.
 
@@ -33,8 +33,8 @@ LLM_BATTLE_KEEP_ANVIL=0 ./scripts/llm-battle/run_local_demo.sh all
 
 ## Play another topic
 
-The `play` action reuses the deployed arena and creates another battle. Content, vote split, and rewards are inputs,
-not hard-coded deployment behavior:
+The `play` action reuses the deployed arena and its team roster to create another battle. Content, vote split, and
+rewards are inputs, not hard-coded deployment behavior:
 
 ```bash
 LLM_BATTLE_QUESTION="Tabs or spaces: which one leads to civilization?" \
@@ -53,6 +53,15 @@ Vote codes are `1 = SideA` and `2 = SideB`. Other useful inputs include:
 - `LLM_BATTLE_A_FINISHER`, `LLM_BATTLE_B_FINISHER`
 - `LLM_BATTLE_PORT` and `LLM_BATTLE_CHAIN_ID`
 
+The default roster uses two Team A keys, three Team B keys, and four separate validator voter keys. Override
+`LLM_BATTLE_TEAM_A_KEYS`, `LLM_BATTLE_TEAM_B_KEYS`, and `LLM_BATTLE_VALIDATOR_KEYS` with comma-separated private
+keys before `all` or `deploy` to try another roster. Each team supports one to eight members. The demo assigns the
+opening, rebuttal, and finisher by rotating through each team's members; the contract permanently records those
+assignments when the battle is created.
+
+When a side wins, its prize is split equally across all members of that team. Any indivisible wei remainder returns
+to the battle creator. A draw splits the prize between the two teams first and then equally within each team.
+
 Generated state is written under `deployments/llm-battle/` and intentionally ignored by Git.
 
 ## Module boundaries
@@ -61,14 +70,14 @@ Generated state is written under `deployments/llm-battle/` and intentionally ign
 | --- | --- |
 | `LocalBattleInfrastructure.sol` | Demo-only validator membership and voter delegation |
 | `01_DeployLLMBattleLocal.s.sol` | Deploy dependencies and write the deployment artifact |
-| `02_CreateLLMBattleLocal.s.sol` | Create/fund a battle, submit rounds, lock the jury snapshot |
+| `02_CreateLLMBattleLocal.s.sol` | Create/fund immutable teams, assign speakers, submit rounds, lock the jury snapshot |
 | `03_CommitLLMBattleVotes.s.sol` | Produce validator vote commitments |
 | `04_RevealResolveLLMBattle.s.sol` | Reveal, resolve, claim juror rewards, withdraw escrow |
 | `run_local_demo.sh` | Local process lifecycle and Anvil time travel only |
 
-The separation is deliberate: new topics and argument styles are data; alternative UI or agent-driven contenders can
-call the same contract; new vote/reward mechanics can become new application contracts or policy modules without
-rewriting the Anvil lifecycle.
+The separation is deliberate: new topics, team sizes, and argument styles are data; alternative UI or agent-driven
+debaters can call the same contract; new vote/reward mechanics can become new application contracts or policy modules
+without rewriting the Anvil lifecycle.
 
 The demo salts are deterministic so the run is reproducible. They are not secret and must never be copied into a real
 commit-reveal client. A production client must generate and protect a random salt until reveal time.

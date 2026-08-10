@@ -12,14 +12,14 @@ contract RevealResolveLLMBattle is LLMBattleDemoBase {
         uint64 battleId = _loadBattleId();
         LLMBattle llmBattle = LLMBattle(deployment.llmBattle);
         uint256 sponsorKey = vm.envUint("LLM_BATTLE_SPONSOR_KEY");
-        uint256 contenderAKey = vm.envUint("LLM_BATTLE_CONTENDER_A_KEY");
-        uint256 contenderBKey = vm.envUint("LLM_BATTLE_CONTENDER_B_KEY");
+        uint256[] memory teamAKeys = _teamAKeys();
+        uint256[] memory teamBKeys = _teamBKeys();
         uint256[] memory validatorKeys = _validatorKeys();
         uint256[] memory votes = _votes(deployment.validatorPools.length);
 
         require(vm.addr(sponsorKey) == deployment.sponsor, "RevealResolve: sponsor key mismatch");
-        require(vm.addr(contenderAKey) == deployment.contenderA, "RevealResolve: contender A key mismatch");
-        require(vm.addr(contenderBKey) == deployment.contenderB, "RevealResolve: contender B key mismatch");
+        _requireTeamMatches(teamAKeys, deployment.teamA, "RevealResolve: team A key mismatch");
+        _requireTeamMatches(teamBKeys, deployment.teamB, "RevealResolve: team B key mismatch");
         require(validatorKeys.length == deployment.validatorPools.length, "RevealResolve: validator key mismatch");
 
         vm.broadcast(sponsorKey);
@@ -51,8 +51,8 @@ contract RevealResolveLLMBattle is LLMBattleDemoBase {
             _withdrawIfClaimable(llmBattle, validatorKeys[i]);
         }
         _withdrawIfClaimable(llmBattle, sponsorKey);
-        _withdrawIfClaimable(llmBattle, contenderAKey);
-        _withdrawIfClaimable(llmBattle, contenderBKey);
+        _withdrawTeam(llmBattle, teamAKeys);
+        _withdrawTeam(llmBattle, teamBKeys);
 
         require(address(llmBattle).balance == 0, "RevealResolve: escrow not fully withdrawn");
 
@@ -86,6 +86,26 @@ contract RevealResolveLLMBattle is LLMBattleDemoBase {
 
         vm.broadcast(accountKey);
         llmBattle.withdraw();
+    }
+
+    function _withdrawTeam(
+        LLMBattle llmBattle,
+        uint256[] memory teamKeys
+    ) internal {
+        for (uint256 i; i < teamKeys.length; ++i) {
+            _withdrawIfClaimable(llmBattle, teamKeys[i]);
+        }
+    }
+
+    function _requireTeamMatches(
+        uint256[] memory keys,
+        address[] memory expectedTeam,
+        string memory errorMessage
+    ) internal pure {
+        require(keys.length == expectedTeam.length, errorMessage);
+        for (uint256 i; i < keys.length; ++i) {
+            require(vm.addr(keys[i]) == expectedTeam[i], errorMessage);
+        }
     }
 
     function _outcomeName(
