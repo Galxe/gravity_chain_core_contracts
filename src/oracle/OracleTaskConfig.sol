@@ -25,6 +25,8 @@ contract OracleTaskConfig is IOracleTaskConfig {
     error RelayerTaskAlreadyConfigured(
         uint32 sourceType, uint256 sourceId, bytes32 existingTaskName, bytes32 requestedTaskName
     );
+    error PriceFeedSourceIdOverflow(uint256 sourceId);
+    error PriceFeedConfigImmutable(uint256 sourceId, bytes32 expectedConfigHash, bytes32 providedConfigHash);
 
     // ========================================================================
     // STATE
@@ -41,6 +43,10 @@ contract OracleTaskConfig is IOracleTaskConfig {
 
     /// @notice Registered source IDs per source type: sourceType -> set of sourceIds
     mapping(uint32 => EnumerableSet.UintSet) private _registeredSourceIds;
+
+    /// @notice Permanently binds a price feed ID to its first configured task bytes.
+    /// @dev Removing a task intentionally does not release this binding. A semantic change must use a new feed ID.
+    mapping(uint256 feedId => bytes32 configHash) public priceFeedConfigHash;
 
     // ========================================================================
     // TASK MANAGEMENT (Governance Only)
@@ -62,6 +68,17 @@ contract OracleTaskConfig is IOracleTaskConfig {
         EnumerableSet.Bytes32Set storage taskNames = _taskNames[sourceType][sourceId];
         if (_isRelayerBackedSourceType(sourceType) && !taskNames.contains(taskName) && taskNames.length() != 0) {
             revert RelayerTaskAlreadyConfigured(sourceType, sourceId, taskNames.at(0), taskName);
+        }
+
+        if (sourceType == SOURCE_TYPE_PRICE_FEED) {
+            if (sourceId > type(uint64).max) revert PriceFeedSourceIdOverflow(sourceId);
+            bytes32 providedConfigHash = keccak256(config);
+            bytes32 expectedConfigHash = priceFeedConfigHash[sourceId];
+            if (expectedConfigHash == bytes32(0)) {
+                priceFeedConfigHash[sourceId] = providedConfigHash;
+            } else if (providedConfigHash != expectedConfigHash) {
+                revert PriceFeedConfigImmutable(sourceId, expectedConfigHash, providedConfigHash);
+            }
         }
 
         // Register source type and source ID for enumeration (no-op if already exists)
