@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "hardfork": "OracleV1",
+  "chainId": 7771625,
+  "contractsSourceTree": "dc06c0740f9e33829632895ae584081c009737a3",
+  "build": {
+    "solc": "0.8.30",
+    "optimizer": true,
+    "optimizerRuns": 200,
+    "viaIr": true,
+    "bytecodeHash": "none"
+  },
+  "contracts": [
+    {
+      "name": "NativeOracle",
+      "address": "0x00000000000000000000000000000001625F4000",
+      "artifact": "src/oracle/NativeOracle.sol:NativeOracle",
+      "runtimeFile": "NativeOracle.hex",
+      "preForkCodeHash": "0x30dd3888ce26735c0d6c5a036b48a1de668dd5506efa7588ce450f976da28255",
+      "postForkCodeHash": "0x981087ccdaa0b7843960782e99b078ccdd3820b331f86ce337d9750c5565d984",
+      "runtimeSize": 3904
+    },
+    {
+      "name": "OracleTaskConfig",
+      "address": "0x00000000000000000000000000000001625F1009",
+      "artifact": "src/oracle/OracleTaskConfig.sol:OracleTaskConfig",
+      "runtimeFile": "OracleTaskConfig.hex",
+      "preForkCodeHash": "0x74127baf705119810746598b2695ff5fa38f94bd778f0edae46799ffd3606bda",
+      "postForkCodeHash": "0xa21bf93e6123b0104b9ea851b8154fb342a5b576c22c71f15f851e266faa9f7f",
+      "runtimeSize": 4662
+    }
+  ]
+}
