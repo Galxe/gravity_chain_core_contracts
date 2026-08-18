@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "hardfork": "OracleV1",
+  "hardfork": "Gamma",
   "chainId": 7771625,
   "contractsSourceTree": "dc06c0740f9e33829632895ae584081c009737a3",
   "build": {
