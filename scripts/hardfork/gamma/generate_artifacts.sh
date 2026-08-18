@@ -61,7 +61,7 @@ generate_into() {
         --argjson task_config_size "${task_config_size}" \
         '{
             schemaVersion: 1,
-            hardfork: "OracleV1",
+            hardfork: "Gamma",
             chainId: 7771625,
             contractsSourceTree: $source_tree,
             build: {
@@ -100,11 +100,11 @@ generate_into "${tmp_dir}"
 
 if [[ "${MODE}" == "--check" ]]; then
     diff --recursive --unified "${ARTIFACT_DIR}" "${tmp_dir}"
-    echo "OracleV1 artifacts are reproducible."
+    echo "Gamma artifacts are reproducible."
 else
     mkdir -p "${ARTIFACT_DIR}"
     cp "${tmp_dir}/NativeOracle.hex" "${ARTIFACT_DIR}/NativeOracle.hex"
     cp "${tmp_dir}/OracleTaskConfig.hex" "${ARTIFACT_DIR}/OracleTaskConfig.hex"
     cp "${tmp_dir}/manifest.json" "${ARTIFACT_DIR}/manifest.json"
-    echo "OracleV1 artifacts written to scripts/hardfork/oracle_v1/artifacts."
+    echo "Gamma artifacts written to scripts/hardfork/gamma/artifacts."
 fi

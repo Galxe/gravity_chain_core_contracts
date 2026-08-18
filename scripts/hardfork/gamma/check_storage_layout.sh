@@ -43,4 +43,4 @@ assert_slot OracleTaskConfig "${task_config_layout}" _registeredSourceTypes 2 0
 assert_slot OracleTaskConfig "${task_config_layout}" _registeredSourceIds 4 0
 assert_slot OracleTaskConfig "${task_config_layout}" priceFeedConfigHash 5 0
 
-echo "OracleV1 storage layout guard passed."
+echo "Gamma storage layout guard passed."

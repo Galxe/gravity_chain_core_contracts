@@ -41,4 +41,4 @@ while IFS=$'\t' read -r name address expected_hash; do
     echo "${name}: ${actual_hash}"
 done < <(jq -r --arg field "${hash_field}" '.contracts[] | [.name, .address, .[$field]] | @tsv' "${MANIFEST}")
 
-echo "OracleV1 ${PHASE}-fork RPC verification passed."
+echo "Gamma ${PHASE}-fork RPC verification passed."
