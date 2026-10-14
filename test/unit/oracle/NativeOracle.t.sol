@@ -264,14 +264,48 @@ contract NativeOracleTest is Test {
         assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
     }
 
-    function test_CallbackRevertIsAtomic() public {
+    function test_JwkCallbackRevertIsAtomic() public {
         callback.setRevert(true);
 
         vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
-        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
+        _record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
 
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), 0);
         assertEq(callback.callCount(), 0);
+    }
+
+    function test_BlockchainCallbackRevertDefersRawReasonAndAdvances() public {
+        bytes memory payload = hex"aabbcc";
+        bytes memory reason = abi.encodeWithSignature("Error(string)", "intentional callback failure");
+        callback.setRevert(true);
+
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, address(callback), reason);
+        vm.expectEmit(true, true, true, true, address(oracle));
+        emit INativeOracle.CallbackDeferred(
+            SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, address(callback), keccak256(payload), 1
+        );
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.OracleDelivered(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 123, keccak256(payload));
+        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 123, payload, CALLBACK_GAS_LIMIT);
+
+        INativeOracle.PendingCallback memory pending =
+            oracle.getPendingCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1);
+        assertEq(pending.payloadHash, keccak256(payload));
+        assertEq(pending.callback, address(callback));
+        assertEq(pending.attempts, 1);
+        assertEq(pending.sourcePosition, 123);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(callback.callCount(), 0);
+
+        callback.setRevert(false);
+        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2, 124, hex"02", CALLBACK_GAS_LIMIT);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 2);
+        assertEq(callback.lastNonce(), 2);
+        assertEq(callback.callCount(), 1);
+        assertEq(
+            oracle.getPendingCallback(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1).payloadHash, keccak256(payload)
+        );
     }
 
     function test_CallbackFalseReturnIsAcceptedButDoesNotStorePayload() public {
@@ -282,23 +316,24 @@ contract NativeOracleTest is Test {
         assertEq(oracle.getRecord(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1).recordedAt, 0);
     }
 
-    function test_MalformedCallbackReturnReverts() public {
+    function test_JwkMalformedCallbackReturnReverts() public {
         MalformedReturnCallback malformed = new MalformedReturnCallback(2, 32);
         vm.prank(governance);
-        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(malformed));
+        oracle.setDefaultCallback(SOURCE_TYPE_JWK, address(malformed));
 
         vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
-        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
+        _record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), 0);
     }
 
-    function test_ShortCallbackReturnReverts() public {
+    function test_JwkShortCallbackReturnReverts() public {
         MalformedReturnCallback malformed = new MalformedReturnCallback(1, 1);
         vm.prank(governance);
-        oracle.setDefaultCallback(SOURCE_TYPE_BLOCKCHAIN, address(malformed));
+        oracle.setDefaultCallback(SOURCE_TYPE_JWK, address(malformed));
 
         vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
-        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
+        _record(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, GOOGLE_JWK_SOURCE_ID), 0);
     }
 
     function test_LongCallbackReturnIsBoundedAndAccepted() public {

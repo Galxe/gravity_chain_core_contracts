@@ -5,7 +5,8 @@ pragma solidity ^0.8.30;
 /// @author Gravity Team
 /// @notice Interface for the Native Oracle contract
 /// @dev Delivers consensus-approved external data to callbacks and stores only the latest
-///      progress for each (sourceType, sourceId) pair. Legacy records remain queryable.
+///      progress for each (sourceType, sourceId) pair. Blockchain callback failures are deferred
+///      without stopping ingestion; other source types remain atomic. Legacy records remain queryable.
 interface INativeOracle {
     // ========================================================================
     // DATA STRUCTURES
@@ -27,6 +28,15 @@ interface INativeOracle {
     struct SourceProgress {
         uint128 latestNonce;
         uint128 latestPosition;
+    }
+
+    /// @notice A failed blockchain callback bound to its original consensus payload and target
+    /// @dev callback == address(0) means no pending task. Only failed executions are retained.
+    struct PendingCallback {
+        bytes32 payloadHash;
+        address callback;
+        uint64 attempts;
+        uint128 sourcePosition;
     }
 
     // ========================================================================
@@ -51,7 +61,8 @@ interface INativeOracle {
     /// @dev New deliveries emit OracleDelivered instead.
     event DataRecorded(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint256 dataLength);
 
-    /// @notice Emitted after a consensus payload is successfully delivered
+    /// @notice Emitted after a consensus payload is accepted and source progress advances
+    /// @dev For blockchain sources this does not imply callback success or a completed mint.
     event OracleDelivered(
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint128 sourcePosition, bytes32 payloadHash
     );
@@ -78,8 +89,8 @@ interface INativeOracle {
     /// @param callback The callback contract address
     event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
-    /// @notice Legacy event retained in the ABI for historical log decoding
-    /// @dev New callback failures revert atomically.
+    /// @notice A blockchain callback failed; ingestion continues and a pending task is retained
+    /// @dev reason contains at most 256 bytes. Other source types still revert atomically.
     event CallbackFailed(
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
     );
@@ -90,12 +101,33 @@ interface INativeOracle {
     /// @notice Legacy event retained in the ABI for historical log decoding
     event CallbackSkipped(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
+    /// @notice A failed execution is retained independently of the accepted source nonce
+    event CallbackDeferred(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        uint128 indexed nonce,
+        address callback,
+        bytes32 payloadHash,
+        uint64 attempts
+    );
+
+    /// @notice A pending callback succeeded without changing source ingestion progress
+    event CallbackRetrySucceeded(
+        uint32 indexed sourceType,
+        uint256 indexed sourceId,
+        uint128 indexed nonce,
+        address callback,
+        bytes32 payloadHash,
+        uint64 attempts
+    );
+
     // ========================================================================
     // RECORDING FUNCTIONS (Consensus Only)
     // ========================================================================
 
     /// @notice Deliver a single consensus-approved data entry
-    /// @dev Only callable by SYSTEM_CALLER. Callback execution and progress update are atomic.
+    /// @dev Only SYSTEM_CALLER. Blockchain callback failures are isolated and advance ingestion;
+    ///      invalid delivery inputs still revert. Other source types execute atomically.
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param nonce The nonce - must start from 1 and strictly increase
@@ -112,7 +144,8 @@ interface INativeOracle {
     ) external;
 
     /// @notice Deliver multiple consensus-approved entries from the same source
-    /// @dev Only callable by SYSTEM_CALLER. The entire batch is atomic.
+    /// @dev Only SYSTEM_CALLER. Blockchain callback failures do not abort the batch. Invalid
+    ///      inputs or insufficient outer gas still revert the whole transaction.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonces Array of nonces (must be strictly increasing, each > previous latestNonce)
@@ -125,6 +158,37 @@ interface INativeOracle {
         uint256[] calldata blockNumbers,
         bytes[] calldata payloads,
         uint256[] calldata callbackGasLimits
+    ) external;
+
+    /// @notice Read a deferred blockchain execution; callback == 0 means none exists
+    function getPendingCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce
+    ) external view returns (PendingCallback memory pending);
+
+    /// @notice Retry only the original payload of an existing pending callback
+    /// @dev Only SYSTEM_CALLER in the system transaction execution phase. The configured callback
+    ///      must still match the original target. Success deletes the task; failure retains it.
+    ///      Neither outcome changes source progress. This cannot replay legacy records or mints
+    ///      that already succeeded. A system retry scheduler must submit this distinct call.
+    function retryCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        bytes calldata payload,
+        uint256 callbackGasLimit
+    ) external returns (bool succeeded);
+
+    /// @notice Internal rollback boundary for callback execution and ABI return validation
+    /// @dev Only NativeOracle may call this helper. Never a user or consensus entry point.
+    function executeCallback(
+        uint32 sourceType,
+        uint256 sourceId,
+        uint128 nonce,
+        address callback,
+        bytes calldata payload,
+        uint256 callbackGasLimit
     ) external;
 
     // ========================================================================
@@ -228,7 +292,8 @@ interface INativeOracle {
 /// @dev The bool return is retained for ABI compatibility but no longer controls NativeOracle storage.
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failure reverts delivery, so callback state and source progress remain atomic.
+    /// @dev Blockchain failures are isolated and deferred while ingestion advances. Other source
+    ///      types revert delivery. The ABI bool does not represent application/mint success.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record

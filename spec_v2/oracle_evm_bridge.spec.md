@@ -543,8 +543,9 @@ error MintFailed(address recipient, uint256 amount);
    └─> Validates nonce == currentNonce + 1 (reverts NonceNotSequential otherwise — replay-safe)
    └─> Resolves callback using 2-layer lookup → GBridgeReceiver
    └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...) — expects canonical bool return
-   └─> On success, commits nonce + source position and emits OracleDelivered
-   └─> On callback failure, reverts without advancing source progress
+   └─> Commits acceptance nonce + source position and emits OracleDelivered
+   └─> On callback failure, rolls back that callback, records CallbackFailed + Pending, and continues
+   └─> SYSTEM_CALLER may separately retry the original pending payload; no new acceptance nonce
 
 4. GBridgeReceiver (extends BlockchainEventHandler):
    └─> Verifies sourceId == trustedSourceId

@@ -45,13 +45,14 @@ IDs:
 
 ### I-1 Conservation (non-rebasing token)
 
-For any sequence of successfully delivered bridges over a non-rebasing,
-non-fee-on-transfer ERC-20:
+For deposits of a non-rebasing, non-fee-on-transfer ERC-20, including
+legitimate deposits awaiting deferred execution:
 
 ```
 sum(actualReceived in TokensLocked events)
     == IERC20(gToken).balanceOf(address(sender))
     == sum(amount minted on Gravity by NATIVE_MINT_PRECOMPILE)
+       + sum(legitimately locked deposits not yet minted)
 ```
 
 for bridges where the owner has not invoked `emergencyWithdraw` /
@@ -71,7 +72,7 @@ the same `messageNonce`.
 
 ### I-4 Trust boundary
 
-`GBridgeReceiver` mints **iff**
+`GBridgeReceiver` can mint **only if**
 
 ```
 sourceId == trustedSourceId
@@ -109,10 +110,10 @@ issued — the Portal retains the entire `msg.value`.
 ### I-9 Replay protection is oracle-side, not receiver-side
 
 `GBridgeReceiver` does **not** enforce nonce uniqueness itself; it depends
-on `NativeOracle`'s sequential-nonce rule. If a payload with a reused
-oracle nonce were ever delivered to `onOracleEvent`, it would mint again.
-This is intentional (see `__deprecated_processedNonces`) and is a
-boundary condition that spec-level tests must assert.
+on `NativeOracle`'s sequential-nonce rule for initial delivery and its pending-only,
+original-payload-bound retry for deferred execution. Successful tasks are removed
+before they can be retried. The Receiver has no independent nonce set: bypassing
+this Oracle boundary and delivering the same valid payload twice would mint twice.
 
 ---
 
@@ -123,7 +124,10 @@ boundary condition that spec-level tests must assert.
 An attacker calls `GravityPortal.send` directly with a body that decodes
 to `(amount, victim)`. The Portal embeds `msg.sender == attacker` into
 the payload. When the oracle delivers that payload, the Receiver rejects
-with `InvalidSender(attacker, trustedBridge)`. No mint.
+with `InvalidSender(attacker, trustedBridge)`. No mint. NativeOracle records the
+failure and advances the blockchain acceptance nonce, allowing subsequent legitimate
+deposits to continue. A retry retains the original sender and is rejected again;
+privileged retry cannot turn this payload into a trusted bridge deposit.
 
 **Covered by:** existing `CrossChainBridge.t.sol::test_E2E_Receiver_RejectsForgedPayloadFromRandomSender`.
 Restated here for spec completeness.

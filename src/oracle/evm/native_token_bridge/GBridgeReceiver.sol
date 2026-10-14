@@ -10,7 +10,11 @@ import { Errors } from "@src/foundation/Errors.sol";
 /// @author Gravity Team
 /// @notice Mints native G tokens when bridge messages are received from GBridgeSender
 /// @dev Deployed on Gravity only. Inherits BlockchainEventHandler to receive oracle callbacks.
-///      Uses a system precompile to mint native tokens.
+///      Uses a system precompile to mint native tokens. Portal is public, but this receiver only
+///      processes messages authenticated as coming from trustedBridge on trustedSourceId.
+///      InvalidSender rejects an untrusted address before decoding amounts or invoking mint.
+///      NativeOracle isolates blockchain callback failures and still advances the source nonce,
+///      so this rejection cannot hold up later deposits. A failed callback never means a mint succeeded.
 contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     // ========================================================================
     // IMMUTABLES
@@ -28,7 +32,8 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     // ========================================================================
 
     // @deprecated Kept for storage layout compatibility after hardfork.
-    // Replay protection is already guaranteed by NativeOracle's sequential nonce enforcement.
+    // Initial delivery is protected by NativeOracle's sequential nonce enforcement. Deferred
+    // retries require an original-payload commitment and are deleted on successful execution.
     uint256 private __deprecated_processedNonces;
 
     // ========================================================================
@@ -59,7 +64,7 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
     /// @param sender The sender address on Ethereum (must be trusted bridge)
     /// @param messageNonce The message nonce from the source chain
     /// @param message The message body: abi.encode(amount, recipient)
-    /// @return shouldStore Always true - bridge events should be stored in NativeOracle for verification
+    /// @return shouldStore Legacy ABI flag, always true after mint; it no longer controls Oracle storage
     function _handlePortalMessage(
         uint32 sourceType,
         uint256 sourceId,
@@ -76,13 +81,15 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
             revert InvalidSourceChain(sourceId, trustedSourceId);
         }
 
-        // Verify sender is the trusted bridge (defense in depth)
+        // Portal.send is intentionally permissionless. Reject untrusted source addresses here;
+        // the Oracle records this InvalidSender error without blocking its shared nonce stream.
+        // Retrying this rejected payload will still fail unless the trusted receiver itself changes.
         if (sender != trustedBridge) {
             revert InvalidSender(sender, trustedBridge);
         }
 
         // Replay protection is handled by NativeOracle's sequential nonce enforcement
-        // (nonce must equal currentNonce + 1), so no duplicate check is needed here.
+        // for initial delivery. Its separate pending-only retry cannot replay a successful mint.
 
         // Decode message: (amount, recipient)
         (uint256 amount, address recipient) = abi.decode(message, (uint256, address));

@@ -75,3 +75,13 @@ the reth migration guard is updated and reviewed.
 
 After Gamma activates, rollback requires coordinated chain-state rollback;
 restarting validators with the old binary is not a valid rollback procedure.
+
+## Callback-progress source changes after the frozen snapshot
+
+The source now appends `_pendingCallbacks` at slot `6` and isolates BLOCKCHAIN
+callback failures. The committed Gamma runtime files above remain the frozen
+snapshot; they do not contain this new behavior. Shipping the source change
+requires a separately reviewed runtime artifact/client upgrade, including real
+native-mint rollback verification and a system-transaction retry submission path.
+Do not treat a source merge or a Forge mock test as a deployed upgrade. The layout
+guard checks the current append-only source, not the historical artifact's full layout.

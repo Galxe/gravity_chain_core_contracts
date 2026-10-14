@@ -72,8 +72,9 @@ interface IGravityPortal {
     // ========================================================================
 
     /// @notice Send a message to Gravity
-    /// @dev The payload uses compact encoding: sender (20B) || nonce (16B) || message.
-    ///      Reverts when the contract is paused.
+    /// @dev Public transport by design: any caller may send while unpaused and paying the fee.
+    ///      The payload authenticates actual msg.sender: sender (20B) || nonce (16B) || message.
+    ///      Receivers decide which source senders their application trusts; send does not authorize minting.
     /// @param message The message body to send
     /// @return messageNonce The nonce assigned to this message
     function send(
