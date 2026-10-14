@@ -12,9 +12,8 @@ import { SafeERC20 } from "@openzeppelin/token/ERC20/utils/SafeERC20.sol";
 /// @author Gravity Team
 /// @notice Entry point on Ethereum for sending messages to Gravity chain
 /// @dev Deployed on Ethereum (or other EVM chains). NOT deployed on Gravity.
-///      Public message transport by design: anyone may call send() while unpaused and pay its fee.
-///      Ownership controls administration, not message admission. Applications authenticate the
-///      actual source sender in their Gravity Receiver; Portal does not authorize token minting.
+///      A public Portal by design: anyone may call send() while unpaused and paying its fee.
+///      Receivers authenticate the source sender and decide which messages to process or mint.
 ///      Charges fees in native token (ETH) for message bridging.
 ///      Consensus engine monitors MessageSent events and bridges to Gravity.
 ///      Uses compact encoding via PortalMessage library: sender (20B) + nonce (16B) + message.
@@ -78,7 +77,7 @@ contract GravityPortal is IGravityPortal, Ownable2Step, Pausable {
     // ========================================================================
 
     /// @inheritdoc IGravityPortal
-    /// @dev Intentionally public. Encode msg.sender, never a caller-supplied sender identity.
+    /// @dev Intentionally public; msg.sender is embedded as the authenticated source sender.
     function send(
         bytes calldata message
     ) external payable whenNotPaused returns (uint128 messageNonce) {

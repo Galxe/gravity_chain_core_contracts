@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { Errors } from "../../../src/foundation/Errors.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 import { INativeOracle } from "../../../src/oracle/INativeOracle.sol";
@@ -148,43 +147,51 @@ contract PriceFeedResolverTest is Test {
         );
     }
 
-    function test_ZeroRoundRevertsAtomically() public {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+    function test_ZeroRoundLeavesPriceUnchangedAndAdvancesNonce() public {
+        _expectCallbackFailure(1, abi.encodeWithSelector(PriceFeedResolver.StaleRound.selector, uint32(0), uint32(0)));
         _record(FEED_ID, 1, 1_010, _payload(FEED_ID, 0, 1_010, 196_12500000, 1, 0), CALLBACK_GAS_LIMIT);
         _assertUnchanged();
     }
 
-    function test_ZeroResolvedAtRevertsAtomically() public {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+    function test_ZeroResolvedAtLeavesPriceUnchangedAndAdvancesNonce() public {
+        _expectCallbackFailure(
+            1, abi.encodeWithSelector(PriceFeedResolver.StaleResolvedAt.selector, uint48(0), uint48(0))
+        );
         _record(FEED_ID, 1, 1, _payload(FEED_ID, 1, 0, 196_12500000, 1, 0), CALLBACK_GAS_LIMIT);
         _assertUnchanged();
     }
 
-    function test_ZeroPriceRevertsAtomically() public {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+    function test_ZeroPriceLeavesPriceUnchangedAndAdvancesNonce() public {
+        _expectCallbackFailure(1, abi.encodeWithSelector(PriceFeedResolver.InvalidPrice.selector, uint96(0)));
         _record(FEED_ID, 1, 1_010, _payload(FEED_ID, 1, 1_010, 0, 1, 0), CALLBACK_GAS_LIMIT);
         _assertUnchanged();
     }
 
-    function test_StaleRoundRevertsWithoutAdvancingProgress() public {
+    function test_StaleRoundLeavesPriceUnchangedAndAdvancesNonce() public {
         _record(FEED_ID, 1, 2_010, _payload(FEED_ID, 2, 2_010, 197_50000000, 1, 0), CALLBACK_GAS_LIMIT);
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _expectCallbackFailure(2, abi.encodeWithSelector(PriceFeedResolver.StaleRound.selector, uint32(2), uint32(1)));
         _record(FEED_ID, 2, 3_010, _payload(FEED_ID, 1, 3_010, 196_12500000, 1, 0), CALLBACK_GAS_LIMIT);
 
         (uint32 roundId, uint48 resolvedAtMs, uint96 price) = resolver.latestPrice(FEED_ID);
         assertEq(roundId, 2);
         assertEq(resolvedAtMs, 2_010);
         assertEq(price, 197_50000000);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 2);
     }
 
-    function test_StaleResolvedAtRevertsWithoutAdvancingProgress() public {
+    function test_StaleResolvedAtLeavesPriceUnchangedAndAdvancesNonce() public {
         _record(FEED_ID, 1, 2_010, _payload(FEED_ID, 1, 2_010, 196_12500000, 1, 0), CALLBACK_GAS_LIMIT);
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        _expectCallbackFailure(
+            2, abi.encodeWithSelector(PriceFeedResolver.StaleResolvedAt.selector, uint48(2_010), uint48(2_010))
+        );
         _record(FEED_ID, 2, 2_010, _payload(FEED_ID, 2, 2_010, 197_50000000, 1, 0), CALLBACK_GAS_LIMIT);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 1);
+        (uint32 roundId, uint48 resolvedAtMs, uint96 price) = resolver.latestPrice(FEED_ID);
+        assertEq(roundId, 1);
+        assertEq(resolvedAtMs, 2_010);
+        assertEq(price, 196_12500000);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 2);
     }
 
     function test_OldAbiPayloadIsRejected() public {
@@ -196,8 +203,8 @@ contract PriceFeedResolverTest is Test {
         );
     }
 
-    function test_CallbackGasFailureLeavesNoPriceOrProgress() public {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+    function test_CallbackGasFailureLeavesNoPriceAndAdvancesNonce() public {
+        _expectCallbackFailure(1, "");
         _record(FEED_ID, 1, 1_010, _payload(FEED_ID, 1, 1_010, 196_12500000, 1, 0), 1);
         _assertUnchanged();
     }
@@ -232,8 +239,16 @@ contract PriceFeedResolverTest is Test {
         assertEq(roundId, 0);
         assertEq(resolvedAtMs, 0);
         assertEq(price, 0);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 0);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_PRICE_FEED, FEED_ID), 1);
         assertEq(oracle.getRecord(SOURCE_TYPE_PRICE_FEED, FEED_ID, 1).recordedAt, 0);
+    }
+
+    function _expectCallbackFailure(
+        uint128 nonce,
+        bytes memory reason
+    ) internal {
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(SOURCE_TYPE_PRICE_FEED, FEED_ID, nonce, address(resolver), reason);
     }
 
     function _record(

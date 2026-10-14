@@ -35,7 +35,6 @@ assert_slot NativeOracle "${native_layout}" _defaultCallbacks 2 0
 assert_slot NativeOracle "${native_layout}" _callbacks 3 0
 assert_slot NativeOracle "${native_layout}" _initialized 4 0
 assert_slot NativeOracle "${native_layout}" _sourceProgress 5 0
-assert_slot NativeOracle "${native_layout}" _pendingCallbacks 6 0
 
 task_config_layout="$(cd "${REPO_ROOT}" && "${FORGE_BIN}" inspect OracleTaskConfig storageLayout --json)"
 assert_slot OracleTaskConfig "${task_config_layout}" _taskNames 0 0

@@ -433,10 +433,6 @@ library Errors {
     error OracleCallbackGasLimitZero(uint32 sourceType, uint256 sourceId);
     error OracleCallbackFailed(uint32 sourceType, uint256 sourceId, uint128 nonce, address callback, bytes reason);
     error OracleSourcePositionOverflow(uint256 sourcePosition);
-    error OracleCallbackNotPending(uint32 sourceType, uint256 sourceId, uint128 nonce);
-    error OracleCallbackPayloadMismatch(bytes32 expected, bytes32 provided);
-    error OracleCallbackTargetChanged(address expected, address current);
-    error OracleCallbackGasBudgetTooLow(uint256 required, uint256 available);
 
     // ========================================================================
     // VERSION CONFIG ERRORS

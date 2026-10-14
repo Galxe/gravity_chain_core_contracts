@@ -54,7 +54,7 @@ contract deployed on Gravity that provides:
 │   │  • Delivers verified data to one configured callback               │  │
 │   │  • Tracks latest nonce and source position per source              │  │
 │   │  • Stores no new payload history                                    │  │
-│   │  • Blockchain failures defer; other callbacks execute atomically       │  │
+│   │  • Callback failures are reported; source progress advances       │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                         │                                                   │
 │                         │ Callback: onOracleEvent()                        │
@@ -340,23 +340,15 @@ interface IOracleCallback {
 
 **Delivery semantics**:
 
-- A deployed callback must resolve and `callbackGasLimit` must be nonzero. Invalid nonces, source-position overflow and insufficient outer gas still revert the transaction.
-- Both canonical ABI booleans are accepted for compatibility; `false` is not a failed business operation.
-- `sourceType=0` (BLOCKCHAIN) is a public message transport. Callback revert, callback OOG or malformed ABI is isolated in an Oracle-only child call. The callback's effects are rolled back, a pending execution is recorded, and ingestion advances with the unchanged `OracleDelivered` event ABI.
-- Other source types retain atomic execution: callback failure rolls back delivery and source progress.
-- `recordBatch()` continues past blockchain callback failures. A later invalid nonce/input or transaction-level OOG still rolls back the entire transaction; it is not a set of independently committed transactions.
-- Callback returndata/reasons copied into memory are capped at 256 bytes. New full payloads are never written to `_records`; legacy records remain readable.
-- `OracleDelivered`/`getLatestNonce` indicate acceptance progress, not that every deposit was minted. `CallbackSuccess` indicates a valid callback return, not application success.
-
-**Deferred blockchain execution**:
-
-`getPendingCallback(sourceType, sourceId, nonce)` exposes the original payload hash, callback address, source position and attempt count. A zero callback means no pending task. Rejected public senders also leave failure evidence; retrying such a task does not bypass Receiver authentication and may never succeed.
-
-`retryCallback(sourceType, sourceId, nonce, payload, callbackGasLimit)` is only callable by `SYSTEM_CALLER` in the system transaction phase. It verifies the original payload hash and that governance has not changed/revoked the callback target. It never changes ingestion progress. Success deletes the task and emits `CallbackRetrySucceeded`; failure retains it, increments attempts, and emits `CallbackFailed` plus `CallbackDeferred`. It cannot replay a successful mint or a legacy record with no pending task.
-
-The existing relayer's nonce-based re-send logic does not schedule pending tasks. A separate consensus/system retry path must submit this API and retain original payloads. Do not open retry to EOAs: the native mint precompile is only installed for system transactions. This contract change alone does not implement automatic recovery.
-
-Callbacks that require strict application ordering must not assume the BLOCKCHAIN stream retries failed events before later messages. They need their own superseded/expired execution policy or a source with atomic semantics.
+- A deployed callback must resolve for every delivery; missing callbacks revert.
+- `callbackGasLimit` must be nonzero.
+- Callback return data must contain one canonical ABI boolean. Both `true` and `false` are accepted for compatibility.
+- Callback revert or callback out-of-gas emits `CallbackFailed` and does not prevent source progress.
+- Short return data or a non-boolean return word still reverts, as do invalid delivery inputs.
+- Source progress advances and `OracleDelivered` is emitted after the callback attempt, including execution failure.
+- `recordBatch()` continues after callback execution failure. Invalid input or malformed callback returns still roll back the whole transaction.
+- Callback returndata copied into memory is capped at 256 bytes.
+- New payloads are never written to `_records`.
 
 ### Callback Resolution (2-Layer System)
 
@@ -418,10 +410,8 @@ event CallbackSuccess(
     address callback
 );
 
-// CallbackFailed is emitted for failed blockchain executions, with bounded reason data.
-// CallbackDeferred also commits the target, payload hash and attempt count.
-// CallbackRetrySucceeded identifies a completed recovery without a new source nonce.
-// DataRecorded, CallbackSkipped and StorageSkipped are retained for historical decoding.
+// CallbackFailed reports callback execution failure without stopping progress.
+// DataRecorded, CallbackSkipped and StorageSkipped remain for historical log decoding.
 ```
 
 ### Errors
@@ -560,17 +550,17 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 5. **Callback Code Validation**: Nonzero callback registrations must point to deployed contract code
 6. **Bounded Returndata**: NativeOracle copies at most 256 callback returndata bytes
 7. **Nonce Ordering**: Nonces start at 1 and increment by exactly one
-8. **State Retention**: Accepted progress uses one packed slot per source; only failed blockchain executions add pending metadata, never full payload bytes
+8. **Bounded State**: New deliveries overwrite one packed progress slot rather than retaining external payload bytes
 
 ---
 
 ## Invariants
 
 1. **Nonce Continuity**: For each `(sourceType, sourceId)`, a new nonce equals `latestNonce + 1`
-2. **Failure Isolation**: Blockchain callback failure rolls back callback effects, retains pending execution and advances acceptance; non-blockchain callbacks remain atomic
-3. **Batch Boundary**: Blockchain execution failures are isolated; invalid inputs or insufficient outer transaction gas roll back the complete batch
+2. **Execution Failure**: A reverted callback leaves its own state unchanged; NativeOracle emits failure and advances source progress
+3. **Batch Boundary**: Callback execution failures do not abort the batch; invalid delivery inputs or malformed return values still roll it back
 4. **Legacy Preservation**: Existing slots 0 through 4 and historical records remain readable
-5. **Progress Bound**: Each source has one packed progress slot; pending metadata grows with unresolved callback failures
+5. **Progress Bound**: Each source adds at most one packed `SourceProgress` slot regardless of delivery count
 6. **Task Identity**: A relayer-backed `(sourceType, sourceId)` maps to at most one configured continuous task
 
 ---
@@ -581,7 +571,7 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 
 1. **NativeOracle**
    - Deliver data with source type, source ID, nonce, and source position
-   - Sequential batch ingestion, isolated blockchain failures and atomic non-blockchain rollback
+   - Sequential batches continue past failed callbacks; invalid-input rollback remains
    - Callback revert, zero gas, malformed return, and missing callback failures
    - Bounded callback returndata
    - Legacy progress fallback and first post-hardfork write
