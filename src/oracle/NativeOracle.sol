@@ -108,7 +108,8 @@ contract NativeOracle is INativeOracle {
             );
         }
 
-        // Deliver all entries atomically. Any callback failure reverts the full batch.
+        // Callback failures are reported without aborting later messages.
+        // Invalid delivery inputs still revert the full transaction.
         for (uint256 i; i < length;) {
             _deliver(sourceType, sourceId, nonces[i], blockNumbers[i], payloads[i], callbackGasLimits[i]);
 
@@ -118,7 +119,9 @@ contract NativeOracle is INativeOracle {
         }
     }
 
-    /// @notice Deliver one entry and advance progress only after callback success
+    /// @notice Deliver one entry and advance progress even if its callback fails
+    /// @dev Preserve the original message-bridge behavior: one rejected or failed message
+    ///      must not block later messages. Failure is reported, not retried by this contract.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce
@@ -274,7 +277,7 @@ contract NativeOracle is INativeOracle {
         return _defaultCallbacks[sourceType];
     }
 
-    /// @notice Invoke callback with bounded returndata and fail atomically
+    /// @notice Invoke callback with bounded returndata and report failures without blocking progress
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
@@ -298,7 +301,11 @@ contract NativeOracle is INativeOracle {
         bytes memory callData = abi.encodeCall(IOracleCallback.onOracleEvent, (sourceType, sourceId, nonce, payload));
         (bool success, bytes memory returnData) = _callWithBoundedReturndata(callback, gasLimit, callData);
 
-        if (!success || returnData.length < 32) {
+        if (!success) {
+            emit CallbackFailed(sourceType, sourceId, nonce, callback, returnData);
+            return;
+        }
+        if (returnData.length < 32) {
             revert Errors.OracleCallbackFailed(sourceType, sourceId, nonce, callback, returnData);
         }
 

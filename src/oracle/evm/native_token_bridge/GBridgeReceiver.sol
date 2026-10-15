@@ -76,7 +76,10 @@ contract GBridgeReceiver is IGBridgeReceiver, BlockchainEventHandler {
             revert InvalidSourceChain(sourceId, trustedSourceId);
         }
 
-        // Verify sender is the trusted bridge (defense in depth)
+        // Portal.send is public by design. Only process events from our trusted Sender;
+        // reject any untrusted address with InvalidSender before decoding or minting.
+        // NativeOracle reports this callback failure and still advances its nonce so
+        // an unrelated public message cannot block subsequent bridge deposits.
         if (sender != trustedBridge) {
             revert InvalidSender(sender, trustedBridge);
         }

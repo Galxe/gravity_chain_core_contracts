@@ -45,7 +45,7 @@ IDs:
 
 ### I-1 Conservation (non-rebasing token)
 
-For any sequence of successfully delivered bridges over a non-rebasing,
+Once all legitimate deposits have minted, for a non-rebasing,
 non-fee-on-transfer ERC-20:
 
 ```
@@ -123,7 +123,8 @@ boundary condition that spec-level tests must assert.
 An attacker calls `GravityPortal.send` directly with a body that decodes
 to `(amount, victim)`. The Portal embeds `msg.sender == attacker` into
 the payload. When the oracle delivers that payload, the Receiver rejects
-with `InvalidSender(attacker, trustedBridge)`. No mint.
+with `InvalidSender(attacker, trustedBridge)`. No mint. NativeOracle records this
+callback failure in an event and advances its nonce; later deposits can continue.
 
 **Covered by:** existing `CrossChainBridge.t.sol::test_E2E_Receiver_RejectsForgedPayloadFromRandomSender`.
 Restated here for spec completeness.

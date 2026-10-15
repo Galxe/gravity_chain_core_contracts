@@ -51,7 +51,8 @@ interface INativeOracle {
     /// @dev New deliveries emit OracleDelivered instead.
     event DataRecorded(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint256 dataLength);
 
-    /// @notice Emitted after a consensus payload is successfully delivered
+    /// @notice Emitted after accepting a consensus payload and advancing progress
+    /// @dev Callback failure does not prevent this event; it does not prove a successful mint.
     event OracleDelivered(
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, uint128 sourcePosition, bytes32 payloadHash
     );
@@ -78,8 +79,8 @@ interface INativeOracle {
     /// @param callback The callback contract address
     event CallbackSuccess(uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback);
 
-    /// @notice Legacy event retained in the ABI for historical log decoding
-    /// @dev New callback failures revert atomically.
+    /// @notice Emitted when a callback reverts or runs out of gas; source progress still advances
+    /// @dev The captured reason is bounded to 256 bytes. No retry is scheduled.
     event CallbackFailed(
         uint32 indexed sourceType, uint256 indexed sourceId, uint128 nonce, address callback, bytes reason
     );
@@ -95,7 +96,8 @@ interface INativeOracle {
     // ========================================================================
 
     /// @notice Deliver a single consensus-approved data entry
-    /// @dev Only callable by SYSTEM_CALLER. Callback execution and progress update are atomic.
+    /// @dev Only SYSTEM_CALLER. Callback revert/OOG is reported while progress advances.
+    ///      Invalid delivery inputs or malformed successful callback returns still revert.
     /// @param sourceType The source type (uint32, e.g., 0 = BLOCKCHAIN, 1 = JWK)
     /// @param sourceId The source identifier (e.g., chain ID for blockchains)
     /// @param nonce The nonce - must start from 1 and strictly increase
@@ -112,7 +114,8 @@ interface INativeOracle {
     ) external;
 
     /// @notice Deliver multiple consensus-approved entries from the same source
-    /// @dev Only callable by SYSTEM_CALLER. The entire batch is atomic.
+    /// @dev Only SYSTEM_CALLER. Callback revert/OOG does not abort the batch.
+    ///      Invalid delivery inputs or malformed successful callback returns still revert it.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonces Array of nonces (must be strictly increasing, each > previous latestNonce)
@@ -228,7 +231,7 @@ interface INativeOracle {
 /// @dev The bool return is retained for ABI compatibility but no longer controls NativeOracle storage.
 interface IOracleCallback {
     /// @notice Called when an oracle event is recorded
-    /// @dev Callback failure reverts delivery, so callback state and source progress remain atomic.
+    /// @dev Callback revert/OOG is reported by NativeOracle without preventing source progress.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
