@@ -323,7 +323,8 @@ interface INativeOracle {
 ```solidity
 interface IOracleCallback {
     /// @notice Called when an oracle event is delivered
-    /// @dev Callback failure reverts delivery and leaves source progress unchanged.
+    /// @dev Callback revert/local OOG emits CallbackFailed and consumes source progress; no retry.
+    ///      Invalid inputs, malformed successful returns, or outer OOG still revert.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
@@ -343,10 +344,11 @@ interface IOracleCallback {
 - A deployed callback must resolve for every delivery; missing callbacks revert.
 - `callbackGasLimit` must be nonzero.
 - Callback return data must contain one canonical ABI boolean. Both `true` and `false` are accepted for compatibility.
-- Callback revert or callback out-of-gas emits `CallbackFailed` and does not prevent source progress.
+- Callback revert or callback-local out-of-gas emits `CallbackFailed` and consumes the nonce while advancing source progress; no retry is scheduled.
 - Short return data or a non-boolean return word still reverts, as do invalid delivery inputs.
 - Source progress advances and `OracleDelivered` is emitted after the callback attempt, including execution failure.
 - `recordBatch()` continues after callback execution failure. Invalid input or malformed callback returns still roll back the whole transaction.
+- The outer transaction must retain enough gas to report failure, update progress, and finish the batch. Outer out-of-gas rolls back the entire transaction, including earlier deliveries and events.
 - Callback returndata copied into memory is capped at 256 bytes.
 - New payloads are never written to `_records`.
 
@@ -378,7 +380,8 @@ governance.setCallback(0, 10, optimismSpecialHandlerAddress);
 ### Events
 
 ```solidity
-/// @notice Emitted after callback success and progress update
+/// @notice Emitted after accepting a delivery and advancing progress, including callback failure
+/// @dev Does not prove callback or mint success; outer transaction failure rolls back this event.
 event OracleDelivered(
     uint32 indexed sourceType,
     uint256 indexed sourceId,
@@ -544,8 +547,8 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 ## Security Considerations
 
 1. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
-2. **Callback Gas Limits**: Caller-specified gas limit prevents excessive gas consumption
-3. **Atomic Callback Failure**: Callback failure reverts the delivery and leaves progress retryable
+2. **Callback Gas Limits**: Caller-specified gas limits bound each callback; the caller must also budget gas for outer bookkeeping and the full batch
+3. **Consumed Callback Failure**: Callback revert/local OOG emits `CallbackFailed` and consumes source progress without retry; invalid deliveries, malformed successful returns, and outer OOG still roll back the transaction
 4. **GOVERNANCE Control**: Callback registration requires governance approval
 5. **Callback Code Validation**: Nonzero callback registrations must point to deployed contract code
 6. **Bounded Returndata**: NativeOracle copies at most 256 callback returndata bytes
