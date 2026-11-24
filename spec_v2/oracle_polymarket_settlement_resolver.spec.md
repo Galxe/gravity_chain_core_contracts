@@ -71,12 +71,12 @@ one positive value:
 There is no local settlement deadline. A canonical Polygon resolution remains
 valid regardless of how much Gravity wall-clock time has elapsed.
 
-## Atomic Delivery
+## Callback Failure
 
-`NativeOracle` invokes the resolver atomically. Invalid identity, malformed ABI,
-insufficient callback gas, or a duplicate terminal settlement reverts the whole
-delivery. Source nonce and source position therefore do not advance, and the
-same delivery remains retryable.
+Invalid identity, malformed payload ABI, insufficient callback gas, or a duplicate
+terminal settlement makes the resolver revert. Its settlement state remains
+unchanged. NativeOracle emits `CallbackFailed` and advances source progress;
+the consumed nonce is not retried.
 
 New NativeOracle deliveries do not retain raw payload history. Consequently the
 resolver has no replay API or pending-raw-record state. Its observable states are
@@ -110,4 +110,4 @@ The suite covers governance registration, relayer identity width, caller and
 source authorization, canonical ABI enforcement, every registered identity
 field, derived CTF condition identity, payout classification, independent
 mirrors, provenance, duplicate settlement rejection, callback gas failure, and
-atomic source-progress rollback.
+source-progress advancement after rejected callbacks.

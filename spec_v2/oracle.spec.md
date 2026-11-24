@@ -54,7 +54,7 @@ contract deployed on Gravity that provides:
 │   │  • Delivers verified data to one configured callback               │  │
 │   │  • Tracks latest nonce and source position per source              │  │
 │   │  • Stores no new payload history                                    │  │
-│   │  • Callback and progress updates succeed or revert atomically       │  │
+│   │  • Callback failures are reported; source progress advances       │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                         │                                                   │
 │                         │ Callback: onOracleEvent()                        │
@@ -323,7 +323,8 @@ interface INativeOracle {
 ```solidity
 interface IOracleCallback {
     /// @notice Called when an oracle event is delivered
-    /// @dev Callback failure reverts delivery and leaves source progress unchanged.
+    /// @dev Callback revert/local OOG emits CallbackFailed and consumes source progress; no retry.
+    ///      Invalid inputs, malformed successful returns, or outer OOG still revert.
     /// @param sourceType The source type
     /// @param sourceId The source identifier
     /// @param nonce The nonce of the record
@@ -343,9 +344,11 @@ interface IOracleCallback {
 - A deployed callback must resolve for every delivery; missing callbacks revert.
 - `callbackGasLimit` must be nonzero.
 - Callback return data must contain one canonical ABI boolean. Both `true` and `false` are accepted for compatibility.
-- Callback revert, out-of-gas, short return data, or a non-boolean return word reverts the entire delivery.
-- Source progress advances and `OracleDelivered` is emitted only after callback success.
-- `recordBatch()` is atomic: any invalid nonce or callback failure rolls back every callback and progress update in the batch.
+- Callback revert or callback-local out-of-gas emits `CallbackFailed` and consumes the nonce while advancing source progress; no retry is scheduled.
+- Short return data or a non-boolean return word still reverts, as do invalid delivery inputs.
+- Source progress advances and `OracleDelivered` is emitted after the callback attempt, including execution failure.
+- `recordBatch()` continues after callback execution failure. Invalid input or malformed callback returns still roll back the whole transaction.
+- The outer transaction must retain enough gas to report failure, update progress, and finish the batch. Outer out-of-gas rolls back the entire transaction, including earlier deliveries and events.
 - Callback returndata copied into memory is capped at 256 bytes.
 - New payloads are never written to `_records`.
 
@@ -377,7 +380,8 @@ governance.setCallback(0, 10, optimismSpecialHandlerAddress);
 ### Events
 
 ```solidity
-/// @notice Emitted after callback success and progress update
+/// @notice Emitted after accepting a delivery and advancing progress, including callback failure
+/// @dev Does not prove callback or mint success; outer transaction failure rolls back this event.
 event OracleDelivered(
     uint32 indexed sourceType,
     uint256 indexed sourceId,
@@ -409,8 +413,8 @@ event CallbackSuccess(
     address callback
 );
 
-// DataRecorded, CallbackFailed, CallbackSkipped, and StorageSkipped remain in
-// the ABI for historical log decoding but are not emitted for new deliveries.
+// CallbackFailed reports callback execution failure without stopping progress.
+// DataRecorded, CallbackSkipped and StorageSkipped remain for historical log decoding.
 ```
 
 ### Errors
@@ -543,8 +547,8 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 ## Security Considerations
 
 1. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
-2. **Callback Gas Limits**: Caller-specified gas limit prevents excessive gas consumption
-3. **Atomic Callback Failure**: Callback failure reverts the delivery and leaves progress retryable
+2. **Callback Gas Limits**: Caller-specified gas limits bound each callback; the caller must also budget gas for outer bookkeeping and the full batch
+3. **Consumed Callback Failure**: Callback revert/local OOG emits `CallbackFailed` and consumes source progress without retry; invalid deliveries, malformed successful returns, and outer OOG still roll back the transaction
 4. **GOVERNANCE Control**: Callback registration requires governance approval
 5. **Callback Code Validation**: Nonzero callback registrations must point to deployed contract code
 6. **Bounded Returndata**: NativeOracle copies at most 256 callback returndata bytes
@@ -556,8 +560,8 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 ## Invariants
 
 1. **Nonce Continuity**: For each `(sourceType, sourceId)`, a new nonce equals `latestNonce + 1`
-2. **Atomicity**: A successful delivery updates both callback state and source progress; a failed delivery updates neither
-3. **Batch Atomicity**: Any failure rolls back the complete `recordBatch()` transaction
+2. **Execution Failure**: A reverted callback leaves its own state unchanged; NativeOracle emits failure and advances source progress
+3. **Batch Boundary**: Callback execution failures do not abort the batch; invalid delivery inputs or malformed return values still roll it back
 4. **Legacy Preservation**: Existing slots 0 through 4 and historical records remain readable
 5. **Progress Bound**: Each source adds at most one packed `SourceProgress` slot regardless of delivery count
 6. **Task Identity**: A relayer-backed `(sourceType, sourceId)` maps to at most one configured continuous task
@@ -570,7 +574,7 @@ See `src/oracle/ondemand/` for the full on-demand-specific flow (request queue, 
 
 1. **NativeOracle**
    - Deliver data with source type, source ID, nonce, and source position
-   - Batch delivery with sequential nonces and atomic rollback
+   - Sequential batches continue past failed callbacks; invalid-input rollback remains
    - Callback revert, zero gas, malformed return, and missing callback failures
    - Bounded callback returndata
    - Legacy progress fallback and first post-hardfork write

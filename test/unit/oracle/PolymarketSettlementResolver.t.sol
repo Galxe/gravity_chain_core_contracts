@@ -2,7 +2,6 @@
 pragma solidity ^0.8.30;
 
 import { Test } from "forge-std/Test.sol";
-import { Errors } from "../../../src/foundation/Errors.sol";
 import { SystemAddresses } from "../../../src/foundation/SystemAddresses.sol";
 import { NotAllowed } from "../../../src/foundation/SystemAccessControl.sol";
 import { INativeOracle } from "../../../src/oracle/INativeOracle.sol";
@@ -248,111 +247,128 @@ contract PolymarketSettlementResolverTest is Test {
         resolver.onOracleEvent(7, MIRROR_ID, 1, _encode(_payload(MIRROR_ID, _payouts(1, 0))));
     }
 
-    function test_UnregisteredMirrorRevertsAtomically() public {
+    function test_UnregisteredMirrorCallbackFailsAndAdvancesNonce() public {
         uint256 unknownMirror = 999;
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload =
             _payload(unknownMirror, _payouts(1, 0));
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(
+            SOURCE_TYPE_POLYMARKET_SETTLEMENT,
+            unknownMirror,
+            1,
+            address(resolver),
+            abi.encodeWithSelector(PolymarketSettlementResolver.MirrorNotRegistered.selector, unknownMirror)
+        );
         _record(unknownMirror, 1, SOURCE_BLOCK, _encode(payload), CALLBACK_GAS_LIMIT);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, unknownMirror), 0);
+        assertFalse(resolver.isSettlementObserved(unknownMirror, conditionId));
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, unknownMirror), 1);
     }
 
-    function test_SourceIdMismatchRevertsAtomically() public {
+    function test_SourceIdMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload =
             _payload(MIRROR_ID + 1, _payouts(1, 0));
 
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_ChainMismatchRevertsAtomically() public {
+    function test_ChainMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.polygonChainId = 1;
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_CtfMismatchRevertsAtomically() public {
+    function test_CtfMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.ctf = makeAddr("other-ctf");
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_ConditionMismatchRevertsAtomically() public {
+    function test_ConditionMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.conditionId = keccak256("other-condition");
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_DerivedConditionIdentityMismatchRevertsAtomically() public {
+    function test_DerivedConditionIdentityMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.questionId = keccak256("foreign-question");
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_OutcomeCountMismatchRevertsAtomically() public {
+    function test_OutcomeCountMismatchCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.outcomeSlotCount = 3;
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_AllZeroPayoutRevertsAtomically() public {
-        _expectAtomicFailure(MIRROR_ID, _encode(_payload(MIRROR_ID, _payouts(0, 0))));
+    function test_AllZeroPayoutCallbackFailsAndAdvancesNonce() public {
+        _expectCallbackFailure(MIRROR_ID, _encode(_payload(MIRROR_ID, _payouts(0, 0))));
     }
 
-    function test_PayoutLengthMismatchRevertsAtomically() public {
+    function test_PayoutLengthMismatchCallbackFailsAndAdvancesNonce() public {
         uint256[] memory payouts = new uint256[](3);
         payouts[0] = 1;
-        _expectAtomicFailure(MIRROR_ID, _encode(_payload(MIRROR_ID, payouts)));
+        _expectCallbackFailure(MIRROR_ID, _encode(_payload(MIRROR_ID, payouts)));
     }
 
-    function test_InvalidSettlementKindRevertsAtomically() public {
+    function test_InvalidSettlementKindCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.settlementKind = 2;
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_ZeroProvenanceRevertsAtomically() public {
+    function test_ZeroProvenanceCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.txHash = bytes32(0);
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_ZeroOracleOrQuestionRevertsAtomically() public {
+    function test_ZeroOracleOrQuestionCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.oracle = address(0);
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
 
         payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.questionId = bytes32(0);
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_LogIndexOverflowRevertsAtomically() public {
+    function test_LogIndexOverflowCallbackFailsAndAdvancesNonce() public {
         PolymarketSettlementResolver.PolymarketSettlementPayload memory payload = _payload(MIRROR_ID, _payouts(1, 0));
         payload.logIndex = uint256(type(uint64).max) + 1;
-        _expectAtomicFailure(MIRROR_ID, _encode(payload));
+        _expectCallbackFailure(MIRROR_ID, _encode(payload));
     }
 
-    function test_MalformedPayloadRevertsAtomically() public {
-        _expectAtomicFailure(MIRROR_ID, hex"deadbeef");
+    function test_MalformedPayloadCallbackFailsAndAdvancesNonce() public {
+        _expectCallbackFailure(MIRROR_ID, hex"deadbeef");
     }
 
-    function test_NonCanonicalTrailingBytesRevertAtomically() public {
+    function test_NonCanonicalTrailingBytesCallbackFailsAndAdvancesNonce() public {
         bytes memory canonical = _encode(_payload(MIRROR_ID, _payouts(1, 0)));
-        _expectAtomicFailure(MIRROR_ID, bytes.concat(canonical, bytes32(uint256(1))));
+        _expectCallbackFailure(MIRROR_ID, bytes.concat(canonical, bytes32(uint256(1))));
     }
 
-    function test_CallbackGasFailureLeavesNoSettlementOrProgress() public {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+    function test_CallbackGasFailureLeavesNoSettlementAndAdvancesNonce() public {
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(SOURCE_TYPE_POLYMARKET_SETTLEMENT, MIRROR_ID, 1, address(resolver), "");
         _record(MIRROR_ID, 1, SOURCE_BLOCK, _encode(_payload(MIRROR_ID, _payouts(1, 0))), 1);
         _assertUndelivered(MIRROR_ID, conditionId);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, MIRROR_ID), 1);
     }
 
     function test_SecondSettlementCannotOverwriteTerminalState() public {
         bytes memory first = _encode(_payload(MIRROR_ID, _payouts(1, 0)));
         _record(MIRROR_ID, 1, SOURCE_BLOCK, first, CALLBACK_GAS_LIMIT);
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(
+            SOURCE_TYPE_POLYMARKET_SETTLEMENT,
+            MIRROR_ID,
+            2,
+            address(resolver),
+            abi.encodeWithSelector(PolymarketSettlementResolver.SettlementAlreadyResolved.selector, MIRROR_ID)
+        );
         _record(MIRROR_ID, 2, SOURCE_BLOCK + 1, _encode(_payload(MIRROR_ID, _payouts(0, 1))), CALLBACK_GAS_LIMIT);
 
         (IPolymarketSettlementResolver.ObservationStatus status, uint8 winningSlot, uint128 nonce,,,) =
@@ -360,16 +376,19 @@ contract PolymarketSettlementResolverTest is Test {
         assertEq(uint8(status), uint8(IPolymarketSettlementResolver.ObservationStatus.ResolvedWinner));
         assertEq(winningSlot, 0);
         assertEq(nonce, 1);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, MIRROR_ID), 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, MIRROR_ID), 2);
     }
 
-    function _expectAtomicFailure(
+    function _expectCallbackFailure(
         uint256 sourceId,
         bytes memory payload
     ) internal {
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
-        _record(sourceId, 1, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
+        uint128 nonce = oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId) + 1;
+        vm.expectEmit(true, true, false, false, address(oracle));
+        emit INativeOracle.CallbackFailed(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId, nonce, address(resolver), "");
+        _record(sourceId, nonce, SOURCE_BLOCK, payload, CALLBACK_GAS_LIMIT);
         _assertUndelivered(sourceId, conditionId);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId), nonce);
     }
 
     function _assertUndelivered(
@@ -377,7 +396,6 @@ contract PolymarketSettlementResolverTest is Test {
         bytes32 expectedCondition
     ) internal view {
         assertFalse(resolver.isSettlementObserved(sourceId, expectedCondition));
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId), 0);
         assertEq(oracle.getRecord(SOURCE_TYPE_POLYMARKET_SETTLEMENT, sourceId, 1).recordedAt, 0);
     }
 

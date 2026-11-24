@@ -139,17 +139,24 @@ contract JWKManagerTest is Test {
         // Verify key1 exists
         assertTrue(jwkManager.hasJWK(GOOGLE_ISSUER, "key1"));
 
-        // A non-increasing version fails atomically. The nonce stays retryable.
+        // A non-increasing version leaves JWK state unchanged while Oracle consumes the nonce.
         uint256 sourceId = uint256(keccak256(GOOGLE_ISSUER));
         bytes memory payload = _createPayload(GOOGLE_ISSUER, 1, jwks); // Same version
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(
+            SOURCE_TYPE_JWK,
+            sourceId,
+            2,
+            address(jwkManager),
+            abi.encodeWithSelector(Errors.JWKVersionNotIncreasing.selector, GOOGLE_ISSUER, uint64(1), uint64(1))
+        );
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);
         assertEq(provider.version, 1);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 2);
         assertEq(oracle.getRecord(SOURCE_TYPE_JWK, sourceId, 2).recordedAt, 0);
     }
 
@@ -582,16 +589,23 @@ contract JWKManagerTest is Test {
         // First record succeeds
         _recordJWK(GOOGLE_ISSUER, version1, jwks, 1);
 
-        // A non-increasing version fails atomically.
+        // A non-increasing version leaves JWK state unchanged while Oracle consumes the nonce.
         uint256 sourceId = uint256(keccak256(GOOGLE_ISSUER));
         bytes memory payload = _createPayload(GOOGLE_ISSUER, version2, jwks);
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(
+            SOURCE_TYPE_JWK,
+            sourceId,
+            2,
+            address(jwkManager),
+            abi.encodeWithSelector(Errors.JWKVersionNotIncreasing.selector, GOOGLE_ISSUER, version1, version2)
+        );
         vm.prank(systemCaller);
         oracle.record(SOURCE_TYPE_JWK, sourceId, 2, 0, payload, CALLBACK_GAS_LIMIT);
 
         IJWKManager.ProviderJWKs memory provider = jwkManager.getProviderJWKs(GOOGLE_ISSUER);
         assertEq(provider.version, version1);
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_JWK, sourceId), 2);
     }
 }

@@ -264,14 +264,25 @@ contract NativeOracleTest is Test {
         assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
     }
 
-    function test_CallbackRevertIsAtomic() public {
+    function test_CallbackRevertEmitsFailureAndAdvances() public {
         callback.setRevert(true);
 
-        vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(
+            SOURCE_TYPE_BLOCKCHAIN,
+            ETHEREUM_SOURCE_ID,
+            1,
+            address(callback),
+            abi.encodeWithSignature("Error(string)", "intentional callback failure")
+        );
         _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
 
-        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 0);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
         assertEq(callback.callCount(), 0);
+        callback.setRevert(false);
+        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 2, 101, hex"02", CALLBACK_GAS_LIMIT);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 2);
+        assertEq(callback.callCount(), 1);
     }
 
     function test_CallbackFalseReturnIsAcceptedButDoesNotStorePayload() public {
@@ -299,6 +310,14 @@ contract NativeOracleTest is Test {
 
         vm.expectPartialRevert(Errors.OracleCallbackFailed.selector);
         _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", CALLBACK_GAS_LIMIT);
+    }
+
+    function test_CallbackOutOfGasEmitsFailureAndAdvances() public {
+        vm.expectEmit(true, true, false, true, address(oracle));
+        emit INativeOracle.CallbackFailed(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, address(callback), bytes(""));
+        _record(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID, 1, 100, hex"01", 1);
+        assertEq(oracle.getLatestNonce(SOURCE_TYPE_BLOCKCHAIN, ETHEREUM_SOURCE_ID), 1);
+        assertEq(callback.callCount(), 0);
     }
 
     function test_LongCallbackReturnIsBoundedAndAccepted() public {

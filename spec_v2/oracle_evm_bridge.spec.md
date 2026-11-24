@@ -60,7 +60,7 @@ consists of contracts deployed on both chains, providing:
 │   │                                                                      │  │
 │   │  • Delivers verified payload to the receiver                        │  │
 │   │  • Tracks one nonce and source position checkpoint                  │  │
-│   │  • Callback failure reverts without advancing progress              │  │
+│   │  • Callback failure is reported; source progress advances           │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 │                         │                                                   │
 │                         │ Callback: onOracleEvent()                        │
@@ -543,8 +543,8 @@ error MintFailed(address recipient, uint256 amount);
    └─> Validates nonce == currentNonce + 1 (reverts NonceNotSequential otherwise — replay-safe)
    └─> Resolves callback using 2-layer lookup → GBridgeReceiver
    └─> Calls receiver.onOracleEvent{gas: callbackGasLimit}(...) — expects canonical bool return
-   └─> On success, commits nonce + source position and emits OracleDelivered
-   └─> On callback failure, reverts without advancing source progress
+   └─> Commits nonce + source position and emits OracleDelivered after the callback attempt
+   └─> On callback revert/local OOG, emits CallbackFailed and consumes progress without retry; later bridge messages continue
 
 4. GBridgeReceiver (extends BlockchainEventHandler):
    └─> Verifies sourceId == trustedSourceId
@@ -582,7 +582,7 @@ error MintFailed(address recipient, uint256 amount);
 1. **Fee Validation**: GravityPortal rejects both underpayment (`InsufficientFee`) and overpayment (`ExcessiveFee`) so a caller sees a deterministic cost.
 2. **Consensus Required**: All oracle data requires validator consensus via SYSTEM_CALLER
 3. **Source and Sender Verification**: GBridgeReceiver checks both `sourceId == trustedSourceId` and the in-payload `sender == trustedBridge`.
-4. **Atomic Callback Delivery**: Receiver failure reverts the NativeOracle delivery, so its nonce remains retryable and no source progress advances.
+4. **Consumed Callback Failure**: Receiver revert/local OOG emits `CallbackFailed` and consumes the NativeOracle nonce without retry. Invalid delivery inputs, malformed successful returns, or outer transaction OOG still roll back the transaction.
 5. **Replay Protection**: Enforced by NativeOracle's sequential-nonce rule (`nonce == currentNonce + 1`). GBridgeReceiver does NOT keep its own processed-nonce map; the legacy slot exists only as `__deprecated_processedNonces` for storage-layout compatibility.
 6. **Compact Encoding**: PortalMessage uses 36-byte overhead (vs 128+ with abi.encode)
 
@@ -591,7 +591,7 @@ error MintFailed(address recipient, uint256 amount);
 ## Invariants
 
 1. **Nonce Uniqueness**: Each nonce from GravityPortal is unique (monotonic uint128)
-2. **Callback Atomicity**: Receiver state and NativeOracle source progress either both update or both revert
+2. **Callback Failure Boundary**: Receiver revert/local OOG rolls back Receiver state while NativeOracle advances progress and reports failure. This requires sufficient outer gas; outer transaction failure rolls back both.
 3. **Token Conservation**: G tokens locked on Ethereum = native G minted on Gravity (minus failed mints)
 4. **Replay Prevention**: NativeOracle enforces `nonce == currentNonce + 1` per (sourceType, sourceId), so each portal nonce can be delivered to the receiver at most once.
 
@@ -645,7 +645,7 @@ error MintFailed(address recipient, uint256 amount);
    - Mint native tokens
 
 2. **Failure Scenarios**
-   - Callback reverts (should not affect oracle)
+   - Callback revert/local OOG (reports failure and consumes progress without retry); outer OOG rolls back the transaction
    - Invalid sender
    - Duplicate nonce (replay attempt)
 

@@ -68,9 +68,9 @@ The resolver accepts a payload only when:
 - price is positive
 
 Legacy 160-byte callback bodies, trailing bytes, unknown versions, and nonzero
-flags are rejected. Any callback failure reverts the entire NativeOracle
-delivery, so source progress does not advance and the same delivery nonce
-remains retryable.
+flags are rejected by the resolver. NativeOracle emits `CallbackFailed` for a
+reverted callback and still advances source progress. The rejected callback
+leaves the price unchanged; there is no retry of that consumed nonce.
 
 ## Storage And History
 
@@ -111,4 +111,4 @@ forge test --match-path 'test/unit/oracle/PriceFeedResolver.t.sol'
 The suite covers the cross-language golden vector, exact payload length,
 version and flags, maximum field widths, one-slot storage, source identity,
 caller authorization, round and timestamp replay protection, zero price,
-legacy payload rejection, callback gas failure, and atomic retry behavior.
+legacy payload rejection, callback gas failure, and progress after rejection.
